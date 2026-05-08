@@ -85,14 +85,6 @@ class SchemaManager
             return;
         }
 
-        $table->text($name)->nullable();
-        return;
-
-        if (is_null($value)) {
-            $table->string($name, 255)->nullable();
-            return;
-        }
-
         if (is_bool($value)) {
             $table->boolean($name)->nullable();
             return;
@@ -108,35 +100,11 @@ class SchemaManager
             return;
         }
 
-        if (is_array($value) || is_object($value)) {
-            $table->text($name)->nullable();
-            return;
-        }
-
-        // String — try to detect sub-types
-        $str = (string) $value;
-
-        // ISO datetime
-        if (preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/', $str)) {
-            $table->string($name, 50)->nullable();
-            return;
-        }
-
-        // GUID
-        if (preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $str)) {
-            $table->string($name, 36)->nullable();
-            return;
-        }
-
-        // Long text
-        $len = mb_strlen($str);
-        if ($len > 500) {
-            $table->text($name)->nullable();
-            return;
-        }
-
-        // Default string
-        $table->string($name, max(255, $len * 2))->nullable();
+        // For EVERYTHING ELSE (null, string, array, object), use TEXT.
+        // We do NOT use VARCHAR because VARCHAR(255) takes up to 1020 bytes inline in utf8mb4,
+        // which rapidly depletes MySQL's 8126 byte row limit on wide tables like SalesOrders.
+        // TEXT stores data off-page and only takes a 20-byte pointer inline.
+        $table->text($name)->nullable();
     }
 
     /**
@@ -145,36 +113,12 @@ class SchemaManager
      */
     private function ensureODataColumnsAreText(string $tableName, array $columns): void
     {
-        foreach ($columns as $originalName) {
-            $colName = $this->sanitizeColumnName($originalName);
-
-            if (in_array(strtolower($colName), ['_sync_id', '_synced_at'])) {
-                continue;
-            }
-
-            $column = DB::table('INFORMATION_SCHEMA.COLUMNS')
-                ->selectRaw('DATA_TYPE as data_type, CHARACTER_MAXIMUM_LENGTH as character_maximum_length')
-                ->where('TABLE_NAME', $tableName)
-                ->where('COLUMN_NAME', $colName)
-                ->first();
-
-            if (! $column) {
-                continue;
-            }
-
-            $type = strtolower((string) $column->data_type);
-            $length = (int) $column->character_maximum_length;
-
-            if ($type === 'nvarchar' && $length === -1) {
-                continue;
-            }
-
-            DB::statement(sprintf(
-                'ALTER TABLE %s ALTER COLUMN %s NVARCHAR(MAX) NULL',
-                $this->wrapSqlServerIdentifier($tableName),
-                $this->wrapSqlServerIdentifier($colName),
-            ));
-        }
+        // NO-OP.
+        // Previously this altered all columns to NVARCHAR(MAX) / LONGTEXT to avoid type strictness.
+        // However, MySQL has a strict 8126 byte inline row size limit.
+        // 400+ LONGTEXT columns will exceed this limit and crash the database.
+        // By relying on the initial type inference (boolean, decimal, bigInt, text), 
+        // we keep the row size small and stable.
     }
 
     /*
@@ -212,8 +156,12 @@ class SchemaManager
         return $name;
     }
 
-    private function wrapSqlServerIdentifier(string $name): string
+    private function wrapIdentifier(string $name, string $driver): string
     {
+        if ($driver === 'mysql') {
+            return '`' . str_replace('`', '``', $name) . '`';
+        }
+        
         return '[' . str_replace(']', ']]', $name) . ']';
     }
 
@@ -234,6 +182,15 @@ class SchemaManager
 
             if (is_array($value) || is_object($value)) {
                 $value = json_encode($value);
+            }
+
+            // OData v4 returns Edm.Binary (like tstamp) as Base64.
+            // Convert it to a standard Hex string (e.g., 0x00000000397677AB)
+            if (strtolower($colName) === 'tstamp' && is_string($value)) {
+                $decoded = base64_decode($value, true);
+                if ($decoded !== false) {
+                    $value = '0x' . strtoupper(bin2hex($decoded));
+                }
             }
 
             $clean[$colName] = $value;

@@ -12,11 +12,33 @@ class DashboardController extends Controller
 {
     public function index(SyncService $syncService)
     {
-        $stats = $syncService->getDashboardStats();
+        $dbConnected = true;
+        try {
+            DB::connection()->getPdo();
+        } catch (\Exception $e) {
+            $dbConnected = false;
+        }
 
-        $recentLogs = SyncLog::orderByDesc('id')
-            ->limit(15)
-            ->get();
+        if (!$dbConnected) {
+            $stats = [
+                'total_records'       => 0,
+                'total_entities'      => count(config('acumatica.entities', [])),
+                'master_entities'     => 0,
+                'transaction_entities' => 0,
+                'running_jobs'        => 0,
+                'success_count'       => 0,
+                'failed_count'        => 0,
+                'entity_stats'        => [],
+            ];
+            $recentLogs = collect();
+        } else {
+            $stats = $syncService->getDashboardStats();
+
+            $hasLogsTable = \Illuminate\Support\Facades\Schema::hasTable('sync_logs');
+            $recentLogs = $hasLogsTable ? SyncLog::orderByDesc('id')
+                ->limit(15)
+                ->get() : collect();
+        }
 
         $masterRecords = collect($stats['entity_stats'])
             ->where('type', 'master')
@@ -37,22 +59,27 @@ class DashboardController extends Controller
 
     public function connectionStatus(AcumaticaODataService $odataService): JsonResponse
     {
-        // Test SQL Server
-        $sqlStatus = ['connected' => false, 'ping_ms' => 0, 'message' => 'Not tested'];
+        // Test Database
+        $defaultDb = config('database.default', 'sqlsrv');
+        $dbNameLabel = $defaultDb === 'mysql' ? 'MySQL' : 'SQL Server';
+
+        $dbStatus = ['connected' => false, 'ping_ms' => 0, 'message' => 'Not tested', 'type' => $dbNameLabel];
         try {
             $start = microtime(true);
-            DB::connection('sqlsrv')->getPdo();
+            DB::connection($defaultDb)->getPdo();
             $elapsed = round((microtime(true) - $start) * 1000);
-            $sqlStatus = [
+            $dbStatus = [
                 'connected' => true,
                 'ping_ms'   => $elapsed,
                 'message'   => 'Connected',
+                'type'      => $dbNameLabel,
             ];
         } catch (\Exception $e) {
-            $sqlStatus = [
+            $dbStatus = [
                 'connected' => false,
                 'ping_ms'   => 0,
                 'message'   => $e->getMessage(),
+                'type'      => $dbNameLabel,
             ];
         }
 
@@ -60,7 +87,7 @@ class DashboardController extends Controller
         $acumaticaStatus = $odataService->testConnection();
 
         return response()->json([
-            'sql_server' => $sqlStatus,
+            'database'   => $dbStatus,
             'acumatica'  => $acumaticaStatus,
         ]);
     }

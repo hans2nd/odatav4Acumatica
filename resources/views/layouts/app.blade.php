@@ -119,10 +119,13 @@
     @include('partials.sidebar')
 
     {{-- Main Content --}}
-    <div class="flex-1 flex flex-col ml-64 min-w-0">
+    <div id="main-content" class="flex-1 flex flex-col ml-64 min-w-0 transition-all duration-300">
         {{-- Top Bar --}}
         <header class="flex justify-between items-center h-16 w-full px-8 bg-surface-container-lowest border-b border-outline-variant z-10 sticky top-0">
-            <div class="flex items-center">
+            <div class="flex items-center gap-4">
+                <button onclick="toggleSidebar()" class="p-2 rounded text-on-surface-variant hover:bg-surface-container-low transition-colors active:scale-95">
+                    <span class="material-symbols-outlined">menu</span>
+                </button>
                 <span class="font-h1 text-h1 text-on-surface">@yield('page-title', 'Dashboard')</span>
             </div>
             <div class="flex items-center gap-4">
@@ -172,16 +175,27 @@
                     acmEl.className = 'flex items-center gap-xs px-2 py-1 bg-red-50 rounded';
                 }
 
-                // SQL Server
+                // Database Server
                 const sqlEl = document.getElementById('sql-status');
-                if (data.sql_server.connected) {
+                if (data.database && data.database.connected) {
                     sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-green-600"></div>
-                        <span class="font-label-sm text-label-sm text-green-700">SQL ${data.sql_server.ping_ms}ms</span>`;
+                        <span class="font-label-sm text-label-sm text-green-700">${data.database.type} ${data.database.ping_ms}ms</span>`;
                     sqlEl.className = 'flex items-center gap-xs px-2 py-1 bg-green-50 rounded';
-                } else {
+                } else if (data.database) {
                     sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-600"></div>
-                        <span class="font-label-sm text-label-sm text-red-700">SQL Offline</span>`;
+                        <span class="font-label-sm text-label-sm text-red-700">${data.database.type} Offline</span>`;
                     sqlEl.className = 'flex items-center gap-xs px-2 py-1 bg-red-50 rounded';
+                } else if (data.sql_server) {
+                    // Fallback for older format if cached
+                    if (data.sql_server.connected) {
+                        sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-green-600"></div>
+                            <span class="font-label-sm text-label-sm text-green-700">SQL Server ${data.sql_server.ping_ms}ms</span>`;
+                        sqlEl.className = 'flex items-center gap-xs px-2 py-1 bg-green-50 rounded';
+                    } else {
+                        sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-600"></div>
+                            <span class="font-label-sm text-label-sm text-red-700">SQL Server Offline</span>`;
+                        sqlEl.className = 'flex items-center gap-xs px-2 py-1 bg-red-50 rounded';
+                    }
                 }
             } catch (e) {
                 console.error('Connection check failed:', e);
@@ -262,6 +276,22 @@
                     btnEl.innerHTML = 'Force Sync All';
                 }
                 setTimeout(() => location.reload(), 2000);
+            }
+        }
+
+        // Sidebar toggle
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const mainContent = document.getElementById('main-content');
+            
+            if (sidebar.classList.contains('-translate-x-full')) {
+                sidebar.classList.remove('-translate-x-full');
+                mainContent.classList.add('ml-64');
+                mainContent.classList.remove('ml-0');
+            } else {
+                sidebar.classList.add('-translate-x-full');
+                mainContent.classList.remove('ml-64');
+                mainContent.classList.add('ml-0');
             }
         }
 

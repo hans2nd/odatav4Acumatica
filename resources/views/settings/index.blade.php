@@ -47,12 +47,12 @@
             </div>
         </form>
 
-        {{-- SQL Server Connection --}}
+        {{-- Database Connection --}}
         <form id="sql-form" class="bg-surface-container-lowest border border-outline-variant rounded flex flex-col fade-in" onsubmit="saveDatabase(event)">
             <div class="p-md border-b border-outline-variant bg-surface-container-low/50 flex justify-between items-center">
                 <h2 class="font-h2 text-h2 text-on-surface flex items-center gap-2">
                     <span class="material-symbols-outlined text-secondary">database</span>
-                    SQL Server
+                    Database
                 </h2>
                 <div class="flex items-center gap-sm">
                     <button type="button" onclick="testDbConnection()" id="sql-test-btn" class="inline-flex items-center gap-1 px-3 py-1.5 rounded border border-outline-variant font-label-md text-label-md text-on-surface-variant hover:bg-surface-container-low transition-colors active:scale-[0.97]">
@@ -64,6 +64,13 @@
                 </div>
             </div>
             <div class="p-md space-y-md">
+                <div>
+                    <label class="font-label-md text-label-md text-on-surface-variant block mb-xs">Connection Type</label>
+                    <select id="db-connection" onchange="handleConnectionTypeChange()" required class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-code text-code text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
+                        <option value="sqlsrv" {{ $dbConnection === 'sqlsrv' ? 'selected' : '' }}>SQL Server</option>
+                        <option value="mysql" {{ $dbConnection === 'mysql' ? 'selected' : '' }}>MySQL</option>
+                    </select>
+                </div>
                 <div>
                     <label class="font-label-md text-label-md text-on-surface-variant block mb-xs">Host</label>
                     <input type="text" id="db-host" value="{{ $dbHost }}" required class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-code text-code text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
@@ -82,7 +89,7 @@
                 </div>
                 <div>
                     <label class="font-label-md text-label-md text-on-surface-variant block mb-xs">Password</label>
-                    <input type="password" id="db-password" value="{{ $dbPassword }}" required class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-code text-code text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
+                    <input type="password" id="db-password" value="{{ $dbPassword }}" class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-code text-code text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
                 </div>
             </div>
         </form>
@@ -389,6 +396,7 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' },
                 body: JSON.stringify({
+                    connection: document.getElementById('db-connection').value,
                     host: document.getElementById('db-host').value.trim(),
                     port: parseInt(document.getElementById('db-port').value),
                     database: document.getElementById('db-name').value.trim(),
@@ -436,6 +444,7 @@
                 headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' },
                 body: JSON.stringify({
                     type: 'database',
+                    connection: document.getElementById('db-connection').value,
                     host: document.getElementById('db-host').value.trim(),
                     port: parseInt(document.getElementById('db-port').value),
                     database: document.getElementById('db-name').value.trim(),
@@ -554,6 +563,16 @@
             else { showToast(data.message || 'Delete failed', 'error'); }
         } catch (e) { showToast('Error: ' + e.message, 'error'); }
         finally { btn.disabled = false; btn.innerHTML = '<span class="material-symbols-outlined text-sm">delete</span> Delete'; }
+    }
+
+    function handleConnectionTypeChange() {
+        const type = document.getElementById('db-connection').value;
+        const portInput = document.getElementById('db-port');
+        if (type === 'mysql') {
+            if (portInput.value == '1433' || portInput.value === '') portInput.value = '3306';
+        } else if (type === 'sqlsrv') {
+            if (portInput.value == '3306' || portInput.value === '') portInput.value = '1433';
+        }
     }
 
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeEntityModal(); closeDeleteModal(); } });

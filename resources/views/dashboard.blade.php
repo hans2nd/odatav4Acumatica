@@ -27,7 +27,7 @@
                 <span class="material-symbols-outlined text-secondary">database</span>
             </div>
             <div>
-                <h3 class="font-label-md text-label-md text-on-surface-variant">Local SQL Server</h3>
+                <h3 class="font-label-md text-label-md text-on-surface-variant" id="db-type-label">Database Server</h3>
                 <p class="font-body-md text-body-md font-medium text-on-surface mt-xs" id="sql-conn-label">Checking…</p>
             </div>
         </div>
@@ -203,13 +203,20 @@ document.addEventListener('DOMContentLoaded', async () => {
             acmBadge.className = 'flex items-center gap-xs px-2 py-1 bg-red-50 rounded';
         }
 
-        // SQL card
+        // Database card
+        const dbStatus = data.database || data.sql_server;
         const sqlLabel = document.getElementById('sql-conn-label');
         const sqlBadge = document.getElementById('sql-conn-badge');
-        if (data.sql_server.connected) {
+        const dbTypeLabel = document.getElementById('db-type-label');
+        
+        if (dbStatus && dbStatus.type) {
+            dbTypeLabel.textContent = dbStatus.type;
+        }
+
+        if (dbStatus && dbStatus.connected) {
             sqlLabel.textContent = 'Connected';
             sqlBadge.innerHTML = `<div class="w-2 h-2 rounded-full bg-green-600"></div>
-                <span class="font-label-sm text-label-sm text-green-700">${data.sql_server.ping_ms}ms ping</span>`;
+                <span class="font-label-sm text-label-sm text-green-700">${dbStatus.ping_ms}ms ping</span>`;
             sqlBadge.className = 'flex items-center gap-xs px-2 py-1 bg-green-50 rounded';
         } else {
             sqlLabel.textContent = 'Disconnected';

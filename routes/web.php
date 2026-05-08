@@ -6,6 +6,7 @@ use App\Http\Controllers\MasterDataController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\SyncController;
 use App\Http\Controllers\TransactionController;
+use App\Http\Controllers\ReportController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -57,6 +58,16 @@ Route::get('/api/entities/{key}', [EntityController::class, 'show'])->name('api.
 Route::post('/api/entities', [EntityController::class, 'store'])->name('api.entities.store');
 Route::put('/api/entities/{key}', [EntityController::class, 'update'])->name('api.entities.update');
 Route::delete('/api/entities/{key}', [EntityController::class, 'destroy'])->name('api.entities.destroy');
+
+Route::get('/api/entities/{entity}/fields', [SyncController::class, 'entityFields'])->name('api.entities.fields');
+
+/*
+|--------------------------------------------------------------------------
+| Reports
+|--------------------------------------------------------------------------
+*/
+
+Route::get('/report/sales-order', [ReportController::class, 'salesOrder'])->name('report.sales-order');
 
 /*
 |--------------------------------------------------------------------------

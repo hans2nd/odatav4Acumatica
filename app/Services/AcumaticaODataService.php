@@ -183,8 +183,9 @@ class AcumaticaODataService
             $records = $result['value'] ?? [];
             $allRecords = array_merge($allRecords, $records);
 
-            // Check for @odata.nextLink or if we got fewer records than page size
-            if (isset($result['@odata.nextLink']) && count($records) >= $this->pageSize) {
+            // OData v4 often omits @odata.nextLink when the client explicitly requests $top and $skip.
+            // Therefore, if we received a full page (count == pageSize), we must assume there is more data.
+            if (isset($result['@odata.nextLink']) || count($records) === $this->pageSize) {
                 $skip += $this->pageSize;
             } else {
                 $hasMore = false;

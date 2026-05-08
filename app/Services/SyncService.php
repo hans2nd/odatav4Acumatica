@@ -27,9 +27,10 @@ class SyncService
      * Sync a single entity from Acumatica OData to the local SQL Server.
      *
      * @param  string  $entityKey  Key from config('acumatica.entities')
+     * @param  array   $customFilters Array of custom filter conditions
      * @return SyncLog
      */
-    public function syncEntity(string $entityKey): SyncLog
+    public function syncEntity(string $entityKey, array $customFilters = []): SyncLog
     {
         $entity = config("acumatica.entities.{$entityKey}");
 
@@ -77,21 +78,92 @@ class SyncService
                 if ($lastModifiedCol) {
                     $maxModifiedStr = DB::table($tableName)->max($lastModifiedCol);
                     if ($maxModifiedStr) {
-                        $timestamp = strtotime($maxModifiedStr);
-                        if ($timestamp) {
-                            $odataDate = gmdate('Y-m-d\TH:i:s\Z', $timestamp);
+                        try {
+                            // Preserve milliseconds to prevent continuously re-fetching the exact same last record
+                            $odataDate = \Carbon\Carbon::parse($maxModifiedStr)->setTimezone('UTC')->format('Y-m-d\TH:i:s.v\Z');
                             $filter = "LastModifiedDateTime gt {$odataDate}";
                             $isIncremental = true;
                             Log::info("Sync [{$entityKey}]: Incremental sync starting from {$odataDate}");
+                        } catch (\Exception $e) {
+                            // Ignore if unparseable
                         }
                     }
                 }
             }
             // --- END INCREMENTAL LOGIC ---
 
+            // --- BEGIN CUSTOM FILTERS ---
+            $customFilterStrings = [];
+            foreach ($customFilters as $cf) {
+                $field = $cf['field'] ?? '';
+                $op    = $cf['operator'] ?? 'eq';
+                $val   = $cf['value'] ?? '';
+                
+                if ($field && $val !== '') {
+                    // Escape single quotes
+                    $valSafe = str_replace("'", "''", $val);
+                    
+                    // Detect if the field is likely a Date/Time based on naming convention
+                    $isDateField = stripos($field, 'date') !== false || stripos($field, 'time') !== false;
+                    $parsedDateStr = null;
+                    
+                    if ($isDateField) {
+                        try {
+                            // Try DD/MM/YYYY first since it's a common input format
+                            if (preg_match('/^(\d{2})\/(\d{2})\/(\d{4})$/', $valSafe, $m)) {
+                                $date = \Carbon\Carbon::create($m[3], $m[2], $m[1], 0, 0, 0);
+                            } else {
+                                $date = \Carbon\Carbon::parse($valSafe);
+                            }
+                            // Convert to ISO 8601 UTC (OData v4 DateTimeOffset literal format)
+                            $parsedDateStr = $date->setTimezone('UTC')->format('Y-m-d\TH:i:s\Z');
+                        } catch (\Exception $e) {
+                            $parsedDateStr = null;
+                        }
+                    }
+                    
+                    if ($op === 'contains') {
+                        $customFilterStrings[] = "contains({$field}, '{$valSafe}')";
+                    } elseif ($op === 'startswith') {
+                        $customFilterStrings[] = "startswith({$field}, '{$valSafe}')";
+                    } elseif ($op === 'endswith') {
+                        $customFilterStrings[] = "endswith({$field}, '{$valSafe}')";
+                    } else {
+                        // eq, ne, gt, lt, ge, le
+                        if ($parsedDateStr) {
+                            // OData DateTimeOffset literals DO NOT have quotes
+                            $customFilterStrings[] = "{$field} {$op} {$parsedDateStr}";
+                        } elseif (is_numeric($valSafe) || in_array(strtolower($valSafe), ['true', 'false'])) {
+                            // Numbers and booleans DO NOT have quotes
+                            $customFilterStrings[] = "{$field} {$op} {$valSafe}";
+                        } else {
+                            // Strings MUST have quotes
+                            $customFilterStrings[] = "{$field} {$op} '{$valSafe}'";
+                        }
+                    }
+                }
+            }
+
+            $finalFilters = [];
+            if (!empty($customFilterStrings)) {
+                $customCombined = implode(' and ', $customFilterStrings);
+                $finalFilters[] = "({$customCombined})";
+                
+                // If custom filters are used, we MUST treat this as an incremental/partial sync
+                // to avoid wiping the table if the user only syncs a subset.
+                $isIncremental = true;
+                Log::info("Sync [{$entityKey}]: Custom filters applied -> {$customCombined}. Auto-incremental filter is disabled to allow fetching historical data.");
+            } else if ($filter) {
+                // Only apply the auto-incremental LastModifiedDateTime filter if NO custom filters are used
+                $finalFilters[] = "({$filter})";
+            }
+
+            $finalFilterString = implode(' and ', $finalFilters);
+            // --- END CUSTOM FILTERS ---
+
             // 2. Fetch records via OData
             Log::info("Sync [{$entityKey}]: Fetching data from {$odataEntity}…");
-            $records = $this->odataService->fetchAllRecords($odataEntity, $filter);
+            $records = $this->odataService->fetchAllRecords($odataEntity, $finalFilterString);
             $fetchedCount = count($records);
             Log::info("Sync [{$entityKey}]: Fetched {$fetchedCount} records.");
 
@@ -305,15 +377,19 @@ class SyncService
         $entities = config('acumatica.entities', []);
         $totalRecords = 0;
         $entityStats  = [];
+        $hasLogsTable = \Illuminate\Support\Facades\Schema::hasTable('sync_logs');
 
         foreach ($entities as $key => $entity) {
             $count = $this->schemaManager->getRowCount($entity['table']);
             $totalRecords += $count;
 
-            $lastSync = SyncLog::where('entity_key', $key)
-                ->whereIn('status', ['success', 'failed'])
-                ->orderByDesc('id')
-                ->first();
+            $lastSync = null;
+            if ($hasLogsTable) {
+                $lastSync = SyncLog::where('entity_key', $key)
+                    ->whereIn('status', ['success', 'failed'])
+                    ->orderByDesc('id')
+                    ->first();
+            }
 
             $entityStats[$key] = [
                 'description' => $entity['description'] ?? $key,
@@ -325,9 +401,9 @@ class SyncService
             ];
         }
 
-        $successCount = SyncLog::successful()->count();
-        $failedCount  = SyncLog::failed()->count();
-        $runningCount = SyncLog::running()->count();
+        $successCount = $hasLogsTable ? SyncLog::successful()->count() : 0;
+        $failedCount  = $hasLogsTable ? SyncLog::failed()->count() : 0;
+        $runningCount = $hasLogsTable ? SyncLog::running()->count() : 0;
 
         return [
             'total_records'       => $totalRecords,
