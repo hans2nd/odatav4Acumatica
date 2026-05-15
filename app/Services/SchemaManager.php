@@ -29,6 +29,7 @@ class SchemaManager
         }
 
         $this->ensureODataColumnsAreText($tableName, $columns);
+        $this->ensureRowHashColumn($tableName);
     }
 
     /**
@@ -46,6 +47,7 @@ class SchemaManager
             }
 
             $table->dateTime('_synced_at')->nullable();
+            $table->string('_row_hash', 64)->nullable()->index();
         });
     }
 
@@ -81,7 +83,7 @@ class SchemaManager
     private function addColumn(Blueprint $table, string $name, mixed $value): void
     {
         // Avoid reserved internal columns
-        if (in_array(strtolower($name), ['_sync_id', '_synced_at'])) {
+        if (in_array(strtolower($name), ['_sync_id', '_synced_at', '_row_hash'])) {
             return;
         }
 
@@ -119,6 +121,21 @@ class SchemaManager
         // 400+ LONGTEXT columns will exceed this limit and crash the database.
         // By relying on the initial type inference (boolean, decimal, bigInt, text), 
         // we keep the row size small and stable.
+    }
+
+    /**
+     * Ensure the _row_hash column exists on an existing table.
+     * This column stores an MD5 hash of all business columns for dedup.
+     */
+    private function ensureRowHashColumn(string $tableName): void
+    {
+        $columns = array_map('strtolower', Schema::getColumnListing($tableName));
+        if (!in_array('_row_hash', $columns)) {
+            Schema::table($tableName, function (Blueprint $table) {
+                $table->string('_row_hash', 64)->nullable()->index();
+            });
+            Log::info("SchemaManager: Added _row_hash column to [{$tableName}].");
+        }
     }
 
     /*
@@ -197,6 +214,13 @@ class SchemaManager
         }
 
         $clean['_synced_at'] = now()->toDateTimeString();
+
+        // Compute _row_hash from all business columns for dedup
+        $hashData = $clean;
+        unset($hashData['_synced_at'], $hashData['_row_hash'], $hashData['_sync_id']);
+        ksort($hashData);
+        $hashString = implode('|', array_map(function ($v) { return (string)($v ?? ''); }, $hashData));
+        $clean['_row_hash'] = md5($hashString);
 
         return $clean;
     }

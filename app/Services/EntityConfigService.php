@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Services\PermissionSyncService;
 use Illuminate\Support\Facades\File;
 
 class EntityConfigService
@@ -71,6 +72,7 @@ class EntityConfigService
             'description'  => $data['description'],
         ];
         $this->writeFile($entities);
+        $this->syncPermissions();
     }
 
     /**
@@ -93,6 +95,7 @@ class EntityConfigService
             'description'  => $data['description'],
         ];
         $this->writeFile($entities);
+        $this->syncPermissions();
     }
 
     /**
@@ -106,6 +109,7 @@ class EntityConfigService
         }
         unset($entities[$key]);
         $this->writeFile($entities);
+        $this->syncPermissions();
         return true;
     }
 
@@ -123,5 +127,18 @@ class EntityConfigService
     protected function writeFile(array $entities): void
     {
         File::put($this->filePath, json_encode($entities, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+    }
+
+    /**
+     * Trigger permission sync after entity changes.
+     */
+    protected function syncPermissions(): void
+    {
+        try {
+            app(PermissionSyncService::class)->syncFromEntities();
+        } catch (\Throwable $e) {
+            // Silently fail — permissions table may not exist yet (pre-migration)
+            \Illuminate\Support\Facades\Log::warning('Permission sync skipped: ' . $e->getMessage());
+        }
     }
 }

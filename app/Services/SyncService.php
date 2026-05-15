@@ -190,7 +190,7 @@ class SyncService
 
             // 5. Upsert existing data or Insert new data in a transaction
             if ($isIncremental) {
-                $insertedCount = $this->upsertTableData($tableName, $cleanData);
+                $insertedCount = $this->upsertTableData($tableName, $cleanData, $customFilters);
             } else {
                 $insertedCount = $this->replaceTableData($tableName, $cleanData);
             }
@@ -326,41 +326,133 @@ class SyncService
 
     /**
      * Upsert data in a table: UPDATE existing if ID matches → INSERT new in a transaction.
+     * For entities without id/NoteID, uses filter-scope delete or _row_hash dedup.
      */
-    private function upsertTableData(string $tableName, array $cleanData): int
+    private function upsertTableData(string $tableName, array $cleanData, array $customFilters = []): int
     {
         $insertedOrUpdated = 0;
 
-        DB::transaction(function () use ($tableName, $cleanData, &$insertedOrUpdated) {
+        DB::transaction(function () use ($tableName, $cleanData, &$insertedOrUpdated, $customFilters) {
             $hasId = isset($cleanData[0]['id']);
             $hasNoteId = isset($cleanData[0]['NoteID']);
 
-            foreach ($cleanData as $row) {
-                $updated = false;
+            if ($hasId || $hasNoteId) {
+                // --- Strategy A: Row-by-row upsert using id or NoteID ---
+                foreach ($cleanData as $row) {
+                    $updated = false;
 
-                if ($hasId && !empty($row['id'])) {
-                    $exists = DB::table($tableName)->where('id', $row['id'])->exists();
-                    if ($exists) {
-                        DB::table($tableName)->where('id', $row['id'])->update($row);
-                        $updated = true;
+                    if ($hasId && !empty($row['id'])) {
+                        $exists = DB::table($tableName)->where('id', $row['id'])->exists();
+                        if ($exists) {
+                            DB::table($tableName)->where('id', $row['id'])->update($row);
+                            $updated = true;
+                        }
+                    } elseif ($hasNoteId && !empty($row['NoteID'])) {
+                        $exists = DB::table($tableName)->where('NoteID', $row['NoteID'])->exists();
+                        if ($exists) {
+                            DB::table($tableName)->where('NoteID', $row['NoteID'])->update($row);
+                            $updated = true;
+                        }
                     }
-                } elseif ($hasNoteId && !empty($row['NoteID'])) {
-                    $exists = DB::table($tableName)->where('NoteID', $row['NoteID'])->exists();
-                    if ($exists) {
-                        DB::table($tableName)->where('NoteID', $row['NoteID'])->update($row);
-                        $updated = true;
+
+                    if (!$updated) {
+                        DB::table($tableName)->insert($row);
+                    }
+
+                    $insertedOrUpdated++;
+                }
+            } else {
+                // --- Strategy B: No unique key (e.g. SQL View entities) ---
+                if (!empty($customFilters)) {
+                    // Delete existing rows that fall within the same filter scope,
+                    // then insert the fresh data. This prevents duplication.
+                    $deletedCount = $this->deleteByFilterScope($tableName, $customFilters);
+                    Log::info("Sync: Deleted {$deletedCount} existing rows from [{$tableName}] within filter scope before re-insert.");
+                } else {
+                    // No custom filters — delete rows with matching _row_hash
+                    // to prevent exact-duplicate inserts.
+                    $hashes = array_filter(array_column($cleanData, '_row_hash'));
+                    if (!empty($hashes)) {
+                        foreach (array_chunk($hashes, 500) as $hashChunk) {
+                            DB::table($tableName)->whereIn('_row_hash', $hashChunk)->delete();
+                        }
                     }
                 }
 
-                if (!$updated) {
-                    DB::table($tableName)->insert($row);
-                }
-
-                $insertedOrUpdated++;
+                // Bulk insert the fresh data
+                $insertedOrUpdated = $this->bulkInsertData($tableName, $cleanData);
             }
         });
 
         return $insertedOrUpdated;
+    }
+
+    /**
+     * Delete rows from a local table that match the given OData-style custom filters.
+     * Maps OData operators to SQL WHERE conditions.
+     */
+    private function deleteByFilterScope(string $tableName, array $customFilters): int
+    {
+        $query = DB::table($tableName);
+        $hasCondition = false;
+
+        $operatorMap = [
+            'eq' => '=',
+            'ne' => '!=',
+            'gt' => '>',
+            'lt' => '<',
+            'ge' => '>=',
+            'le' => '<=',
+        ];
+
+        foreach ($customFilters as $cf) {
+            $field = $cf['field'] ?? '';
+            $op    = $cf['operator'] ?? 'eq';
+            $val   = $cf['value'] ?? '';
+
+            if (!$field || $val === '') {
+                continue;
+            }
+
+            $colName = $this->schemaManager->sanitizeColumnName($field);
+
+            if ($op === 'contains') {
+                $query->where($colName, 'LIKE', '%' . $val . '%');
+            } elseif ($op === 'startswith') {
+                $query->where($colName, 'LIKE', $val . '%');
+            } elseif ($op === 'endswith') {
+                $query->where($colName, 'LIKE', '%' . $val);
+            } else {
+                $sqlOp = $operatorMap[$op] ?? '=';
+                $query->where($colName, $sqlOp, $val);
+            }
+
+            $hasCondition = true;
+        }
+
+        if (!$hasCondition) {
+            return 0;
+        }
+
+        return $query->delete();
+    }
+
+    /**
+     * Bulk insert data into a table, respecting the SQL parameter limit.
+     */
+    private function bulkInsertData(string $tableName, array $cleanData): int
+    {
+        $inserted = 0;
+        $columnCount = max(count($cleanData[0] ?? []), 1);
+        $chunkSize = max(intdiv(2000, $columnCount), 1);
+        $chunks = array_chunk($cleanData, $chunkSize);
+
+        foreach ($chunks as $chunk) {
+            DB::table($tableName)->insert($chunk);
+            $inserted += count($chunk);
+        }
+
+        return $inserted;
     }
 
     /*

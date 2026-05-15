@@ -59,7 +59,7 @@
                 <thead>
                     <tr class="bg-surface-container-low border-b border-outline-variant">
                         @foreach($columns as $col)
-                            @if(!in_array($col, ['_sync_id', '_synced_at']))
+                            @if(!in_array($col, ['_sync_id', '_synced_at', '_row_hash']))
                                 <th class="py-2 px-3 font-label-sm text-label-sm text-on-surface-variant font-medium whitespace-nowrap">{{ $col }}</th>
                             @endif
                         @endforeach
@@ -69,7 +69,7 @@
                     @foreach($data as $row)
                         <tr class="hover:bg-surface-container-low/50 transition-colors">
                             @foreach($columns as $col)
-                                @if(!in_array($col, ['_sync_id', '_synced_at']))
+                                @if(!in_array($col, ['_sync_id', '_synced_at', '_row_hash']))
                                     <td class="py-2 px-3 whitespace-nowrap max-w-xs truncate">{{ $row->{$col} ?? '' }}</td>
                                 @endif
                             @endforeach

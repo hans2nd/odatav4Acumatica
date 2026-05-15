@@ -131,16 +131,42 @@
             <div class="flex items-center gap-4">
                 <div class="flex items-center gap-2">
                     {{-- Acumatica status indicator --}}
-                    <div id="acumatica-status" class="flex items-center gap-xs px-2 py-1 bg-gray-50 rounded">
+                    <button id="acumatica-status" onclick="toggleAcumaticaConnection()" class="flex items-center gap-xs px-2 py-1 bg-gray-50 rounded cursor-pointer hover:bg-gray-100 transition-colors" title="Click to connect">
                         <div class="w-2 h-2 rounded-full bg-gray-400"></div>
-                        <span class="font-label-sm text-label-sm text-gray-500">Checking…</span>
-                    </div>
+                        <span class="font-label-sm text-label-sm text-gray-500">Acumatica</span>
+                    </button>
                     {{-- SQL status indicator --}}
-                    <div id="sql-status" class="flex items-center gap-xs px-2 py-1 bg-gray-50 rounded">
+                    <button id="sql-status" onclick="toggleDatabaseConnection()" class="flex items-center gap-xs px-2 py-1 bg-gray-50 rounded cursor-pointer hover:bg-gray-100 transition-colors" title="Click to connect">
                         <div class="w-2 h-2 rounded-full bg-gray-400"></div>
-                        <span class="font-label-sm text-label-sm text-gray-500">Checking…</span>
+                        <span class="font-label-sm text-label-sm text-gray-500">Database</span>
+                    </button>
+                </div>
+                @auth
+                <div class="h-6 w-px bg-outline-variant"></div>
+                <div class="relative" id="user-dropdown-container">
+                    <button onclick="document.getElementById('user-dropdown').classList.toggle('hidden')" class="flex items-center gap-2 px-2 py-1 rounded hover:bg-surface-container-low transition-colors">
+                        <div class="w-7 h-7 rounded-full bg-primary-container flex items-center justify-center text-on-primary-container font-bold text-xs">
+                            {{ strtoupper(substr(auth()->user()->name, 0, 1)) }}
+                        </div>
+                        <span class="font-label-md text-label-md text-on-surface hidden sm:inline">{{ auth()->user()->name }}</span>
+                        <span class="material-symbols-outlined text-on-surface-variant text-sm">expand_more</span>
+                    </button>
+                    <div id="user-dropdown" class="hidden absolute right-0 top-full mt-1 w-56 bg-surface-container-lowest border border-outline-variant rounded-xl shadow-lg py-2 z-50">
+                        <div class="px-4 py-2 border-b border-outline-variant">
+                            <p class="text-body-md font-medium text-on-surface">{{ auth()->user()->name }}</p>
+                            <p class="text-label-sm text-on-surface-variant">{{ auth()->user()->email }}</p>
+                            <span class="inline-block mt-1 text-xs px-2 py-0.5 rounded-full bg-primary-container text-on-primary-container font-medium">{{ auth()->user()->primary_role }}</span>
+                        </div>
+                        <form method="POST" action="{{ route('logout') }}">
+                            @csrf
+                            <button type="submit" class="w-full flex items-center gap-2 px-4 py-2 text-body-md text-on-surface-variant hover:bg-surface-container-low transition-colors">
+                                <span class="material-symbols-outlined text-sm">logout</span>
+                                Sign Out
+                            </button>
+                        </form>
                     </div>
                 </div>
+                @endauth
             </div>
         </header>
 
@@ -157,48 +183,165 @@
         // CSRF token for AJAX
         const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
 
-        // Check connection status
-        async function checkConnections() {
+        // ── Persistent Connection State (localStorage) ───────────────────────
+        const STORAGE_KEY_ACM = 'conn_acumatica_enabled';
+        const STORAGE_KEY_DB  = 'conn_database_enabled';
+
+        let acumaticaConnected = false;
+        let databaseConnected = false;
+
+        // ── Toggle: Acumatica ────────────────────────────────────────────────
+        function toggleAcumaticaConnection() {
+            const isEnabled = localStorage.getItem(STORAGE_KEY_ACM) === '1';
+            if (isEnabled && acumaticaConnected) {
+                // Disconnect
+                localStorage.removeItem(STORAGE_KEY_ACM);
+                acumaticaConnected = false;
+                renderAcumaticaDisconnected();
+                showToast('Acumatica disconnected', 'info');
+            } else {
+                // Connect
+                localStorage.setItem(STORAGE_KEY_ACM, '1');
+                checkAcumaticaConnection();
+            }
+        }
+
+        // ── Toggle: Database ─────────────────────────────────────────────────
+        function toggleDatabaseConnection() {
+            const isEnabled = localStorage.getItem(STORAGE_KEY_DB) === '1';
+            if (isEnabled && databaseConnected) {
+                // Disconnect
+                localStorage.removeItem(STORAGE_KEY_DB);
+                databaseConnected = false;
+                renderDatabaseDisconnected();
+                showToast('Database disconnected', 'info');
+            } else {
+                // Connect
+                localStorage.setItem(STORAGE_KEY_DB, '1');
+                checkDatabaseConnection();
+            }
+        }
+
+        // ── Check Acumatica (ping server) ────────────────────────────────────
+        async function checkAcumaticaConnection(silent = false) {
+            const acmEl = document.getElementById('acumatica-status');
+            acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-yellow-500 spin"></div>
+                <span class="font-label-sm text-label-sm text-yellow-600">Connecting…</span>`;
+            acmEl.className = 'flex items-center gap-xs px-2 py-1 bg-yellow-50 rounded cursor-pointer hover:bg-yellow-100 transition-colors';
+
             try {
                 const res = await fetch('/api/connection-status');
                 const data = await res.json();
 
-                // Acumatica
-                const acmEl = document.getElementById('acumatica-status');
-                if (data.acumatica.connected) {
+                if (data.acumatica && data.acumatica.connected) {
+                    acumaticaConnected = true;
                     acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-green-600"></div>
                         <span class="font-label-sm text-label-sm text-green-700">Acumatica ${data.acumatica.ping_ms}ms</span>`;
-                    acmEl.className = 'flex items-center gap-xs px-2 py-1 bg-green-50 rounded';
+                    acmEl.className = 'flex items-center gap-xs px-2 py-1 bg-green-50 rounded cursor-pointer hover:bg-green-100 transition-colors';
+                    acmEl.title = 'Connected — Click to disconnect';
+                    if (!silent) showToast('Acumatica connected successfully', 'success');
                 } else {
+                    acumaticaConnected = false;
                     acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-600"></div>
                         <span class="font-label-sm text-label-sm text-red-700">Acumatica Offline</span>`;
-                    acmEl.className = 'flex items-center gap-xs px-2 py-1 bg-red-50 rounded';
+                    acmEl.className = 'flex items-center gap-xs px-2 py-1 bg-red-50 rounded cursor-pointer hover:bg-red-100 transition-colors';
+                    acmEl.title = 'Connection failed — Click to retry';
+                    if (!silent) showToast('Acumatica connection failed', 'error');
                 }
 
-                // Database Server
-                const sqlEl = document.getElementById('sql-status');
-                if (data.database && data.database.connected) {
-                    sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-green-600"></div>
-                        <span class="font-label-sm text-label-sm text-green-700">${data.database.type} ${data.database.ping_ms}ms</span>`;
-                    sqlEl.className = 'flex items-center gap-xs px-2 py-1 bg-green-50 rounded';
-                } else if (data.database) {
-                    sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-600"></div>
-                        <span class="font-label-sm text-label-sm text-red-700">${data.database.type} Offline</span>`;
-                    sqlEl.className = 'flex items-center gap-xs px-2 py-1 bg-red-50 rounded';
-                } else if (data.sql_server) {
-                    // Fallback for older format if cached
-                    if (data.sql_server.connected) {
-                        sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-green-600"></div>
-                            <span class="font-label-sm text-label-sm text-green-700">SQL Server ${data.sql_server.ping_ms}ms</span>`;
-                        sqlEl.className = 'flex items-center gap-xs px-2 py-1 bg-green-50 rounded';
-                    } else {
-                        sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-600"></div>
-                            <span class="font-label-sm text-label-sm text-red-700">SQL Server Offline</span>`;
-                        sqlEl.className = 'flex items-center gap-xs px-2 py-1 bg-red-50 rounded';
-                    }
+                // Also update database if it's enabled
+                if (localStorage.getItem(STORAGE_KEY_DB) === '1') {
+                    renderDatabaseFromData(data);
                 }
             } catch (e) {
-                console.error('Connection check failed:', e);
+                acumaticaConnected = false;
+                acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-600"></div>
+                    <span class="font-label-sm text-label-sm text-red-700">Error</span>`;
+                acmEl.className = 'flex items-center gap-xs px-2 py-1 bg-red-50 rounded cursor-pointer hover:bg-red-100 transition-colors';
+                if (!silent) showToast('Connection check failed: ' + e.message, 'error');
+            }
+        }
+
+        // ── Check Database (ping server) ─────────────────────────────────────
+        async function checkDatabaseConnection(silent = false) {
+            const sqlEl = document.getElementById('sql-status');
+            sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-yellow-500 spin"></div>
+                <span class="font-label-sm text-label-sm text-yellow-600">Connecting…</span>`;
+            sqlEl.className = 'flex items-center gap-xs px-2 py-1 bg-yellow-50 rounded cursor-pointer hover:bg-yellow-100 transition-colors';
+
+            try {
+                const res = await fetch('/api/connection-status');
+                const data = await res.json();
+
+                renderDatabaseFromData(data);
+
+                if (data.database && data.database.connected) {
+                    if (!silent) showToast(`${data.database.type} connected successfully`, 'success');
+                } else {
+                    if (!silent) showToast('Database connection failed', 'error');
+                }
+
+                // Also update acumatica if it's enabled
+                if (localStorage.getItem(STORAGE_KEY_ACM) === '1') {
+                    renderAcumaticaFromData(data);
+                }
+            } catch (e) {
+                databaseConnected = false;
+                sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-600"></div>
+                    <span class="font-label-sm text-label-sm text-red-700">Error</span>`;
+                sqlEl.className = 'flex items-center gap-xs px-2 py-1 bg-red-50 rounded cursor-pointer hover:bg-red-100 transition-colors';
+                if (!silent) showToast('Connection check failed: ' + e.message, 'error');
+            }
+        }
+
+        // ── Render helpers ───────────────────────────────────────────────────
+        function renderAcumaticaDisconnected() {
+            const el = document.getElementById('acumatica-status');
+            el.innerHTML = `<div class="w-2 h-2 rounded-full bg-gray-400"></div>
+                <span class="font-label-sm text-label-sm text-gray-500">Acumatica</span>`;
+            el.className = 'flex items-center gap-xs px-2 py-1 bg-gray-50 rounded cursor-pointer hover:bg-gray-100 transition-colors';
+            el.title = 'Click to connect';
+        }
+
+        function renderDatabaseDisconnected() {
+            const el = document.getElementById('sql-status');
+            el.innerHTML = `<div class="w-2 h-2 rounded-full bg-gray-400"></div>
+                <span class="font-label-sm text-label-sm text-gray-500">Database</span>`;
+            el.className = 'flex items-center gap-xs px-2 py-1 bg-gray-50 rounded cursor-pointer hover:bg-gray-100 transition-colors';
+            el.title = 'Click to connect';
+        }
+
+        function renderAcumaticaFromData(data) {
+            const acmEl = document.getElementById('acumatica-status');
+            if (data.acumatica && data.acumatica.connected) {
+                acumaticaConnected = true;
+                acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-green-600"></div>
+                    <span class="font-label-sm text-label-sm text-green-700">Acumatica ${data.acumatica.ping_ms}ms</span>`;
+                acmEl.className = 'flex items-center gap-xs px-2 py-1 bg-green-50 rounded cursor-pointer hover:bg-green-100 transition-colors';
+                acmEl.title = 'Connected — Click to disconnect';
+            } else if (data.acumatica) {
+                acumaticaConnected = false;
+                acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-600"></div>
+                    <span class="font-label-sm text-label-sm text-red-700">Acumatica Offline</span>`;
+                acmEl.className = 'flex items-center gap-xs px-2 py-1 bg-red-50 rounded cursor-pointer hover:bg-red-100 transition-colors';
+                acmEl.title = 'Connection failed — Click to retry';
+            }
+        }
+
+        function renderDatabaseFromData(data) {
+            const sqlEl = document.getElementById('sql-status');
+            if (data.database && data.database.connected) {
+                databaseConnected = true;
+                sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-green-600"></div>
+                    <span class="font-label-sm text-label-sm text-green-700">${data.database.type} ${data.database.ping_ms}ms</span>`;
+                sqlEl.className = 'flex items-center gap-xs px-2 py-1 bg-green-50 rounded cursor-pointer hover:bg-green-100 transition-colors';
+                sqlEl.title = 'Connected — Click to disconnect';
+            } else if (data.database) {
+                databaseConnected = false;
+                sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-600"></div>
+                    <span class="font-label-sm text-label-sm text-red-700">${data.database.type} Offline</span>`;
+                sqlEl.className = 'flex items-center gap-xs px-2 py-1 bg-red-50 rounded cursor-pointer hover:bg-red-100 transition-colors';
+                sqlEl.title = 'Connection failed — Click to retry';
             }
         }
 
@@ -295,9 +438,29 @@
             }
         }
 
-        // Init
+        // ── Init: auto-connect if previously enabled ─────────────────────────
         document.addEventListener('DOMContentLoaded', () => {
-            checkConnections();
+            const acmEnabled = localStorage.getItem(STORAGE_KEY_ACM) === '1';
+            const dbEnabled  = localStorage.getItem(STORAGE_KEY_DB) === '1';
+
+            if (acmEnabled && dbEnabled) {
+                // Both enabled — single API call updates both
+                checkAcumaticaConnection(true);
+            } else if (acmEnabled) {
+                checkAcumaticaConnection(true);
+            } else if (dbEnabled) {
+                checkDatabaseConnection(true);
+            }
+            // If neither enabled → stay gray "Not Connected"
+
+            // Close user dropdown on outside click
+            document.addEventListener('click', (e) => {
+                const dd = document.getElementById('user-dropdown');
+                const container = document.getElementById('user-dropdown-container');
+                if (dd && container && !container.contains(e.target)) {
+                    dd.classList.add('hidden');
+                }
+            });
         });
     </script>
 
