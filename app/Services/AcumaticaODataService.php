@@ -169,29 +169,49 @@ class AcumaticaODataService
     /**
      * Fetch ALL records from an OData entity using pagination.
      *
-     * @return array  Flat array of records.
+     * @param string $odataEntity
+     * @param string $filter
+     * @param callable|null $onProgress function($current, $total)
+     * @param callable|null $onPageFetched function(array $recordsChunk)
+     * @return array  Flat array of records (only if $onPageFetched is NOT provided).
      */
-    public function fetchAllRecords(string $odataEntity, string $filter = ''): array
+    public function fetchAllRecords(string $odataEntity, string $filter = '', ?callable $onProgress = null, ?callable $onPageFetched = null): array
     {
         $allRecords = [];
         $skip = 0;
         $hasMore = true;
+        $totalFetched = 0;
 
         while ($hasMore) {
             $result = $this->fetchPage($odataEntity, $this->pageSize, $skip, $filter);
 
             $records = $result['value'] ?? [];
-            $allRecords = array_merge($allRecords, $records);
+            $recordsCount = count($records);
+            $totalFetched += $recordsCount;
+            
+            $total = isset($result['@odata.count']) ? (int) $result['@odata.count'] : null;
+
+            if ($onProgress) {
+                $onProgress($totalFetched, $total);
+            }
+            
+            if ($onPageFetched) {
+                if ($recordsCount > 0) {
+                    $onPageFetched($records);
+                }
+            } else {
+                $allRecords = array_merge($allRecords, $records);
+            }
 
             // OData v4 often omits @odata.nextLink when the client explicitly requests $top and $skip.
             // Therefore, if we received a full page (count == pageSize), we must assume there is more data.
-            if (isset($result['@odata.nextLink']) || count($records) === $this->pageSize) {
+            if (isset($result['@odata.nextLink']) || $recordsCount === $this->pageSize) {
                 $skip += $this->pageSize;
             } else {
                 $hasMore = false;
             }
 
-            Log::debug("Acumatica OData: Fetched " . count($records) . " records from {$odataEntity}, total so far: " . count($allRecords));
+            Log::debug("Acumatica OData: Fetched {$recordsCount} records from {$odataEntity}, total so far: {$totalFetched}");
         }
 
         return $allRecords;

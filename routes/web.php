@@ -47,6 +47,7 @@ Route::middleware(['auth'])->group(function () {
 
     Route::post('/sync/all', [SyncController::class, 'syncAll'])->name('sync.all');
     Route::post('/sync/{entity}', [SyncController::class, 'syncEntity'])->name('sync.entity');
+    Route::get('/sync/{entity}/progress', [SyncController::class, 'progress'])->name('sync.progress');
     Route::get('/sync/logs', [SyncController::class, 'logs'])->name('sync.logs');
     Route::get('/sync/status', [SyncController::class, 'status'])->name('sync.status');
 

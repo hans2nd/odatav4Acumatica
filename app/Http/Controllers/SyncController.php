@@ -58,6 +58,7 @@ class SyncController extends Controller
     public function syncEntity(Request $request, SyncService $syncService, string $entity): JsonResponse
     {
         set_time_limit(0);
+        ini_set('memory_limit', '1024M');
 
         $config = config("acumatica.entities.{$entity}");
         if (! $config) {
@@ -126,6 +127,19 @@ class SyncController extends Controller
             'running'   => $running,
             'latest'    => $latestPerEntity,
             'is_syncing' => $running->isNotEmpty(),
+        ]);
+    }
+
+    /**
+     * Get real-time sync progress for an entity.
+     */
+    public function progress(string $entity): JsonResponse
+    {
+        $progress = \Illuminate\Support\Facades\Cache::get("sync_progress_{$entity}");
+        
+        return response()->json([
+            'success' => true,
+            'progress' => $progress
         ]);
     }
 

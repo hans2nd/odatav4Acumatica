@@ -161,10 +161,53 @@ class SyncService
             $finalFilterString = implode(' and ', $finalFilters);
             // --- END CUSTOM FILTERS ---
 
-            // 2. Fetch records via OData
+            $progressKey = "sync_progress_{$entityKey}";
+            \Illuminate\Support\Facades\Cache::put($progressKey, [
+                'current' => 0,
+                'total' => null,
+                'status' => 'fetching'
+            ], 3600);
+
+            // 2. Fetch records via OData and process them in chunks
             Log::info("Sync [{$entityKey}]: Fetching data from {$odataEntity}…");
-            $records = $this->odataService->fetchAllRecords($odataEntity, $finalFilterString);
-            $fetchedCount = count($records);
+            
+            $fetchedCount = 0;
+            $insertedCount = 0;
+            $hasData = false;
+
+            $this->odataService->fetchAllRecords($odataEntity, $finalFilterString, 
+                function($current, $total) use ($progressKey) {
+                    \Illuminate\Support\Facades\Cache::put($progressKey, [
+                        'current' => $current,
+                        'total' => $total,
+                        'status' => 'fetching'
+                    ], 3600);
+                },
+                function($recordsChunk) use (&$fetchedCount, &$insertedCount, &$hasData, $tableName, $isIncremental, $customFilters, $progressKey) {
+                    $isFirstChunk = !$hasData;
+                    $hasData = true;
+                    
+                    $fetchedCount += count($recordsChunk);
+                    
+                    // 3. Ensure table exists (create from first record if needed)
+                    if ($isFirstChunk) {
+                        $this->schemaManager->ensureTable($tableName, $recordsChunk[0]);
+                    }
+
+                    // 4. Clean records (remove @odata.* metadata, sanitize column names)
+                    $cleanData = $this->schemaManager->cleanRecords($recordsChunk);
+
+                    // 5. Upsert existing data or Insert new data
+                    if ($isIncremental) {
+                        $inserted = $this->upsertTableData($tableName, $cleanData, $customFilters, $progressKey, $isFirstChunk, $insertedCount);
+                    } else {
+                        $inserted = $this->replaceTableData($tableName, $cleanData, $progressKey, $isFirstChunk, $insertedCount);
+                    }
+                    
+                    $insertedCount += $inserted;
+                }
+            );
+
             Log::info("Sync [{$entityKey}]: Fetched {$fetchedCount} records.");
 
             if ($fetchedCount === 0) {
@@ -182,19 +225,6 @@ class SyncService
                 return $log;
             }
 
-            // 3. Ensure table exists (create from first record if needed)
-            $this->schemaManager->ensureTable($tableName, $records[0]);
-
-            // 4. Clean records (remove @odata.* metadata, sanitize column names)
-            $cleanData = $this->schemaManager->cleanRecords($records);
-
-            // 5. Upsert existing data or Insert new data in a transaction
-            if ($isIncremental) {
-                $insertedCount = $this->upsertTableData($tableName, $cleanData, $customFilters);
-            } else {
-                $insertedCount = $this->replaceTableData($tableName, $cleanData);
-            }
-
             // 6. Update log
             $log->update([
                 'status'           => 'success',
@@ -210,6 +240,8 @@ class SyncService
             if ($this->odataService->usesSessionAuth()) {
                 $this->odataService->logout();
             }
+
+            \Illuminate\Support\Facades\Cache::forget($progressKey);
 
             return $log;
 
@@ -231,6 +263,10 @@ class SyncService
                     $this->odataService->logout();
                 }
             } catch (\Throwable $ignored) {
+            }
+
+            if (isset($progressKey)) {
+                \Illuminate\Support\Facades\Cache::forget($progressKey);
             }
 
             return $log;
@@ -300,15 +336,17 @@ class SyncService
     */
 
     /**
-     * Replace all data in a table: DELETE existing → INSERT new in a transaction.
+     * Replace data in a table for a chunk. If it's the first chunk, truncate existing rows first.
      */
-    private function replaceTableData(string $tableName, array $cleanData): int
+    private function replaceTableData(string $tableName, array $cleanData, ?string $progressKey = null, bool $isFirstChunk = false, int $baseInserted = 0): int
     {
         $inserted = 0;
-
-        DB::transaction(function () use ($tableName, $cleanData, &$inserted) {
-            // Delete all existing rows
-            DB::table($tableName)->delete();
+        
+        DB::transaction(function () use ($tableName, $cleanData, &$inserted, $progressKey, $isFirstChunk, $baseInserted) {
+            // Delete all existing rows ONLY on the first chunk
+            if ($isFirstChunk) {
+                DB::table($tableName)->delete();
+            }
 
             // SQL Server supports a maximum of 2100 parameters per statement.
             $columnCount = max(count($cleanData[0] ?? []), 1);
@@ -318,6 +356,14 @@ class SyncService
             foreach ($chunks as $chunk) {
                 DB::table($tableName)->insert($chunk);
                 $inserted += count($chunk);
+                
+                if ($progressKey) {
+                    \Illuminate\Support\Facades\Cache::put($progressKey, [
+                        'current' => $baseInserted + $inserted,
+                        'total' => null,
+                        'status' => 'inserting'
+                    ], 3600);
+                }
             }
         });
 
@@ -325,14 +371,14 @@ class SyncService
     }
 
     /**
-     * Upsert data in a table: UPDATE existing if ID matches → INSERT new in a transaction.
-     * For entities without id/NoteID, uses filter-scope delete or _row_hash dedup.
+     * Upsert data in a table for a chunk.
+     * For entities without id/NoteID, uses filter-scope delete (only on first chunk) or _row_hash dedup.
      */
-    private function upsertTableData(string $tableName, array $cleanData, array $customFilters = []): int
+    private function upsertTableData(string $tableName, array $cleanData, array $customFilters = [], ?string $progressKey = null, bool $isFirstChunk = false, int $baseInserted = 0): int
     {
         $insertedOrUpdated = 0;
 
-        DB::transaction(function () use ($tableName, $cleanData, &$insertedOrUpdated, $customFilters) {
+        DB::transaction(function () use ($tableName, $cleanData, &$insertedOrUpdated, $customFilters, $progressKey, $isFirstChunk, $baseInserted) {
             $hasId = isset($cleanData[0]['id']);
             $hasNoteId = isset($cleanData[0]['NoteID']);
 
@@ -360,17 +406,27 @@ class SyncService
                     }
 
                     $insertedOrUpdated++;
+                    
+                    if ($progressKey && $insertedOrUpdated % 50 === 0) {
+                        \Illuminate\Support\Facades\Cache::put($progressKey, [
+                            'current' => $baseInserted + $insertedOrUpdated,
+                            'total' => null,
+                            'status' => 'inserting'
+                        ], 3600);
+                    }
                 }
             } else {
                 // --- Strategy B: No unique key (e.g. SQL View entities) ---
                 if (!empty($customFilters)) {
-                    // Delete existing rows that fall within the same filter scope,
-                    // then insert the fresh data. This prevents duplication.
-                    $deletedCount = $this->deleteByFilterScope($tableName, $customFilters);
-                    Log::info("Sync: Deleted {$deletedCount} existing rows from [{$tableName}] within filter scope before re-insert.");
+                    // Only delete existing rows within scope on the FIRST chunk,
+                    // otherwise subsequent chunks will delete rows inserted by previous chunks!
+                    if ($isFirstChunk) {
+                        $deletedCount = $this->deleteByFilterScope($tableName, $customFilters);
+                        Log::info("Sync: Deleted {$deletedCount} existing rows from [{$tableName}] within filter scope before re-insert.");
+                    }
                 } else {
                     // No custom filters — delete rows with matching _row_hash
-                    // to prevent exact-duplicate inserts.
+                    // to prevent exact-duplicate inserts within this chunk.
                     $hashes = array_filter(array_column($cleanData, '_row_hash'));
                     if (!empty($hashes)) {
                         foreach (array_chunk($hashes, 500) as $hashChunk) {
@@ -380,7 +436,7 @@ class SyncService
                 }
 
                 // Bulk insert the fresh data
-                $insertedOrUpdated = $this->bulkInsertData($tableName, $cleanData);
+                $insertedOrUpdated = $this->bulkInsertData($tableName, $cleanData, $progressKey, $baseInserted);
             }
         });
 
@@ -440,7 +496,7 @@ class SyncService
     /**
      * Bulk insert data into a table, respecting the SQL parameter limit.
      */
-    private function bulkInsertData(string $tableName, array $cleanData): int
+    private function bulkInsertData(string $tableName, array $cleanData, ?string $progressKey = null, int $baseInserted = 0): int
     {
         $inserted = 0;
         $columnCount = max(count($cleanData[0] ?? []), 1);
@@ -450,6 +506,14 @@ class SyncService
         foreach ($chunks as $chunk) {
             DB::table($tableName)->insert($chunk);
             $inserted += count($chunk);
+            
+            if ($progressKey) {
+                \Illuminate\Support\Facades\Cache::put($progressKey, [
+                    'current' => $baseInserted + $inserted,
+                    'total' => null,
+                    'status' => 'inserting'
+                ], 3600);
+            }
         }
 
         return $inserted;

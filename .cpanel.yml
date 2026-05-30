@@ -1,0 +1,5 @@
+---
+deployment:
+  tasks:
+    - export DEPLOYPATH=/home/panganlestariid/public_html/subdom/datawhs.panganlestari.id/
+    - /bin/cp -R * $DEPLOYPATH

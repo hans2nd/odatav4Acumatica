@@ -121,6 +121,16 @@
                 <div id="showEmptyFiltersMsg" class="py-md text-center border border-dashed border-outline-variant rounded bg-surface-container-lowest">
                     <p class="font-body-md text-body-md text-on-surface-variant">No filters added. This will sync all data.</p>
                 </div>
+                
+                <div id="showSyncProgressContainer" class="hidden mt-4">
+                    <div class="flex justify-between items-center mb-1">
+                        <span id="showSyncProgressLabel" class="font-label-sm text-label-sm text-on-surface">Syncing...</span>
+                        <span id="showSyncProgressPercent" class="font-label-sm text-label-sm text-on-surface-variant">0%</span>
+                    </div>
+                    <div class="w-full bg-surface-variant rounded-full h-2">
+                        <div id="showSyncProgressBar" class="bg-primary h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                    </div>
+                </div>
             </div>
         </div>
         
@@ -280,6 +290,35 @@
         const originalText = btnEl.innerHTML;
         btnEl.innerHTML = '<span class="material-symbols-outlined text-sm spin">sync</span> Syncing...';
         
+        document.getElementById('showSyncProgressContainer').classList.remove('hidden');
+        document.getElementById('showSyncProgressBar').style.width = '0%';
+        document.getElementById('showSyncProgressPercent').innerText = '0%';
+        document.getElementById('showSyncProgressLabel').innerText = 'Initializing...';
+        
+        let syncInterval = setInterval(async () => {
+            try {
+                const progRes = await fetch(`/sync/${showEntityKey}/progress`);
+                const progData = await progRes.json();
+                if (progData.success && progData.progress) {
+                    const prog = progData.progress;
+                    let percent = 0;
+                    if (prog.total) {
+                        percent = Math.round((prog.current / prog.total) * 100);
+                    }
+                    
+                    document.getElementById('showSyncProgressBar').style.width = `${percent}%`;
+                    document.getElementById('showSyncProgressPercent').innerText = `${percent}%`;
+                    
+                    let label = 'Syncing...';
+                    if (prog.status === 'fetching') label = `Fetching data from Acumatica... (${prog.current} records)`;
+                    else if (prog.status === 'inserting') label = `Saving to database... (${prog.current}/${prog.total})`;
+                    document.getElementById('showSyncProgressLabel').innerText = label;
+                }
+            } catch (e) {
+                // Ignore poll errors
+            }
+        }, 1000);
+        
         try {
             const res = await fetch(`/sync/${showEntityKey}`, {
                 method: 'POST',
@@ -293,6 +332,11 @@
             
             const data = await res.json();
             
+            clearInterval(syncInterval);
+            document.getElementById('showSyncProgressBar').style.width = '100%';
+            document.getElementById('showSyncProgressPercent').innerText = '100%';
+            document.getElementById('showSyncProgressLabel').innerText = 'Completed!';
+            
             if (data.success) {
                 showToast(`${showEntityKey}: ${data.records} records synced in ${data.duration}`, 'success');
                 closeShowSyncModal();
@@ -301,11 +345,14 @@
                 showToast(`${showEntityKey}: ${data.error || data.message}`, 'error');
                 btnEl.disabled = false;
                 btnEl.innerHTML = originalText;
+                document.getElementById('showSyncProgressContainer').classList.add('hidden');
             }
         } catch (e) {
+            clearInterval(syncInterval);
             showToast(`${showEntityKey}: ${e.message}`, 'error');
             btnEl.disabled = false;
             btnEl.innerHTML = originalText;
+            document.getElementById('showSyncProgressContainer').classList.add('hidden');
         }
     }
 </script>
