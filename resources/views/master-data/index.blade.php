@@ -198,7 +198,9 @@
                 <option value="startswith">Starts With</option>
                 <option value="endswith">Ends With</option>
                 <option value="gt">Greater (>)</option>
+                <option value="ge">Greater Eq (>=)</option>
                 <option value="lt">Less (<)</option>
+                <option value="le">Less Eq (<=)</option>
             </select>
             <input type="text" class="filter-value flex-1 rounded border-outline-variant bg-surface-container-lowest text-on-surface text-body-md focus:border-primary focus:ring focus:ring-primary/20" placeholder="Value...">
             <button onclick="removeFilterRow(this)" class="p-2 text-error hover:bg-error-container rounded transition-colors" title="Remove filter">
