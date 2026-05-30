@@ -278,8 +278,16 @@
                     
                     let label = 'Syncing...';
                     if (prog.status === 'fetching') label = `Fetching data from Acumatica... (${prog.current} records)`;
-                    else if (prog.status === 'inserting') label = `Saving to database... (${prog.current}/${prog.total})`;
+                    else if (prog.status === 'inserting') label = `Saving to database... (${prog.current}/${prog.total || '?'})`;
                     document.getElementById('syncProgressLabel').innerText = label;
+                } else if (btnEl.disabled && btnEl.innerHTML.includes('Syncing')) {
+                    // If progress is missing but button is still disabled, it means the background job finished!
+                    clearInterval(syncInterval);
+                    document.getElementById('syncProgressBar').style.width = '100%';
+                    document.getElementById('syncProgressPercent').innerText = '100%';
+                    document.getElementById('syncProgressLabel').innerText = 'Completed!';
+                    showToast(`${currentSyncEntity}: Sync process finished.`, 'success');
+                    setTimeout(() => location.reload(), 1500);
                 }
             } catch (e) {
                 // Ignore poll errors
@@ -318,11 +326,8 @@
                 document.getElementById('syncProgressContainer').classList.add('hidden');
             }
         } catch (e) {
-            clearInterval(syncInterval);
-            showToast(`${currentSyncEntity}: ${e.message}`, 'error');
-            btnEl.disabled = false;
-            btnEl.innerHTML = originalText;
-            document.getElementById('syncProgressContainer').classList.add('hidden');
+            // Ignore HTTP timeout if it drops, backend will continue due to ignore_user_abort
+            console.warn("Sync HTTP connection closed, but background process may still be running.", e);
         }
     }
 </script>

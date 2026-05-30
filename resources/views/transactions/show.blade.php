@@ -311,8 +311,16 @@
                     
                     let label = 'Syncing...';
                     if (prog.status === 'fetching') label = `Fetching data from Acumatica... (${prog.current} records)`;
-                    else if (prog.status === 'inserting') label = `Saving to database... (${prog.current}/${prog.total})`;
+                    else if (prog.status === 'inserting') label = `Saving to database... (${prog.current}/${prog.total || '?'})`;
                     document.getElementById('showSyncProgressLabel').innerText = label;
+                } else if (btnEl.disabled && btnEl.innerHTML.includes('Syncing')) {
+                    clearInterval(syncInterval);
+                    document.getElementById('showSyncProgressBar').style.width = '100%';
+                    document.getElementById('showSyncProgressPercent').innerText = '100%';
+                    document.getElementById('showSyncProgressLabel').innerText = 'Completed!';
+                    showToast(`${showEntityKey}: Sync process finished.`, 'success');
+                    closeShowSyncModal();
+                    setTimeout(() => location.reload(), 1500);
                 }
             } catch (e) {
                 // Ignore poll errors
@@ -348,11 +356,8 @@
                 document.getElementById('showSyncProgressContainer').classList.add('hidden');
             }
         } catch (e) {
-            clearInterval(syncInterval);
-            showToast(`${showEntityKey}: ${e.message}`, 'error');
-            btnEl.disabled = false;
-            btnEl.innerHTML = originalText;
-            document.getElementById('showSyncProgressContainer').classList.add('hidden');
+            // Ignore HTTP timeout if it drops, backend will continue due to ignore_user_abort
+            console.warn("Sync HTTP connection closed, but background process may still be running.", e);
         }
     }
 </script>

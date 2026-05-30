@@ -59,6 +59,7 @@ class SyncController extends Controller
     {
         set_time_limit(0);
         ini_set('memory_limit', '1024M');
+        ignore_user_abort(true);
 
         $config = config("acumatica.entities.{$entity}");
         if (! $config) {
