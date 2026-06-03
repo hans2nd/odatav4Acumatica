@@ -127,13 +127,29 @@ class AcumaticaODataService
         }
 
         $pathParts[] = $odataEntity;
-        $url = implode('/', $pathParts) . sprintf('?$top=%d&$skip=%d&$count=true', $top, $skip);
+        
+        $isV4 = config('acumatica.odata_path', 'odatav4') === 'odatav4';
+        $queryCount = $isV4 ? '&$count=true' : '&$inlinecount=allpages&$format=json';
+        
+        $url = implode('/', $pathParts) . sprintf('?$top=%d&$skip=%d%s', $top, $skip, $queryCount);
         
         if (!empty($filter)) {
             $url .= '&$filter=' . rawurlencode($filter);
         }
 
-        Log::debug("Acumatica OData: Fetching {$odataEntity}", ['url' => $url, 'skip' => $skip]);
+        return $this->fetchPageByUrl($url, $odataEntity);
+    }
+
+    /**
+     * Fetch a single page of data using a direct URL.
+     */
+    public function fetchPageByUrl(string $url, string $odataEntity = 'unknown'): array
+    {
+        if ($this->usesSessionAuth()) {
+            $this->ensureAuthenticated();
+        }
+
+        Log::debug("Acumatica OData: Fetching URL", ['url' => $url]);
 
         $request = Http::withOptions([
             'verify'  => $this->verifySsl,
@@ -153,6 +169,7 @@ class AcumaticaODataService
             Log::error("Acumatica OData: Failed to fetch {$odataEntity}", [
                 'status' => $response->status(),
                 'body'   => mb_substr($body, 0, 1000),
+                'url'    => $url,
             ]);
             $hint = $response->status() === 404
                 ? ' Entity not found in OData. Check that the Generic Inquiry/entity name is exposed for OData.'
@@ -181,15 +198,26 @@ class AcumaticaODataService
         $skip = 0;
         $hasMore = true;
         $totalFetched = 0;
+        $nextLink = null;
 
         while ($hasMore) {
-            $result = $this->fetchPage($odataEntity, $this->pageSize, $skip, $filter);
+            if ($nextLink) {
+                // Fetch using nextLink directly if provided by the previous response
+                $result = $this->fetchPageByUrl($nextLink, $odataEntity);
+            } else {
+                $result = $this->fetchPage($odataEntity, $this->pageSize, $skip, $filter);
+            }
 
-            $records = $result['value'] ?? [];
+            $records = $result['d']['results'] ?? $result['value'] ?? [];
             $recordsCount = count($records);
             $totalFetched += $recordsCount;
             
-            $total = isset($result['@odata.count']) ? (int) $result['@odata.count'] : null;
+            $total = null;
+            if (isset($result['@odata.count'])) {
+                $total = (int) $result['@odata.count'];
+            } elseif (isset($result['d']['__count'])) {
+                $total = (int) $result['d']['__count'];
+            }
 
             if ($onProgress) {
                 $onProgress($totalFetched, $total);
@@ -203,10 +231,14 @@ class AcumaticaODataService
                 $allRecords = array_merge($allRecords, $records);
             }
 
-            // OData v4 often omits @odata.nextLink when the client explicitly requests $top and $skip.
-            // Therefore, if we received a full page (count == pageSize), we must assume there is more data.
-            if (isset($result['@odata.nextLink']) || $recordsCount === $this->pageSize) {
+            $nextLink = $result['@odata.nextLink'] ?? $result['d']['__next'] ?? null;
+
+            if ($nextLink) {
+                $hasMore = true;
+            } elseif ($recordsCount === $this->pageSize) {
+                // Fallback: manually paginate with skip if no nextLink was provided but we got a full page
                 $skip += $this->pageSize;
+                $hasMore = true;
             } else {
                 $hasMore = false;
             }

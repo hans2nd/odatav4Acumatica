@@ -283,6 +283,7 @@
                 } else if (btnEl.disabled && btnEl.innerHTML.includes('Syncing')) {
                     // If progress is missing but button is still disabled, it means the background job finished!
                     clearInterval(syncInterval);
+                    btnEl.innerHTML = 'Completed'; // Prevent overlapping toast
                     document.getElementById('syncProgressBar').style.width = '100%';
                     document.getElementById('syncProgressPercent').innerText = '100%';
                     document.getElementById('syncProgressLabel').innerText = 'Completed!';

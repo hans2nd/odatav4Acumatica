@@ -80,7 +80,10 @@ class SyncService
                     if ($maxModifiedStr) {
                         try {
                             // Preserve milliseconds to prevent continuously re-fetching the exact same last record
-                            $odataDate = \Carbon\Carbon::parse($maxModifiedStr)->setTimezone('UTC')->format('Y-m-d\TH:i:s.v\Z');
+                            $isV4 = config('acumatica.odata_path', 'odatav4') === 'odatav4';
+                            $dateStr = \Carbon\Carbon::parse($maxModifiedStr)->setTimezone('UTC')->format('Y-m-d\TH:i:s.v');
+                            $odataDate = $isV4 ? "{$dateStr}Z" : "datetime'{$dateStr}'";
+                            
                             $filter = "LastModifiedDateTime gt {$odataDate}";
                             $isIncremental = true;
                             Log::info("Sync [{$entityKey}]: Incremental sync starting from {$odataDate}");
@@ -115,8 +118,9 @@ class SyncService
                             } else {
                                 $date = \Carbon\Carbon::parse($valSafe);
                             }
-                            // Convert to ISO 8601 UTC (OData v4 DateTimeOffset literal format)
-                            $parsedDateStr = $date->setTimezone('UTC')->format('Y-m-d\TH:i:s\Z');
+                            $isV4 = config('acumatica.odata_path', 'odatav4') === 'odatav4';
+                            $dateStr = $date->setTimezone('UTC')->format('Y-m-d\TH:i:s.v');
+                            $parsedDateStr = $isV4 ? "{$dateStr}Z" : "datetime'{$dateStr}'";
                         } catch (\Exception $e) {
                             $parsedDateStr = null;
                         }

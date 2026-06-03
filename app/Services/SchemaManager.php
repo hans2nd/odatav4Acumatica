@@ -152,7 +152,7 @@ class SchemaManager
     {
         return array_values(array_filter(
             array_keys($row),
-            fn (string $key) => ! str_starts_with($key, '@') && ! str_starts_with($key, 'odata.')
+            fn (string $key) => ! str_starts_with($key, '@') && ! str_starts_with($key, 'odata.') && $key !== '__metadata'
         ));
     }
 
@@ -191,7 +191,7 @@ class SchemaManager
         $clean = [];
 
         foreach ($record as $key => $value) {
-            if (str_starts_with($key, '@') || str_starts_with($key, 'odata.')) {
+            if (str_starts_with($key, '@') || str_starts_with($key, 'odata.') || $key === '__metadata') {
                 continue;
             }
 

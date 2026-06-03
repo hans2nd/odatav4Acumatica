@@ -315,6 +315,7 @@
                     document.getElementById('showSyncProgressLabel').innerText = label;
                 } else if (btnEl.disabled && btnEl.innerHTML.includes('Syncing')) {
                     clearInterval(syncInterval);
+                    btnEl.innerHTML = 'Completed'; // Prevent overlapping toast
                     document.getElementById('showSyncProgressBar').style.width = '100%';
                     document.getElementById('showSyncProgressPercent').innerText = '100%';
                     document.getElementById('showSyncProgressLabel').innerText = 'Completed!';
