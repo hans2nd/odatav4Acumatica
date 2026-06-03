@@ -28,6 +28,7 @@ class SettingsController extends Controller
             'dbName'            => config("database.connections.{$dbConnection}.database"),
             'dbUsername'        => config("database.connections.{$dbConnection}.username"),
             'dbPassword'        => config("database.connections.{$dbConnection}.password"),
+            'odataPath'         => config('acumatica.odata_path'),
             'entities'          => $entities,
             'activeTab'         => 'settings',
         ]);
@@ -44,6 +45,7 @@ class SettingsController extends Controller
             'password'   => 'required|string|max:255',
             'tenant'     => 'nullable|string|max:100',
             'verify_ssl' => 'nullable|boolean',
+            'odata_path' => 'required|in:odata,odatav4',
         ]);
 
         try {
@@ -52,6 +54,7 @@ class SettingsController extends Controller
             $this->setEnvValue('ACUMATICA_PASSWORD', $validated['password']);
             $this->setEnvValue('ACUMATICA_TENANT', $validated['tenant'] ?? '');
             $this->setEnvValue('ACUMATICA_VERIFY_SSL', ($validated['verify_ssl'] ?? false) ? 'true' : 'false');
+            $this->setEnvValue('ACUMATICA_ODATA_PATH', $validated['odata_path']);
 
             // Clear config cache so changes take effect immediately
             Artisan::call('config:clear');
@@ -185,6 +188,7 @@ class SettingsController extends Controller
                 'tenant'   => 'nullable|string',
                 'username' => 'required|string',
                 'password' => 'required|string',
+                'odata_path' => 'required|in:odata,odatav4',
             ]);
 
             try {
@@ -193,6 +197,7 @@ class SettingsController extends Controller
                     'acumatica.tenant'   => $validated['tenant'],
                     'acumatica.username' => $validated['username'],
                     'acumatica.password' => $validated['password'],
+                    'acumatica.odata_path' => $validated['odata_path'],
                 ]);
 
                 $odataService = app(\App\Services\AcumaticaODataService::class);

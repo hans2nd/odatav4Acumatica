@@ -38,10 +38,19 @@
                     <label class="font-label-md text-label-md text-on-surface-variant block mb-xs">Password</label>
                     <input type="password" id="acm-password" value="{{ $acumaticaPassword }}" required class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-code text-code text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
                 </div>
+                <div class="flex gap-sm">
+                    <div class="flex-1">
+                        <label class="font-label-md text-label-md text-on-surface-variant block mb-xs">OData Version</label>
+                        <select id="acm-odata-path" required class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-code text-code text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
+                            <option value="odatav4" {{ $odataPath === 'odatav4' ? 'selected' : '' }}>ODatav4</option>
+                            <option value="odata" {{ $odataPath === 'odata' ? 'selected' : '' }}>OData</option>
+                        </select>
+                    </div>
+                </div>
                 <div>
-                    <label class="font-label-md text-label-md text-on-surface-variant block mb-xs">OData Endpoint</label>
+                    <label class="font-label-md text-label-md text-on-surface-variant block mb-xs">OData Endpoint Preview</label>
                     <div class="bg-surface-container-low rounded px-3 py-2 font-code text-code text-on-surface-variant border border-outline-variant break-all" id="acm-odata-preview">
-                        {{ $acumaticaUrl }}/odatav4/
+                        {{ $acumaticaUrl }}/{{ $odataPath }}/
                     </div>
                 </div>
             </div>
@@ -355,10 +364,19 @@
 
     // ── OData URL preview ─────────────────────────────────────────────────
     const acmUrlInput = document.getElementById('acm-url');
+    const acmODataPathInput = document.getElementById('acm-odata-path');
+
+    function updateODataPreview() {
+        const url = acmUrlInput.value.replace(/\/+$/, '');
+        const path = acmODataPathInput.value;
+        document.getElementById('acm-odata-preview').textContent = url + '/' + path + '/';
+    }
+
     if (acmUrlInput) {
-        acmUrlInput.addEventListener('input', () => {
-            document.getElementById('acm-odata-preview').textContent = acmUrlInput.value.replace(/\/+$/, '') + '/odatav4/';
-        });
+        acmUrlInput.addEventListener('input', updateODataPreview);
+    }
+    if (acmODataPathInput) {
+        acmODataPathInput.addEventListener('change', updateODataPreview);
     }
 
     // ── Save Acumatica Settings ───────────────────────────────────────────
@@ -376,6 +394,7 @@
                     tenant: document.getElementById('acm-tenant').value.trim(),
                     username: document.getElementById('acm-username').value.trim(),
                     password: document.getElementById('acm-password').value,
+                    odata_path: document.getElementById('acm-odata-path').value,
                     verify_ssl: false,
                 }),
             });
@@ -425,6 +444,7 @@
                     tenant: document.getElementById('acm-tenant').value.trim(),
                     username: document.getElementById('acm-username').value.trim(),
                     password: document.getElementById('acm-password').value,
+                    odata_path: document.getElementById('acm-odata-path').value,
                 }),
             });
             const data = await res.json();
