@@ -374,6 +374,7 @@
         } catch (e) {
             // Ignore HTTP timeout if it drops, backend will continue due to ignore_user_abort or queue
             console.warn("Sync HTTP connection closed, but background process may still be running.", e);
+            showToast('Connection timeout. The sync process will continue in the background.', 'info');
         }
     }
 </script>
