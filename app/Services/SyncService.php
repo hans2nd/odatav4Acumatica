@@ -178,16 +178,20 @@ class SyncService
             $fetchedCount = 0;
             $insertedCount = 0;
             $hasData = false;
+            $totalRecordsCount = null;
 
             $this->odataService->fetchAllRecords($odataEntity, $finalFilterString, 
-                function($current, $total) use ($progressKey) {
+                function($current, $total) use ($progressKey, &$totalRecordsCount) {
+                    if ($total !== null) {
+                        $totalRecordsCount = $total;
+                    }
                     \Illuminate\Support\Facades\Cache::put($progressKey, [
                         'current' => $current,
-                        'total' => $total,
+                        'total' => $totalRecordsCount,
                         'status' => 'fetching'
                     ], 3600);
                 },
-                function($recordsChunk) use (&$fetchedCount, &$insertedCount, &$hasData, $tableName, $isIncremental, $customFilters, $progressKey) {
+                function($recordsChunk) use (&$fetchedCount, &$insertedCount, &$hasData, &$totalRecordsCount, $tableName, $isIncremental, $customFilters, $progressKey) {
                     $isFirstChunk = !$hasData;
                     $hasData = true;
                     
@@ -203,9 +207,9 @@ class SyncService
 
                     // 5. Upsert existing data or Insert new data
                     if ($isIncremental) {
-                        $inserted = $this->upsertTableData($tableName, $cleanData, $customFilters, $progressKey, $isFirstChunk, $insertedCount);
+                        $inserted = $this->upsertTableData($tableName, $cleanData, $customFilters, $progressKey, $isFirstChunk, $insertedCount, $totalRecordsCount);
                     } else {
-                        $inserted = $this->replaceTableData($tableName, $cleanData, $progressKey, $isFirstChunk, $insertedCount);
+                        $inserted = $this->replaceTableData($tableName, $cleanData, $progressKey, $isFirstChunk, $insertedCount, $totalRecordsCount);
                     }
                     
                     $insertedCount += $inserted;
@@ -240,10 +244,11 @@ class SyncService
 
             Log::info("Sync [{$entityKey}]: Completed — {$insertedCount} records inserted in {$log->duration_seconds}s.");
 
-            // 7. Logout
+            // 7. Logout and cleanup
             if ($this->odataService->usesSessionAuth()) {
                 $this->odataService->logout();
             }
+            $this->odataService->resetPersistentHttp();
 
             \Illuminate\Support\Facades\Cache::forget($progressKey);
 
@@ -266,6 +271,7 @@ class SyncService
                 if ($this->odataService->usesSessionAuth()) {
                     $this->odataService->logout();
                 }
+                $this->odataService->resetPersistentHttp();
             } catch (\Throwable $ignored) {
             }
 
@@ -342,19 +348,19 @@ class SyncService
     /**
      * Replace data in a table for a chunk. If it's the first chunk, truncate existing rows first.
      */
-    private function replaceTableData(string $tableName, array $cleanData, ?string $progressKey = null, bool $isFirstChunk = false, int $baseInserted = 0): int
+    private function replaceTableData(string $tableName, array $cleanData, ?string $progressKey = null, bool $isFirstChunk = false, int $baseInserted = 0, ?int $totalRecordsCount = null): int
     {
         $inserted = 0;
         
-        DB::transaction(function () use ($tableName, $cleanData, &$inserted, $progressKey, $isFirstChunk, $baseInserted) {
+        DB::transaction(function () use ($tableName, $cleanData, &$inserted, $progressKey, $isFirstChunk, $baseInserted, $totalRecordsCount) {
             // Delete all existing rows ONLY on the first chunk
             if ($isFirstChunk) {
                 DB::table($tableName)->delete();
             }
 
-            // SQL Server supports a maximum of 2100 parameters per statement.
+            // MySQL supports up to 65,535 placeholders per statement.
             $columnCount = max(count($cleanData[0] ?? []), 1);
-            $chunkSize = max(intdiv(2000, $columnCount), 1);
+            $chunkSize = max(intdiv(60000, $columnCount), 1);
             $chunks = array_chunk($cleanData, $chunkSize);
 
             foreach ($chunks as $chunk) {
@@ -364,7 +370,7 @@ class SyncService
                 if ($progressKey) {
                     \Illuminate\Support\Facades\Cache::put($progressKey, [
                         'current' => $baseInserted + $inserted,
-                        'total' => null,
+                        'total' => $totalRecordsCount,
                         'status' => 'inserting'
                     ], 3600);
                 }
@@ -378,43 +384,37 @@ class SyncService
      * Upsert data in a table for a chunk.
      * For entities without id/NoteID, uses filter-scope delete (only on first chunk) or _row_hash dedup.
      */
-    private function upsertTableData(string $tableName, array $cleanData, array $customFilters = [], ?string $progressKey = null, bool $isFirstChunk = false, int $baseInserted = 0): int
+    private function upsertTableData(string $tableName, array $cleanData, array $customFilters = [], ?string $progressKey = null, bool $isFirstChunk = false, int $baseInserted = 0, ?int $totalRecordsCount = null): int
     {
         $insertedOrUpdated = 0;
 
-        DB::transaction(function () use ($tableName, $cleanData, &$insertedOrUpdated, $customFilters, $progressKey, $isFirstChunk, $baseInserted) {
+        DB::transaction(function () use ($tableName, $cleanData, &$insertedOrUpdated, $customFilters, $progressKey, $isFirstChunk, $baseInserted, $totalRecordsCount) {
             $hasId = isset($cleanData[0]['id']);
             $hasNoteId = isset($cleanData[0]['NoteID']);
 
             if ($hasId || $hasNoteId) {
-                // --- Strategy A: Row-by-row upsert using id or NoteID ---
-                foreach ($cleanData as $row) {
-                    $updated = false;
+                // --- Strategy A: Bulk Upsert using id or NoteID ---
+                $uniqueKey = $hasId ? 'id' : 'NoteID';
 
-                    if ($hasId && !empty($row['id'])) {
-                        $exists = DB::table($tableName)->where('id', $row['id'])->exists();
-                        if ($exists) {
-                            DB::table($tableName)->where('id', $row['id'])->update($row);
-                            $updated = true;
-                        }
-                    } elseif ($hasNoteId && !empty($row['NoteID'])) {
-                        $exists = DB::table($tableName)->where('NoteID', $row['NoteID'])->exists();
-                        if ($exists) {
-                            DB::table($tableName)->where('NoteID', $row['NoteID'])->update($row);
-                            $updated = true;
-                        }
-                    }
+                // Get list of columns to update (all except the unique key and _sync_id)
+                $columnsToUpdate = array_keys($cleanData[0]);
+                $columnsToUpdate = array_values(array_diff($columnsToUpdate, [$uniqueKey, '_sync_id']));
 
-                    if (!$updated) {
-                        DB::table($tableName)->insert($row);
-                    }
+                // Chunk the cleanData for upsert (prevent max placeholders error in MySQL)
+                // MySQL limit is 65,535 placeholders. If we have 100 columns, max chunk is ~650.
+                $columnCount = max(count($cleanData[0] ?? []), 1);
+                $chunkSize = max(intdiv(60000, $columnCount), 1);
+                
+                $chunks = array_chunk($cleanData, $chunkSize);
 
-                    $insertedOrUpdated++;
+                foreach ($chunks as $chunk) {
+                    DB::table($tableName)->upsert($chunk, [$uniqueKey], $columnsToUpdate);
+                    $insertedOrUpdated += count($chunk);
                     
-                    if ($progressKey && $insertedOrUpdated % 50 === 0) {
+                    if ($progressKey) {
                         \Illuminate\Support\Facades\Cache::put($progressKey, [
                             'current' => $baseInserted + $insertedOrUpdated,
-                            'total' => null,
+                            'total' => $totalRecordsCount,
                             'status' => 'inserting'
                         ], 3600);
                     }
@@ -504,7 +504,7 @@ class SyncService
     {
         $inserted = 0;
         $columnCount = max(count($cleanData[0] ?? []), 1);
-        $chunkSize = max(intdiv(2000, $columnCount), 1);
+        $chunkSize = max(intdiv(60000, $columnCount), 1);
         $chunks = array_chunk($cleanData, $chunkSize);
 
         foreach ($chunks as $chunk) {

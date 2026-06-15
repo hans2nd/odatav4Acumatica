@@ -34,8 +34,8 @@ return [
     'odata_path' => env('ACUMATICA_ODATA_PATH', 'odatav4'),
     'odata_auth' => env('ACUMATICA_ODATA_AUTH', 'basic'), // basic or session
     'odata_include_tenant' => env('ACUMATICA_ODATA_INCLUDE_TENANT', false),
-    'page_size'  => 500,
-    'timeout'    => 300,
+    'page_size'  => (int) env('ACUMATICA_PAGE_SIZE', 2000),
+    'timeout'    => (int) env('ACUMATICA_TIMEOUT', 600),
 
     /*
     |--------------------------------------------------------------------------

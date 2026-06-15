@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\SyncAllJob;
+use App\Jobs\SyncEntityJob;
 use App\Models\SyncLog;
 use App\Services\AcumaticaODataService;
 use App\Services\SchemaManager;
@@ -14,10 +16,31 @@ class SyncController extends Controller
 {
     /**
      * Sync all entities.
+     *
+     * If a queue worker is available (QUEUE_CONNECTION != sync), dispatches
+     * the job to the queue for background processing.
+     * Otherwise, falls back to synchronous execution.
      */
     public function syncAll(SyncService $syncService): JsonResponse
     {
+        if ($this->isAsyncQueue()) {
+            SyncAllJob::dispatch();
+            $this->startBackgroundWorker();
+
+            return response()->json([
+                'success' => true,
+                'async'   => true,
+                'message' => 'Sync All has been dispatched to the queue. Monitor progress on the dashboard.',
+            ]);
+        }
+
+        // Fallback: synchronous execution
         set_time_limit(0);
+        
+        // Release session lock so the frontend can remain responsive
+        if (request()->hasSession()) {
+            request()->session()->save();
+        }
 
         try {
             $results = $syncService->syncAll();
@@ -54,13 +77,11 @@ class SyncController extends Controller
 
     /**
      * Sync a single entity by key, optionally with custom filters.
+     *
+     * Dispatches to queue if available, otherwise runs synchronously.
      */
     public function syncEntity(Request $request, SyncService $syncService, string $entity): JsonResponse
     {
-        set_time_limit(0);
-        ini_set('memory_limit', '1024M');
-        ignore_user_abort(true);
-
         $config = config("acumatica.entities.{$entity}");
         if (! $config) {
             return response()->json([
@@ -71,6 +92,36 @@ class SyncController extends Controller
 
         // custom_filters should be an array of associative arrays: [['field' => 'X', 'operator' => 'eq', 'value' => 'Y']]
         $customFilters = $request->input('custom_filters', []);
+
+        // Dispatch to queue for async processing
+        if ($this->isAsyncQueue()) {
+            // Initialize progress cache before dispatching so frontend can start polling
+            \Illuminate\Support\Facades\Cache::put("sync_progress_{$entity}", [
+                'current' => 0,
+                'total'   => null,
+                'status'  => 'queued',
+            ], 3600);
+
+            SyncEntityJob::dispatch($entity, $customFilters);
+            $this->startBackgroundWorker();
+
+            return response()->json([
+                'success' => true,
+                'async'   => true,
+                'entity'  => $entity,
+                'message' => "Sync for {$entity} has been dispatched to the queue.",
+            ]);
+        }
+
+        // Fallback: synchronous execution
+        set_time_limit(0);
+        ini_set('memory_limit', '1024M');
+        ignore_user_abort(true);
+        
+        // Release session lock so the frontend can poll /progress concurrently
+        if ($request->hasSession()) {
+            $request->session()->save();
+        }
 
         try {
             $log = $syncService->syncEntity($entity, $customFilters);
@@ -210,6 +261,33 @@ class SyncController extends Controller
 
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Check if the queue is configured for async processing.
+     * Returns false when using the 'sync' driver (no queue worker needed).
+     */
+    private function isAsyncQueue(): bool
+    {
+        return config('queue.default') !== 'sync';
+    }
+
+    /**
+     * Spawns a background queue worker that processes jobs until the queue is empty.
+     * This avoids needing to run a persistent Supervisor/Daemon manually.
+     */
+    private function startBackgroundWorker(): void
+    {
+        $basePath = base_path();
+        $command = "php {$basePath}" . DIRECTORY_SEPARATOR . "artisan queue:work --stop-when-empty --timeout=1800 --memory=1024";
+
+        if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+            // Detached process in Windows
+            pclose(popen("start /B {$command} > NUL 2>&1", "r"));
+        } else {
+            // Detached process in Linux/Unix
+            exec("{$command} > /dev/null 2>&1 &");
         }
     }
 }

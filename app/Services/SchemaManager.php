@@ -102,6 +102,20 @@ class SchemaManager
             return;
         }
 
+        $lowerName = strtolower($name);
+
+        // Detect Unique Keys for Upsert
+        if ($lowerName === 'id' || $lowerName === 'noteid') {
+            $table->string($name, 64)->nullable()->unique();
+            return;
+        }
+
+        // Detect DateTime columns used for filtering/incremental sync
+        if ($lowerName === 'lastmodifieddatetime' || $lowerName === 'createddatetime') {
+            $table->string($name, 64)->nullable()->index();
+            return;
+        }
+
         // For EVERYTHING ELSE (null, string, array, object), use TEXT.
         // We do NOT use VARCHAR because VARCHAR(255) takes up to 1020 bytes inline in utf8mb4,
         // which rapidly depletes MySQL's 8126 byte row limit on wide tables like SalesOrders.
@@ -185,8 +199,11 @@ class SchemaManager
     /**
      * Clean a single OData record for database insertion, sanitizing keys
      * and converting complex values.
+     *
+     * @param array $record
+     * @param array|null $columnMap  Pre-built map of original→sanitized names (for batch use)
      */
-    public function cleanRecord(array $record): array
+    public function cleanRecord(array $record, ?array $columnMap = null): array
     {
         $clean = [];
 
@@ -195,7 +212,7 @@ class SchemaManager
                 continue;
             }
 
-            $colName = $this->sanitizeColumnName($key);
+            $colName = $columnMap[$key] ?? $this->sanitizeColumnName($key);
 
             if (is_array($value) || is_object($value)) {
                 $value = json_encode($value);
@@ -227,10 +244,72 @@ class SchemaManager
 
     /**
      * Clean multiple OData records.
+     * Builds a column-name map from the first record and reuses it for all
+     * subsequent records — avoids calling sanitizeColumnName() millions of
+     * times on repeated key sets.
      */
     public function cleanRecords(array $records): array
     {
-        return array_map(fn (array $row) => $this->cleanRecord($row), $records);
+        if (empty($records)) {
+            return [];
+        }
+
+        // Build a column-name mapping cache from the first record's keys.
+        // OData rows from the same entity always share the same set of keys,
+        // so one map is sufficient for the whole batch.
+        $columnMap = [];
+        foreach (array_keys($records[0]) as $key) {
+            if (str_starts_with($key, '@') || str_starts_with($key, 'odata.') || $key === '__metadata') {
+                continue;
+            }
+            $columnMap[$key] = $this->sanitizeColumnName($key);
+        }
+
+        // Now use the cached map for every record.
+        $now = now()->toDateTimeString();
+        $result = [];
+
+        foreach ($records as $record) {
+            $clean = [];
+
+            foreach ($record as $key => $value) {
+                if (!isset($columnMap[$key])) {
+                    // Skip metadata keys (already filtered) or handle any new key on the fly
+                    if (str_starts_with($key, '@') || str_starts_with($key, 'odata.') || $key === '__metadata') {
+                        continue;
+                    }
+                    $columnMap[$key] = $this->sanitizeColumnName($key);
+                }
+
+                $colName = $columnMap[$key];
+
+                if (is_array($value) || is_object($value)) {
+                    $value = json_encode($value);
+                }
+
+                if (strtolower($colName) === 'tstamp' && is_string($value)) {
+                    $decoded = base64_decode($value, true);
+                    if ($decoded !== false) {
+                        $value = '0x' . strtoupper(bin2hex($decoded));
+                    }
+                }
+
+                $clean[$colName] = $value;
+            }
+
+            $clean['_synced_at'] = $now;
+
+            // Compute _row_hash
+            $hashData = $clean;
+            unset($hashData['_synced_at'], $hashData['_row_hash'], $hashData['_sync_id']);
+            ksort($hashData);
+            $hashString = implode('|', array_map(function ($v) { return (string)($v ?? ''); }, $hashData));
+            $clean['_row_hash'] = md5($hashString);
+
+            $result[] = $clean;
+        }
+
+        return $result;
     }
 
     /**

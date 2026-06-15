@@ -2,7 +2,10 @@
 
 namespace App\Services;
 
+use GuzzleHttp\Client;
 use GuzzleHttp\Cookie\CookieJar;
+use GuzzleHttp\HandlerStack;
+use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -19,6 +22,8 @@ class AcumaticaODataService
     private int $timeout;
     private ?CookieJar $cookieJar = null;
     private bool $authenticated = false;
+    private ?HandlerStack $handlerStack = null;
+    private ?PendingRequest $persistentRequest = null;
 
     public function __construct()
     {
@@ -47,7 +52,7 @@ class AcumaticaODataService
         $this->cookieJar = new CookieJar();
 
         try {
-            $response = Http::withOptions([
+            $response = Http::retry(3, 5000)->withOptions([
                 'cookies' => $this->cookieJar,
                 'verify'  => $this->verifySsl,
                 'timeout' => $this->timeout,
@@ -151,16 +156,7 @@ class AcumaticaODataService
 
         Log::debug("Acumatica OData: Fetching URL", ['url' => $url]);
 
-        $request = Http::withOptions([
-            'verify'  => $this->verifySsl,
-            'timeout' => $this->timeout,
-        ])->acceptJson();
-
-        if ($this->usesSessionAuth()) {
-            $request = $request->withOptions(['cookies' => $this->cookieJar]);
-        } else {
-            $request = $request->withBasicAuth($this->username, $this->password);
-        }
+        $request = $this->getPersistentRequest();
 
         $response = $request->get($url);
 
@@ -312,7 +308,7 @@ class AcumaticaODataService
 
             $url = implode('/', $pathParts);
 
-            $request = Http::withOptions([
+            $request = Http::retry(3, 5000)->withOptions([
                 'verify'  => $this->verifySsl,
                 'timeout' => 30,
             ])->acceptJson();
@@ -367,6 +363,43 @@ class AcumaticaODataService
                 throw new \RuntimeException('Unable to authenticate with Acumatica.');
             }
         }
+    }
+
+    /**
+     * Get or build a persistent PendingRequest that reuses the same Guzzle
+     * handler (TCP/TLS connection pool) for all page fetches in a sync session.
+     */
+    private function getPersistentRequest(): PendingRequest
+    {
+        // Lazily create a shared HandlerStack so Guzzle can reuse connections.
+        if (! $this->handlerStack) {
+            $this->handlerStack = HandlerStack::create();
+        }
+
+        // Build a fresh PendingRequest each call (Laravel clones internally),
+        // but share the handler so the underlying cURL handles are reused.
+        $request = Http::retry(3, 2000)->withOptions([
+            'verify'  => $this->verifySsl,
+            'timeout' => $this->timeout,
+            'handler' => $this->handlerStack,
+        ])->acceptJson();
+
+        if ($this->usesSessionAuth()) {
+            $request = $request->withOptions(['cookies' => $this->cookieJar]);
+        } else {
+            $request = $request->withBasicAuth($this->username, $this->password);
+        }
+
+        return $request;
+    }
+
+    /**
+     * Reset persistent HTTP resources (call after sync completes).
+     */
+    public function resetPersistentHttp(): void
+    {
+        $this->handlerStack = null;
+        $this->persistentRequest = null;
     }
 
     public function isAuthenticated(): bool
