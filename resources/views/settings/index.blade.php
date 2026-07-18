@@ -1,167 +1,155 @@
 @extends('layouts.app')
 
-@section('title', 'Settings — Enterprise Sync Engine')
+@section('title', 'Settings — PL Sync Data Warehouse')
 @section('page-title', 'Settings')
 
 @section('content')
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-lg">
-        {{-- Acumatica Connection --}}
-        <form id="acumatica-form" class="bg-surface-container-lowest border border-outline-variant rounded flex flex-col fade-in" onsubmit="saveAcumatica(event)">
-            <div class="p-md border-b border-outline-variant bg-surface-container-low/50 flex justify-between items-center">
-                <h2 class="font-h2 text-h2 text-on-surface flex items-center gap-2">
-                    <span class="material-symbols-outlined text-secondary">cloud</span>
-                    Acumatica ERP
-                </h2>
-                <div class="flex items-center gap-sm">
-                    <button type="button" onclick="testAcumaticaConnection()" id="acm-test-btn" class="inline-flex items-center gap-1 px-3 py-1.5 rounded border border-outline-variant font-label-md text-label-md text-on-surface-variant hover:bg-surface-container-low transition-colors active:scale-[0.97]">
-                        <span class="material-symbols-outlined text-sm">lan</span> Test
-                    </button>
-                    <button type="submit" id="acm-save-btn" class="inline-flex items-center gap-1 px-3 py-1.5 rounded bg-primary text-on-primary font-label-md text-label-md hover:bg-primary-container hover:text-on-primary-container transition-colors active:scale-[0.97]">
-                        <span class="material-symbols-outlined text-sm">save</span> Save
-                    </button>
+    <div class="grid grid-cols-1 gap-5">
+        {{-- Connections Configuration --}}
+        <div class="bg-white rounded-2xl border border-surface-200/60 flex flex-col shadow-card overflow-hidden animate-fade-up">
+            <div class="px-5 py-4 border-b border-surface-100 flex justify-between items-center bg-surface-50/50">
+                <div>
+                    <h2 class="text-h3 text-surface-800 flex items-center gap-2.5">
+                        <div class="p-2 bg-gradient-to-br from-indigo-50 to-blue-100 rounded-lg">
+                            <span class="material-symbols-outlined text-indigo-600 text-[18px]">lan</span>
+                        </div>
+                        Connection Management
+                    </h2>
+                    <p class="text-label-sm text-surface-400 mt-1 ml-[42px]">
+                        Define data sources and destinations (OData, REST, MySQL, SQL Server)
+                    </p>
                 </div>
+                <button onclick="openConnectionModal()"
+                    class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand-600 text-white text-label-md hover:bg-brand-700 transition-all duration-200 active:scale-[0.97] shadow-sm">
+                    <span class="material-symbols-outlined text-[14px]">add</span> Add Connection
+                </button>
             </div>
-            <div class="p-md space-y-md">
-                <div>
-                    <label class="font-label-md text-label-md text-on-surface-variant block mb-xs">Instance URL</label>
-                    <input type="url" id="acm-url" value="{{ $acumaticaUrl }}" required class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-code text-code text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
-                </div>
-                <div>
-                    <label class="font-label-md text-label-md text-on-surface-variant block mb-xs">Tenant</label>
-                    <input type="text" id="acm-tenant" value="{{ $acumaticaTenant }}" class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-code text-code text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
-                </div>
-                <div>
-                    <label class="font-label-md text-label-md text-on-surface-variant block mb-xs">Username</label>
-                    <input type="text" id="acm-username" value="{{ $acumaticaUser }}" required class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-code text-code text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
-                </div>
-                <div>
-                    <label class="font-label-md text-label-md text-on-surface-variant block mb-xs">Password</label>
-                    <input type="password" id="acm-password" value="{{ $acumaticaPassword }}" required class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-code text-code text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
-                </div>
-                <div class="flex gap-sm">
-                    <div class="flex-1">
-                        <label class="font-label-md text-label-md text-on-surface-variant block mb-xs">OData Version</label>
-                        <select id="acm-odata-path" required class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-code text-code text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
-                            <option value="odatav4" {{ $odataPath === 'odatav4' ? 'selected' : '' }}>ODatav4</option>
-                            <option value="odata" {{ $odataPath === 'odata' ? 'selected' : '' }}>OData</option>
-                        </select>
-                    </div>
-                </div>
-                <div>
-                    <label class="font-label-md text-label-md text-on-surface-variant block mb-xs">OData Endpoint Preview</label>
-                    <div class="bg-surface-container-low rounded px-3 py-2 font-code text-code text-on-surface-variant border border-outline-variant break-all" id="acm-odata-preview">
-                        {{ $acumaticaUrl }}/{{ $odataPath }}/
-                    </div>
-                </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse" id="connection-table">
+                    <thead>
+                        <tr class="border-b border-surface-100">
+                            <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">Key</th>
+                            <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">Name</th>
+                            <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">Type</th>
+                            <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">Status</th>
+                            <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="text-body-md text-surface-700 divide-y divide-surface-100">
+                        @foreach ($connections as $key => $c)
+                            <tr class="hover:bg-surface-50/50 transition-colors">
+                                <td class="py-3 px-5 font-medium font-mono text-body-sm text-surface-800">{{ $key }}</td>
+                                <td class="py-3 px-5 font-medium text-surface-800">{{ $c['name'] }}</td>
+                                <td class="py-3 px-5">
+                                    <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-label-sm font-semibold
+                                        {{ in_array($c['type'], ['mysql', 'sqlsrv']) ? 'bg-violet-50 text-violet-700' : 'bg-sky-50 text-sky-700' }}">
+                                        {{ strtoupper($c['type']) }}
+                                    </span>
+                                </td>
+                                <td class="py-3 px-5">
+                                    <span id="status-{{ $key }}" class="text-label-sm text-surface-400 font-medium flex items-center gap-1.5">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-surface-300"></span> Unchecked
+                                    </span>
+                                </td>
+                                <td class="py-3 px-5 text-right">
+                                    <div class="inline-flex items-center gap-1.5">
+                                        <button onclick="testConnection('{{ $key }}')" id="btn-conn-{{ $key }}"
+                                            class="px-2.5 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 transition-all duration-200 text-label-sm font-semibold flex items-center gap-1"
+                                            title="Test Connection">
+                                            <span class="material-symbols-outlined text-[14px]">link</span> Connect
+                                        </button>
+                                        <button onclick="editConnection('{{ $key }}')"
+                                            class="p-1.5 rounded-lg hover:bg-surface-100 text-surface-400 hover:text-surface-700 transition-all duration-200"
+                                            title="Edit">
+                                            <span class="material-symbols-outlined text-[16px]">edit</span>
+                                        </button>
+                                        <button onclick="deleteConnection('{{ $key }}')"
+                                            class="p-1.5 rounded-lg hover:bg-red-50 text-surface-400 hover:text-red-600 transition-all duration-200"
+                                            title="Delete">
+                                            <span class="material-symbols-outlined text-[16px]">delete</span>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
             </div>
-        </form>
-
-        {{-- Database Connection --}}
-        <form id="sql-form" class="bg-surface-container-lowest border border-outline-variant rounded flex flex-col fade-in" onsubmit="saveDatabase(event)">
-            <div class="p-md border-b border-outline-variant bg-surface-container-low/50 flex justify-between items-center">
-                <h2 class="font-h2 text-h2 text-on-surface flex items-center gap-2">
-                    <span class="material-symbols-outlined text-secondary">database</span>
-                    Database
-                </h2>
-                <div class="flex items-center gap-sm">
-                    <button type="button" onclick="testDbConnection()" id="sql-test-btn" class="inline-flex items-center gap-1 px-3 py-1.5 rounded border border-outline-variant font-label-md text-label-md text-on-surface-variant hover:bg-surface-container-low transition-colors active:scale-[0.97]">
-                        <span class="material-symbols-outlined text-sm">lan</span> Test
-                    </button>
-                    <button type="submit" id="sql-save-btn" class="inline-flex items-center gap-1 px-3 py-1.5 rounded bg-primary text-on-primary font-label-md text-label-md hover:bg-primary-container hover:text-on-primary-container transition-colors active:scale-[0.97]">
-                        <span class="material-symbols-outlined text-sm">save</span> Save
-                    </button>
-                </div>
-            </div>
-            <div class="p-md space-y-md">
-                <div>
-                    <label class="font-label-md text-label-md text-on-surface-variant block mb-xs">Connection Type</label>
-                    <select id="db-connection" onchange="handleConnectionTypeChange()" required class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-code text-code text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
-                        <option value="sqlsrv" {{ $dbConnection === 'sqlsrv' ? 'selected' : '' }}>SQL Server</option>
-                        <option value="mysql" {{ $dbConnection === 'mysql' ? 'selected' : '' }}>MySQL</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="font-label-md text-label-md text-on-surface-variant block mb-xs">Host</label>
-                    <input type="text" id="db-host" value="{{ $dbHost }}" required class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-code text-code text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
-                </div>
-                <div>
-                    <label class="font-label-md text-label-md text-on-surface-variant block mb-xs">Port</label>
-                    <input type="number" id="db-port" value="{{ $dbPort }}" required class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-code text-code text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
-                </div>
-                <div>
-                    <label class="font-label-md text-label-md text-on-surface-variant block mb-xs">Database</label>
-                    <input type="text" id="db-name" value="{{ $dbName }}" required class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-code text-code text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
-                </div>
-                <div>
-                    <label class="font-label-md text-label-md text-on-surface-variant block mb-xs">Username</label>
-                    <input type="text" id="db-username" value="{{ $dbUsername }}" required class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-code text-code text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
-                </div>
-                <div>
-                    <label class="font-label-md text-label-md text-on-surface-variant block mb-xs">Password</label>
-                    <input type="password" id="db-password" value="{{ $dbPassword }}" class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-code text-code text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
-                </div>
-            </div>
-        </form>
+        </div>
     </div>
 
     {{-- Entity Configuration --}}
-    <div class="bg-surface-container-lowest border border-outline-variant rounded flex flex-col fade-in mt-lg">
-        <div class="p-md border-b border-outline-variant bg-surface-container-low/50 flex justify-between items-center">
+    <div class="bg-white rounded-2xl border border-surface-200/60 flex flex-col shadow-card overflow-hidden animate-fade-up mt-5">
+        <div class="px-5 py-4 border-b border-surface-100 flex justify-between items-center bg-surface-50/50">
             <div>
-                <h2 class="font-h2 text-h2 text-on-surface flex items-center gap-2">
-                    <span class="material-symbols-outlined text-secondary">list</span>
+                <h2 class="text-h3 text-surface-800 flex items-center gap-2.5">
+                    <div class="p-2 bg-gradient-to-br from-amber-50 to-orange-100 rounded-lg">
+                        <span class="material-symbols-outlined text-amber-600 text-[18px]">list</span>
+                    </div>
                     Entity Configuration
                 </h2>
-                <p class="font-label-sm text-label-sm text-on-surface-variant mt-xs">
-                    Managed dynamically — add, edit, or remove sync entities
+                <p class="text-label-sm text-surface-400 mt-1 ml-[42px]">
+                    Map data sources to destinations and define entity schemas
                 </p>
             </div>
-            <button onclick="openEntityModal()"
-                class="inline-flex items-center gap-1 px-4 py-2 rounded bg-primary text-on-primary font-label-md text-label-md hover:bg-primary-container hover:text-on-primary-container transition-colors active:scale-[0.97]">
-                <span class="material-symbols-outlined text-sm">add</span> Add Entity
-            </button>
+            <div class="flex items-center gap-3">
+                <button id="btn-batch-delete" onclick="batchDeleteEntities()" class="hidden items-center gap-1.5 px-4 py-2 rounded-xl bg-red-50 text-red-600 text-label-md hover:bg-red-100 transition-all duration-200 shadow-sm border border-red-100">
+                    <span class="material-symbols-outlined text-[14px]">delete</span> Delete Selected (<span id="batch-delete-count">0</span>)
+                </button>
+                <button onclick="openEntityModal()"
+                    class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand-600 text-white text-label-md hover:bg-brand-700 transition-all duration-200 active:scale-[0.97] shadow-sm">
+                    <span class="material-symbols-outlined text-[14px]">add</span> Add Entity
+                </button>
+            </div>
         </div>
         <div class="overflow-x-auto">
             <table class="w-full text-left border-collapse" id="entity-table">
-                <thead>
-                    <tr class="bg-surface-container-low border-b border-outline-variant">
-                        <th class="py-2 px-md font-label-md text-label-md text-on-surface-variant font-medium">Key</th>
-                        <th class="py-2 px-md font-label-md text-label-md text-on-surface-variant font-medium">Type</th>
-                        <th class="py-2 px-md font-label-md text-label-md text-on-surface-variant font-medium">Icon</th>
-                        <th class="py-2 px-md font-label-md text-label-md text-on-surface-variant font-medium">OData Entity</th>
-                        <th class="py-2 px-md font-label-md text-label-md text-on-surface-variant font-medium">SQL Table</th>
-                        <th class="py-2 px-md font-label-md text-label-md text-on-surface-variant font-medium">Description</th>
-                        <th class="py-2 px-md font-label-md text-label-md text-on-surface-variant font-medium text-right">Actions</th>
+                <thead class="bg-surface-50 border-b border-surface-200">
+                    <tr>
+                        <th class="py-3 px-5 text-left w-12">
+                            <input type="checkbox" id="selectAllEntities" onchange="toggleAllEntities(this)" class="w-4 h-4 rounded border-surface-300 text-brand-600 focus:ring-brand-500 cursor-pointer">
+                        </th>
+                        <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">Entity Key</th>
+                        <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">Source</th>
+                        <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">Destination</th>
+                        <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">Type</th>
+                        <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider text-right">Actions</th>
                     </tr>
                 </thead>
-                <tbody class="font-body-md text-body-md text-on-surface divide-y divide-outline-variant/50">
+                <tbody class="text-body-md text-surface-700 divide-y divide-surface-100">
                     @foreach ($entities as $key => $e)
-                        <tr class="hover:bg-surface-container-low/50 transition-colors" id="entity-row-{{ $key }}">
-                            <td class="py-3 px-md font-medium font-code text-code">{{ $key }}</td>
-                            <td class="py-3 px-md">
-                                <span
-                                    class="inline-flex items-center px-2 py-0.5 rounded font-label-sm text-label-sm
-                            {{ $e['type'] === 'master' ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-purple-50 text-purple-700 border border-purple-200' }}">
+                        <tr class="hover:bg-surface-50/50 transition-colors" id="entity-row-{{ $key }}">
+                            <td class="py-3 px-5 w-12">
+                                <input type="checkbox" value="{{ $key }}" onchange="updateBatchDeleteBtn()" class="entity-checkbox w-4 h-4 rounded border-surface-300 text-brand-600 focus:ring-brand-500 cursor-pointer">
+                            </td>
+                            <td class="py-3 px-5 font-medium font-mono text-body-sm text-surface-800">{{ $key }}
+                                <div class="text-label-sm text-surface-400 font-sans mt-0.5">{{ $e['description'] }}</div>
+                            </td>
+                            <td class="py-3 px-5">
+                                <div class="font-mono text-body-sm text-surface-600 truncate max-w-[200px]" title="{{ $e['odata_entity'] }}">{{ $e['odata_entity'] }}</div>
+                                <div class="text-label-sm text-surface-400 mt-0.5"><span class="material-symbols-outlined text-[12px] align-middle mr-0.5">input</span> {{ $e['source_connection'] ?? 'acumatica_default' }}</div>
+                            </td>
+                            <td class="py-3 px-5">
+                                <div class="font-mono text-body-sm text-surface-800">{{ $e['table'] }}</div>
+                                <div class="text-label-sm text-surface-400 mt-0.5"><span class="material-symbols-outlined text-[12px] align-middle mr-0.5">output</span> {{ $e['destination_connection'] ?? 'database_default' }}</div>
+                            </td>
+                            <td class="py-3 px-5">
+                                <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-label-sm font-semibold
+                                    {{ $e['type'] === 'master' ? 'bg-sky-50 text-sky-700' : 'bg-violet-50 text-violet-700' }}">
                                     {{ ucfirst($e['type']) }}
                                 </span>
                             </td>
-                            <td class="py-3 px-md">
-                                <span class="material-symbols-outlined text-secondary text-sm">{{ $e['icon'] ?? 'database' }}</span>
-                            </td>
-                            <td class="py-3 px-md font-code text-code text-on-surface-variant">{{ $e['odata_entity'] }}</td>
-                            <td class="py-3 px-md font-code text-code">{{ $e['table'] }}</td>
-                            <td class="py-3 px-md text-on-surface-variant">{{ $e['description'] }}</td>
-                            <td class="py-3 px-md text-right">
+                            <td class="py-3 px-5 text-right">
                                 <div class="inline-flex items-center gap-1">
                                     <button onclick="editEntity('{{ $key }}')"
-                                        class="p-1.5 rounded hover:bg-surface-container-low text-on-surface-variant hover:text-on-surface transition-colors"
+                                        class="p-1.5 rounded-lg hover:bg-surface-100 text-surface-400 hover:text-surface-700 transition-all duration-200"
                                         title="Edit">
-                                        <span class="material-symbols-outlined text-sm">edit</span>
+                                        <span class="material-symbols-outlined text-[16px]">edit</span>
                                     </button>
                                     <button onclick="deleteEntity('{{ $key }}')"
-                                        class="p-1.5 rounded hover:bg-red-50 text-on-surface-variant hover:text-red-700 transition-colors"
+                                        class="p-1.5 rounded-lg hover:bg-red-50 text-surface-400 hover:text-red-600 transition-all duration-200"
                                         title="Delete">
-                                        <span class="material-symbols-outlined text-sm">delete</span>
+                                        <span class="material-symbols-outlined text-[16px]">delete</span>
                                     </button>
                                 </div>
                             </td>
@@ -170,153 +158,267 @@
                 </tbody>
             </table>
         </div>
-        <div id="entity-pagination" class="p-md border-t border-outline-variant flex justify-between items-center"></div>
+        <div id="entity-pagination" class="px-5 py-3 border-t border-surface-100 flex justify-between items-center bg-surface-50/30"></div>
     </div>
 
-    {{-- CLI Commands --}}
-    <div class="bg-surface-container-lowest border border-outline-variant rounded flex flex-col fade-in mt-lg">
-        <div class="p-md border-b border-outline-variant bg-surface-container-low/50">
-            <h2 class="font-h2 text-h2 text-on-surface flex items-center gap-2">
-                <span class="material-symbols-outlined text-secondary">terminal</span>
-                Artisan Commands
-            </h2>
-        </div>
-        <div class="p-md space-y-md">
-            <div>
-                <p class="font-label-md text-label-md text-on-surface mb-xs">Setup database</p>
-                <code class="block bg-inverse-surface text-inverse-on-surface rounded px-4 py-2 font-code text-code">php
-                    artisan acumatica:setup</code>
-            </div>
-            <div>
-                <p class="font-label-md text-label-md text-on-surface mb-xs">Sync all entities</p>
-                <code class="block bg-inverse-surface text-inverse-on-surface rounded px-4 py-2 font-code text-code">php
-                    artisan acumatica:sync</code>
-            </div>
-            <div>
-                <p class="font-label-md text-label-md text-on-surface mb-xs">Sync specific entity</p>
-                <code class="block bg-inverse-surface text-inverse-on-surface rounded px-4 py-2 font-code text-code">php
-                    artisan acumatica:sync Customer</code>
-            </div>
-            <div>
-                <p class="font-label-md text-label-md text-on-surface mb-xs">Sync by type</p>
-                <code class="block bg-inverse-surface text-inverse-on-surface rounded px-4 py-2 font-code text-code">php
-                    artisan acumatica:sync --type=master</code>
-            </div>
-            <div>
-                <p class="font-label-md text-label-md text-on-surface mb-xs">List entities</p>
-                <code class="block bg-inverse-surface text-inverse-on-surface rounded px-4 py-2 font-code text-code">php
-                    artisan acumatica:sync --list</code>
+    {{-- Connection Modal (Add / Edit) --}}
+    <div id="connection-modal" class="fixed inset-0 z-50 hidden">
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" onclick="closeConnectionModal()"></div>
+        <div class="absolute inset-0 flex items-center justify-center p-4">
+            <div class="bg-white rounded-2xl border border-surface-200/60 shadow-2xl w-full max-w-2xl animate-fade-up overflow-hidden max-h-[90vh] flex flex-col">
+                <div class="px-5 py-4 border-b border-surface-100 flex justify-between items-center shrink-0">
+                    <h3 class="text-h3 text-surface-800 flex items-center gap-2" id="conn-modal-title">
+                        <span class="material-symbols-outlined text-brand-500 text-[20px]">add_circle</span>
+                        Add Connection
+                    </h3>
+                    <button onclick="closeConnectionModal()"
+                        class="p-1.5 rounded-xl hover:bg-surface-100 text-surface-400 hover:text-surface-700 transition-all duration-200">
+                        <span class="material-symbols-outlined text-[20px]">close</span>
+                    </button>
+                </div>
+                <form id="connection-form" onsubmit="submitConnectionForm(event)" class="overflow-y-auto p-5 space-y-4">
+                    <input type="hidden" id="conn-form-mode" value="create">
+                    <input type="hidden" id="conn-form-original-key" value="">
+                    
+                    <div>
+                        <label for="conn-key" class="text-label-md text-surface-600 block mb-1.5">Connection Key <span class="text-red-500">*</span></label>
+                        <input type="text" id="conn-key" name="key" required placeholder="e.g. acm_prod" pattern="[A-Za-z0-9_]*" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 placeholder:text-surface-400 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                    </div>
+                    <div>
+                        <label for="conn-name" class="text-label-md text-surface-600 block mb-1.5">Display Name <span class="text-red-500">*</span></label>
+                        <input type="text" id="conn-name" name="name" required placeholder="e.g. Acumatica Production" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 placeholder:text-surface-400 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                    </div>
+                    <div>
+                        <label for="conn-type" class="text-label-md text-surface-600 block mb-1.5">Type <span class="text-red-500">*</span></label>
+                        <select id="conn-type" name="type" required onchange="toggleConnectionFields()" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                            <option value="odata">OData / Acumatica ERP</option>
+                            <option value="rest_api">REST API</option>
+                            <option value="mysql">MySQL</option>
+                            <option value="sqlsrv">SQL Server</option>
+                        </select>
+                    </div>
+
+                    <!-- DB Fields -->
+                    <div id="conn-fields-db" class="hidden space-y-4 pt-2 border-t border-surface-100">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label class="text-label-md text-surface-600 block mb-1.5">Host</label>
+                                <input type="text" id="conn-db-host" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                            </div>
+                            <div>
+                                <label class="text-label-md text-surface-600 block mb-1.5">Port</label>
+                                <input type="number" id="conn-db-port" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="text-label-md text-surface-600 block mb-1.5 flex justify-between items-center">
+                                Database
+                                <button type="button" onclick="fetchServerDatabases()" tabindex="-1" class="text-[11px] text-brand-600 hover:text-brand-700 flex items-center gap-0.5">
+                                    <span class="material-symbols-outlined text-[13px]">refresh</span> Load List
+                                </button>
+                            </label>
+                            <div class="relative">
+                                <input type="text" id="conn-db-name" placeholder="Search or enter DB name" autocomplete="off"
+                                    onfocus="document.getElementById('conn-db-dropdown').classList.remove('hidden')"
+                                    onblur="setTimeout(() => { document.getElementById('conn-db-dropdown').classList.add('hidden'); }, 200)"
+                                    oninput="filterList(this, 'conn-db-list')"
+                                    class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                                
+                                <div id="conn-db-dropdown" class="absolute z-20 w-full mt-1 bg-white border border-surface-200 rounded-xl shadow-lg max-h-48 overflow-y-auto hidden">
+                                    <ul id="conn-db-list" class="py-1"></ul>
+                                </div>
+                                
+                                <div id="conn-db-loading" class="absolute right-3 top-2.5 hidden bg-surface-50 pl-2">
+                                    <span class="material-symbols-outlined text-[20px] text-surface-400 spin">sync</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label class="text-label-md text-surface-600 block mb-1.5">Username</label>
+                                <input type="text" id="conn-db-user" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                            </div>
+                            <div>
+                                <label class="text-label-md text-surface-600 block mb-1.5">Password</label>
+                                <input type="password" id="conn-db-pass" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- OData Fields -->
+                    <div id="conn-fields-odata" class="space-y-4 pt-2 border-t border-surface-100">
+                        <div>
+                            <label class="text-label-md text-surface-600 block mb-1.5">URL</label>
+                            <input type="url" id="conn-odata-url" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                        </div>
+                        <div>
+                            <label class="text-label-md text-surface-600 block mb-1.5">Tenant</label>
+                            <input type="text" id="conn-odata-tenant" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label class="text-label-md text-surface-600 block mb-1.5">Username</label>
+                                <input type="text" id="conn-odata-user" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                            </div>
+                            <div>
+                                <label class="text-label-md text-surface-600 block mb-1.5">Password</label>
+                                <input type="password" id="conn-odata-pass" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="text-label-md text-surface-600 block mb-1.5">OData Path</label>
+                            <select id="conn-odata-path" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                                <option value="odatav4">odatav4</option>
+                                <option value="odata">odata</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- REST API Fields -->
+                    <div id="conn-fields-rest" class="hidden space-y-4 pt-2 border-t border-surface-100">
+                        <div>
+                            <label class="text-label-md text-surface-600 block mb-1.5">Base URL</label>
+                            <input type="url" id="conn-rest-url" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                        </div>
+                        <div>
+                            <label class="text-label-md text-surface-600 block mb-1.5">Auth Header / Bearer Token</label>
+                            <input type="text" id="conn-rest-token" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                        </div>
+                    </div>
+                </form>
+                <div class="px-5 py-4 border-t border-surface-100 flex justify-end gap-2 shrink-0 bg-surface-50/50">
+                    <button type="button" onclick="closeConnectionModal()"
+                        class="px-4 py-2 rounded-xl text-label-md text-surface-600 hover:bg-surface-200 transition-all duration-200 bg-surface-100 border border-surface-200">
+                        Cancel
+                    </button>
+                    <button type="button" onclick="testConnectionFromForm()" id="conn-test-btn"
+                        class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-50 text-blue-600 border border-blue-200 text-label-md hover:bg-blue-100 transition-all duration-200 shadow-sm">
+                        <span class="material-symbols-outlined text-[14px]">science</span>
+                        <span>Test</span>
+                    </button>
+                    <button type="button" onclick="submitConnectionForm(event)" id="conn-submit-btn"
+                        class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand-600 text-white text-label-md hover:bg-brand-700 transition-all duration-200 active:scale-[0.97] shadow-sm">
+                        <span class="material-symbols-outlined text-[14px]">save</span>
+                        <span id="conn-submit-text">Create Connection</span>
+                    </button>
+                </div>
             </div>
         </div>
     </div>
 
     {{-- Entity Modal (Add / Edit) --}}
     <div id="entity-modal" class="fixed inset-0 z-50 hidden">
-        {{-- Backdrop --}}
         <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" onclick="closeEntityModal()"></div>
-        {{-- Modal Content --}}
         <div class="absolute inset-0 flex items-center justify-center p-4">
-            <div class="bg-surface-container-lowest rounded-xl border border-outline-variant shadow-2xl w-full max-w-lg fade-in overflow-hidden">
-                {{-- Header --}}
-                <div class="p-md border-b border-outline-variant bg-surface-container-low/50 flex justify-between items-center">
-                    <h3 class="font-h2 text-h2 text-on-surface flex items-center gap-2" id="modal-title">
-                        <span class="material-symbols-outlined text-secondary">add_circle</span>
+            <div class="bg-white rounded-2xl border border-surface-200/60 shadow-2xl w-full max-w-2xl animate-fade-up overflow-hidden max-h-[90vh] flex flex-col">
+                <div class="px-5 py-4 border-b border-surface-100 flex justify-between items-center shrink-0">
+                    <h3 class="text-h3 text-surface-800 flex items-center gap-2" id="modal-title">
+                        <span class="material-symbols-outlined text-brand-500 text-[20px]">add_circle</span>
                         Add Entity
                     </h3>
                     <button onclick="closeEntityModal()"
-                        class="p-1 rounded hover:bg-surface-container-low text-on-surface-variant hover:text-on-surface transition-colors">
-                        <span class="material-symbols-outlined">close</span>
+                        class="p-1.5 rounded-xl hover:bg-surface-100 text-surface-400 hover:text-surface-700 transition-all duration-200">
+                        <span class="material-symbols-outlined text-[20px]">close</span>
                     </button>
                 </div>
-                {{-- Form --}}
-                <form id="entity-form" onsubmit="submitEntityForm(event)">
+                <form id="entity-form" onsubmit="submitEntityForm(event)" class="overflow-y-auto p-5 space-y-4">
                     <input type="hidden" id="form-mode" value="create">
                     <input type="hidden" id="form-original-key" value="">
-                    <div class="p-md space-y-md">
-                        {{-- Entity Key --}}
+                    
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
-                            <label for="form-key" class="font-label-md text-label-md text-on-surface-variant block mb-xs">
-                                Entity Key <span class="text-red-500">*</span>
-                            </label>
-                            <input type="text" id="form-key" name="key" required
-                                placeholder="e.g. CashAccount"
-                                pattern="[A-Za-z][A-Za-z0-9]*"
-                                class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-code text-code text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
-                            <p class="font-label-sm text-label-sm text-on-surface-variant mt-xs">PascalCase, no spaces (e.g. CashAccount, InventoryItem)</p>
+                            <label for="form-key" class="text-label-md text-surface-600 block mb-1.5">Entity Key <span class="text-red-500">*</span></label>
+                            <input type="text" id="form-key" name="key" required placeholder="e.g. CashAccount" pattern="[A-Za-z][A-Za-z0-9]*" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 placeholder:text-surface-400 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                            <p class="text-[11px] text-surface-400 mt-1">PascalCase (e.g. CashAccount)</p>
                         </div>
-                        {{-- Type --}}
                         <div>
-                            <label for="form-type" class="font-label-md text-label-md text-on-surface-variant block mb-xs">
-                                Type <span class="text-red-500">*</span>
-                            </label>
-                            <select id="form-type" name="type" required
-                                class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
-                                <option value="master">Master</option>
-                                <option value="transaction">Transaction</option>
+                            <label for="form-type" class="text-label-md text-surface-600 block mb-1.5">Type <span class="text-red-500">*</span></label>
+                            <select id="form-type" name="type" required class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                                <option value="master">Master Data</option>
+                                <option value="transaction">Transaction Data</option>
                             </select>
                         </div>
-                        {{-- OData Entity --}}
-                        <div>
-                            <label for="form-odata" class="font-label-md text-label-md text-on-surface-variant block mb-xs">
-                                OData Entity <span class="text-red-500">*</span>
-                            </label>
-                            <input type="text" id="form-odata" name="odata_entity" required
-                                placeholder="e.g. PX_Objects_CA_CashAccount"
-                                class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-code text-code text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
-                            <p class="font-label-sm text-label-sm text-on-surface-variant mt-xs">Acumatica DAC entity name</p>
-                        </div>
-                        {{-- SQL Table --}}
-                        <div>
-                            <label for="form-table" class="font-label-md text-label-md text-on-surface-variant block mb-xs">
-                                SQL Table <span class="text-red-500">*</span>
-                            </label>
-                            <input type="text" id="form-table" name="table" required
-                                placeholder="e.g. acm_cash_accounts"
-                                pattern="[a-z][a-z0-9_]*"
-                                class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-code text-code text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
-                            <p class="font-label-sm text-label-sm text-on-surface-variant mt-xs">snake_case, e.g. acm_cash_accounts</p>
-                        </div>
-                        {{-- Icon --}}
-                        <div>
-                            <label for="form-icon" class="font-label-md text-label-md text-on-surface-variant block mb-xs">
-                                Icon
-                            </label>
-                            <div class="flex items-center gap-sm">
-                                <input type="text" id="form-icon" name="icon"
-                                    placeholder="e.g. account_balance"
-                                    class="flex-1 bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-code text-code text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
-                                    oninput="updateIconPreview()">
-                                <div class="p-2 bg-surface-container-low rounded border border-outline-variant">
-                                    <span class="material-symbols-outlined text-secondary" id="icon-preview">database</span>
+                    </div>
+                    
+                    <div class="p-4 bg-surface-50/50 rounded-xl border border-surface-200/60 space-y-4">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label for="form-source-conn" class="text-label-md text-surface-600 block mb-1.5">Source Connection <span class="text-red-500">*</span></label>
+                                <select id="form-source-conn" required onchange="fetchSourceObjects()" class="w-full bg-white border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                                    @foreach($connections as $k => $c)
+                                        <option value="{{ $k }}">{{ $c['name'] }} ({{ strtoupper($c['type']) }})</option>
+                                    @endforeach
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-label-md text-surface-600 block mb-1.5 flex justify-between items-center">
+                                    Source Object / Entity <span class="text-red-500">*</span>
+                                    <button type="button" onclick="fetchSourceObjects(true)" tabindex="-1" class="text-[11px] text-brand-600 hover:text-brand-700 flex items-center gap-0.5">
+                                        <span class="material-symbols-outlined text-[13px]">refresh</span> Reload
+                                    </button>
+                                </label>
+                                <div class="relative">
+                                    <input type="text" id="form-odata" required placeholder="Search or type object name" autocomplete="off"
+                                        onfocus="document.getElementById('form-odata-dropdown').classList.remove('hidden')"
+                                        onblur="setTimeout(() => { document.getElementById('form-odata-dropdown').classList.add('hidden'); }, 200)"
+                                        oninput="filterList(this, 'form-odata-list')"
+                                        class="w-full bg-white border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                                    
+                                    <div id="form-odata-dropdown" class="absolute z-20 w-full mt-1 bg-white border border-surface-200 rounded-xl shadow-lg max-h-48 overflow-y-auto hidden">
+                                        <ul id="form-odata-list" class="py-1"></ul>
+                                    </div>
+
+                                    <div id="form-odata-loading" class="absolute right-3 top-2.5 hidden bg-white pl-2">
+                                        <span class="material-symbols-outlined text-[20px] text-surface-400 spin">sync</span>
+                                    </div>
                                 </div>
                             </div>
-                            <p class="font-label-sm text-label-sm text-on-surface-variant mt-xs">
-                                <a href="https://fonts.google.com/icons" target="_blank" class="text-primary hover:underline">Browse Material Symbols →</a>
-                            </p>
                         </div>
-                        {{-- Description --}}
-                        <div>
-                            <label for="form-desc" class="font-label-md text-label-md text-on-surface-variant block mb-xs">
-                                Description <span class="text-red-500">*</span>
-                            </label>
-                            <input type="text" id="form-desc" name="description" required
-                                placeholder="e.g. Master Cash Account"
-                                class="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors">
+
+                        <div class="flex items-center gap-2 justify-center py-2">
+                            <span class="material-symbols-outlined text-surface-300">arrow_downward</span>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label for="form-dest-conn" class="text-label-md text-surface-600 block mb-1.5">Destination Connection <span class="text-red-500">*</span></label>
+                                <select id="form-dest-conn" required class="w-full bg-white border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                                    @foreach($connections as $k => $c)
+                                        @if(in_array($c['type'], ['mysql', 'sqlsrv', 'sqlite']))
+                                            <option value="{{ $k }}">{{ $c['name'] }} ({{ strtoupper($c['type']) }})</option>
+                                        @endif
+                                    @endforeach
+                                </select>
+                            </div>
+                            <div>
+                                <label for="form-table" class="text-label-md text-surface-600 block mb-1.5">Target SQL Table <span class="text-red-500">*</span></label>
+                                <input type="text" id="form-table" required placeholder="e.g. acm_cash_accounts" pattern="[a-z][a-z0-9_]*" class="w-full bg-white border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                            </div>
                         </div>
                     </div>
-                    {{-- Footer --}}
-                    <div class="p-md border-t border-outline-variant bg-surface-container-low/30 flex justify-end gap-sm">
-                        <button type="button" onclick="closeEntityModal()"
-                            class="px-4 py-2 rounded font-label-md text-label-md text-on-surface-variant hover:bg-surface-container-low transition-colors">
-                            Cancel
-                        </button>
-                        <button type="submit" id="form-submit-btn"
-                            class="inline-flex items-center gap-1 px-4 py-2 rounded bg-primary text-on-primary font-label-md text-label-md hover:bg-primary-container hover:text-on-primary-container transition-colors active:scale-[0.97]">
-                            <span class="material-symbols-outlined text-sm">save</span>
-                            <span id="form-submit-text">Create Entity</span>
-                        </button>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label for="form-icon" class="text-label-md text-surface-600 block mb-1.5">Menu Icon</label>
+                            <input type="text" id="form-icon" placeholder="e.g. account_balance" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                        </div>
+                        <div>
+                            <label for="form-desc" class="text-label-md text-surface-600 block mb-1.5">Display Description <span class="text-red-500">*</span></label>
+                            <input type="text" id="form-desc" required placeholder="e.g. Master Cash Account" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                        </div>
                     </div>
                 </form>
+                <div class="px-5 py-4 border-t border-surface-100 flex justify-end gap-2 shrink-0 bg-surface-50/50">
+                    <button type="button" onclick="closeEntityModal()"
+                        class="px-4 py-2 rounded-xl text-label-md text-surface-600 hover:bg-surface-200 transition-all duration-200 bg-surface-100 border border-surface-200">
+                        Cancel
+                    </button>
+                    <button type="button" onclick="submitEntityForm(event)" id="form-submit-btn"
+                        class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand-600 text-white text-label-md hover:bg-brand-700 transition-all duration-200 active:scale-[0.97] shadow-sm">
+                        <span class="material-symbols-outlined text-[14px]">save</span>
+                        <span id="form-submit-text">Save Entity</span>
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -325,29 +427,30 @@
     <div id="delete-modal" class="fixed inset-0 z-50 hidden">
         <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" onclick="closeDeleteModal()"></div>
         <div class="absolute inset-0 flex items-center justify-center p-4">
-            <div class="bg-surface-container-lowest rounded-xl border border-outline-variant shadow-2xl w-full max-w-sm fade-in overflow-hidden">
-                <div class="p-md border-b border-outline-variant bg-surface-container-low/50">
-                    <h3 class="font-h2 text-h2 text-on-surface flex items-center gap-2">
-                        <span class="material-symbols-outlined text-error">warning</span>
+            <div class="bg-white rounded-2xl border border-surface-200/60 shadow-2xl w-full max-w-sm animate-fade-up overflow-hidden">
+                <div class="px-5 py-4 border-b border-surface-100">
+                    <h3 class="text-h3 text-surface-800 flex items-center gap-2">
+                        <span class="material-symbols-outlined text-red-500 text-[20px]">warning</span>
                         Confirm Delete
                     </h3>
                 </div>
-                <div class="p-md">
-                    <p class="font-body-md text-body-md text-on-surface">
-                        Are you sure you want to delete entity <strong id="delete-entity-name"></strong>?
+                <div class="p-5">
+                    <input type="hidden" id="delete-type" value="">
+                    <p class="text-body-md text-surface-700">
+                        Are you sure you want to delete <strong id="delete-name" class="text-surface-900"></strong>?
                     </p>
-                    <p class="font-label-sm text-label-sm text-on-surface-variant mt-sm">
-                        This will remove the entity configuration. The SQL table will NOT be deleted.
+                    <p class="text-label-sm text-surface-400 mt-2">
+                        This action cannot be undone.
                     </p>
                 </div>
-                <div class="p-md border-t border-outline-variant bg-surface-container-low/30 flex justify-end gap-sm">
+                <div class="px-5 py-4 border-t border-surface-100 flex justify-end gap-2">
                     <button onclick="closeDeleteModal()"
-                        class="px-4 py-2 rounded font-label-md text-label-md text-on-surface-variant hover:bg-surface-container-low transition-colors">
+                        class="px-4 py-2 rounded-xl text-label-md text-surface-600 hover:bg-surface-100 transition-all duration-200">
                         Cancel
                     </button>
                     <button onclick="confirmDelete()" id="delete-confirm-btn"
-                        class="inline-flex items-center gap-1 px-4 py-2 rounded bg-error text-on-error font-label-md text-label-md hover:bg-red-700 transition-colors active:scale-[0.97]">
-                        <span class="material-symbols-outlined text-sm">delete</span>
+                        class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-red-600 text-white text-label-md hover:bg-red-700 transition-all duration-200 active:scale-[0.97] shadow-sm">
+                        <span class="material-symbols-outlined text-[14px]">delete</span>
                         Delete
                     </button>
                 </div>
@@ -358,127 +461,11 @@
 
 @section('scripts')
 <script>
-    // ── Entity data cache ──────────────────────────────────────────────────
     const entityData = @json($entities);
+    const connectionData = @json($connections);
     let deleteTargetKey = null;
 
-    // ── OData URL preview ─────────────────────────────────────────────────
-    const acmUrlInput = document.getElementById('acm-url');
-    const acmODataPathInput = document.getElementById('acm-odata-path');
-
-    function updateODataPreview() {
-        const url = acmUrlInput.value.replace(/\/+$/, '');
-        const path = acmODataPathInput.value;
-        document.getElementById('acm-odata-preview').textContent = url + '/' + path + '/';
-    }
-
-    if (acmUrlInput) {
-        acmUrlInput.addEventListener('input', updateODataPreview);
-    }
-    if (acmODataPathInput) {
-        acmODataPathInput.addEventListener('change', updateODataPreview);
-    }
-
-    // ── Save Acumatica Settings ───────────────────────────────────────────
-    async function saveAcumatica(e) {
-        e.preventDefault();
-        const btn = document.getElementById('acm-save-btn');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="material-symbols-outlined text-sm spin">sync</span> Saving…';
-        try {
-            const res = await fetch('/api/settings/acumatica', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' },
-                body: JSON.stringify({
-                    url: document.getElementById('acm-url').value.trim(),
-                    tenant: document.getElementById('acm-tenant').value.trim(),
-                    username: document.getElementById('acm-username').value.trim(),
-                    password: document.getElementById('acm-password').value,
-                    odata_path: document.getElementById('acm-odata-path').value,
-                    verify_ssl: false,
-                }),
-            });
-            const data = await res.json();
-            showToast(data.message, data.success ? 'success' : 'error');
-        } catch (err) { showToast('Error: ' + err.message, 'error'); }
-        finally { btn.disabled = false; btn.innerHTML = '<span class="material-symbols-outlined text-sm">save</span> Save'; }
-    }
-
-    // ── Save SQL Server Settings ──────────────────────────────────────────
-    async function saveDatabase(e) {
-        e.preventDefault();
-        const btn = document.getElementById('sql-save-btn');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="material-symbols-outlined text-sm spin">sync</span> Saving…';
-        try {
-            const res = await fetch('/api/settings/database', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' },
-                body: JSON.stringify({
-                    connection: document.getElementById('db-connection').value,
-                    host: document.getElementById('db-host').value.trim(),
-                    port: parseInt(document.getElementById('db-port').value),
-                    database: document.getElementById('db-name').value.trim(),
-                    username: document.getElementById('db-username').value.trim(),
-                    password: document.getElementById('db-password').value,
-                }),
-            });
-            const data = await res.json();
-            showToast(data.message, data.success ? 'success' : 'error');
-        } catch (err) { showToast('Error: ' + err.message, 'error'); }
-        finally { btn.disabled = false; btn.innerHTML = '<span class="material-symbols-outlined text-sm">save</span> Save'; }
-    }
-
-    // ── Test Acumatica Connection ─────────────────────────────────────────
-    async function testAcumaticaConnection() {
-        const btn = document.getElementById('acm-test-btn');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="material-symbols-outlined text-sm spin">sync</span> Testing…';
-        try {
-            const res = await fetch('/api/settings/test-connection', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' },
-                body: JSON.stringify({
-                    type: 'acumatica',
-                    url: document.getElementById('acm-url').value.trim(),
-                    tenant: document.getElementById('acm-tenant').value.trim(),
-                    username: document.getElementById('acm-username').value.trim(),
-                    password: document.getElementById('acm-password').value,
-                    odata_path: document.getElementById('acm-odata-path').value,
-                }),
-            });
-            const data = await res.json();
-            showToast(data.message, data.success ? 'success' : 'error');
-        } catch (err) { showToast('Error: ' + err.message, 'error'); }
-        finally { btn.disabled = false; btn.innerHTML = '<span class="material-symbols-outlined text-sm">lan</span> Test'; }
-    }
-
-    // ── Test DB Connection ────────────────────────────────────────────────
-    async function testDbConnection() {
-        const btn = document.getElementById('sql-test-btn');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="material-symbols-outlined text-sm spin">sync</span> Testing…';
-        try {
-            const res = await fetch('/api/settings/test-connection', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' },
-                body: JSON.stringify({
-                    type: 'database',
-                    connection: document.getElementById('db-connection').value,
-                    host: document.getElementById('db-host').value.trim(),
-                    port: parseInt(document.getElementById('db-port').value),
-                    database: document.getElementById('db-name').value.trim(),
-                    username: document.getElementById('db-username').value.trim(),
-                    password: document.getElementById('db-password').value,
-                }),
-            });
-            const data = await res.json();
-            showToast(data.message, data.success ? 'success' : 'error');
-        } catch (err) { showToast('Error: ' + err.message, 'error'); }
-        finally { btn.disabled = false; btn.innerHTML = '<span class="material-symbols-outlined text-sm">lan</span> Test'; }
-    }
-
-    // ── Entity Pagination (client-side, 25 per page) ──────────────────────
+    // ── Entity Pagination ──────────────────────────────────────────────────
     const ENTITY_PAGE_SIZE = 25;
     let entityCurrentPage = 1;
     function paginateEntities() {
@@ -489,29 +476,30 @@
         const start = (entityCurrentPage - 1) * ENTITY_PAGE_SIZE;
         const end = start + ENTITY_PAGE_SIZE;
         rows.forEach((row, i) => { row.style.display = (i >= start && i < end) ? '' : 'none'; });
-        // Update pagination controls
         const container = document.getElementById('entity-pagination');
         if (!container) return;
         if (totalPages <= 1) { container.innerHTML = ''; return; }
-        let html = `<span class="font-label-sm text-label-sm text-on-surface-variant">Page ${entityCurrentPage} of ${totalPages} (${total} entities)</span><div class="flex items-center gap-1">`;
-        html += `<button onclick="entityGoPage(${entityCurrentPage - 1})" ${entityCurrentPage <= 1 ? 'disabled' : ''} class="p-1 rounded hover:bg-surface-container-low text-on-surface-variant disabled:opacity-30"><span class="material-symbols-outlined text-sm">chevron_left</span></button>`;
+        let html = `<span class="text-label-sm text-surface-500">Page ${entityCurrentPage} of ${totalPages} (${total} entities)</span><div class="flex items-center gap-1">`;
+        html += `<button onclick="entityGoPage(${entityCurrentPage - 1})" ${entityCurrentPage <= 1 ? 'disabled' : ''} class="p-1 rounded-lg hover:bg-surface-100 text-surface-400 disabled:opacity-30"><span class="material-symbols-outlined text-[14px]">chevron_left</span></button>`;
         for (let p = 1; p <= totalPages; p++) {
-            html += `<button onclick="entityGoPage(${p})" class="px-2 py-0.5 rounded font-label-sm text-label-sm ${p === entityCurrentPage ? 'bg-primary text-on-primary' : 'text-on-surface-variant hover:bg-surface-container-low'}">${p}</button>`;
+            html += `<button onclick="entityGoPage(${p})" class="px-2.5 py-0.5 rounded-lg text-label-sm ${p === entityCurrentPage ? 'bg-brand-600 text-white' : 'text-surface-500 hover:bg-surface-100'}">${p}</button>`;
         }
-        html += `<button onclick="entityGoPage(${entityCurrentPage + 1})" ${entityCurrentPage >= totalPages ? 'disabled' : ''} class="p-1 rounded hover:bg-surface-container-low text-on-surface-variant disabled:opacity-30"><span class="material-symbols-outlined text-sm">chevron_right</span></button>`;
+        html += `<button onclick="entityGoPage(${entityCurrentPage + 1})" ${entityCurrentPage >= totalPages ? 'disabled' : ''} class="p-1 rounded-lg hover:bg-surface-100 text-surface-400 disabled:opacity-30"><span class="material-symbols-outlined text-[14px]">chevron_right</span></button>`;
         html += '</div>';
         container.innerHTML = html;
+        if(typeof updateBatchDeleteBtn === 'function') updateBatchDeleteBtn();
     }
     function entityGoPage(p) { entityCurrentPage = p; paginateEntities(); }
     document.addEventListener('DOMContentLoaded', paginateEntities);
 
-    // ── Modal: Open for Create ─────────────────────────────────────────────
+    // Aliases for HTML buttons
+    function editEntity(key) { openEntityModal(key); }
+    function editConnection(key) { openConnectionModal(key); }
+
+    // ── Entity Modal ───────────────────────────────────────────────────────
     function openEntityModal(editKey = null) {
         const modal = document.getElementById('entity-modal');
-        const title = document.getElementById('modal-title');
-        const submitText = document.getElementById('form-submit-text');
         const form = document.getElementById('entity-form');
-
         form.reset();
         document.getElementById('form-mode').value = 'create';
         document.getElementById('form-original-key').value = '';
@@ -526,28 +514,106 @@
             document.getElementById('form-table').value = e.table;
             document.getElementById('form-icon').value = e.icon || '';
             document.getElementById('form-desc').value = e.description;
-            title.innerHTML = '<span class="material-symbols-outlined text-secondary">edit</span> Edit Entity';
-            submitText.textContent = 'Save Changes';
+            if(e.source_connection) {
+                document.getElementById('form-source-conn').value = e.source_connection;
+            }
+            if(e.destination_connection) {
+                document.getElementById('form-dest-conn').value = e.destination_connection;
+            }
+            document.getElementById('modal-title').innerHTML = '<span class="material-symbols-outlined text-brand-500 text-[20px]">edit</span> Edit Entity';
+            document.getElementById('form-submit-text').textContent = 'Save Changes';
+            fetchSourceObjects();
         } else {
-            title.innerHTML = '<span class="material-symbols-outlined text-secondary">add_circle</span> Add Entity';
-            submitText.textContent = 'Create Entity';
+            document.getElementById('modal-title').innerHTML = '<span class="material-symbols-outlined text-brand-500 text-[20px]">add_circle</span> Add Entity';
+            document.getElementById('form-submit-text').textContent = 'Create Entity';
+            fetchSourceObjects();
         }
-        updateIconPreview();
         modal.classList.remove('hidden');
-        document.getElementById('form-key').focus();
+    }
+
+    function filterList(input, listId) {
+        const filter = input.value.toLowerCase();
+        const lis = document.getElementById(listId).getElementsByTagName('li');
+        for (let i = 0; i < lis.length; i++) {
+            const txtValue = lis[i].textContent || lis[i].innerText;
+            if (txtValue.toLowerCase().indexOf(filter) > -1) {
+                lis[i].style.display = "";
+            } else {
+                lis[i].style.display = "none";
+            }
+        }
+    }
+
+    let cachedSourceObjects = {};
+    try {
+        const stored = localStorage.getItem('cached_source_objects');
+        if (stored) cachedSourceObjects = JSON.parse(stored);
+    } catch(e) {}
+
+    function renderSourceObjects(objects) {
+        requestAnimationFrame(() => {
+            const list = document.getElementById('form-odata-list');
+            
+            if (objects.length === 0) {
+                list.innerHTML = '<li class="px-3.5 py-2 text-sm text-surface-400 italic">No objects found</li>';
+            } else {
+                let html = '';
+                objects.forEach(obj => {
+                    html += `<li onclick="document.getElementById('form-odata').value = '${obj}'" class="px-3.5 py-2 hover:bg-surface-100 cursor-pointer text-sm font-mono text-surface-800 transition-colors">${obj}</li>`;
+                });
+                list.innerHTML = html;
+            }
+        });
+    }
+
+    async function fetchSourceObjects(force = false) {
+        const connKey = document.getElementById('form-source-conn').value;
+        if (!connKey) return;
+        
+        if (!force && cachedSourceObjects[connKey]) {
+            renderSourceObjects(cachedSourceObjects[connKey]);
+            return;
+        }
+        
+        const loading = document.getElementById('form-odata-loading');
+        loading.classList.remove('hidden');
+        
+        try {
+            const res = await fetch(`/api/connections/${connKey}/objects`);
+            const data = await res.json();
+            if (res.ok && data.success && data.objects) {
+                // Sort objects alphabetically
+                data.objects.sort((a, b) => a.localeCompare(b));
+                cachedSourceObjects[connKey] = data.objects;
+                try {
+                    localStorage.setItem('cached_source_objects', JSON.stringify(cachedSourceObjects));
+                } catch(e) {}
+                
+                renderSourceObjects(data.objects);
+
+                if (document.activeElement === document.getElementById('form-odata')) {
+                    document.getElementById('form-odata-dropdown').classList.remove('hidden');
+                }
+            }
+        } catch (e) {
+            console.error('Failed to fetch source objects', e);
+        } finally {
+            loading.classList.add('hidden');
+        }
     }
 
     function closeEntityModal() { document.getElementById('entity-modal').classList.add('hidden'); }
-    function updateIconPreview() { document.getElementById('icon-preview').textContent = document.getElementById('form-icon').value.trim() || 'database'; }
-    function editEntity(key) { openEntityModal(key); }
 
-    // ── Submit form (Create / Update) ─────────────────────────────────────
     async function submitEntityForm(event) {
-        event.preventDefault();
+        if(event) event.preventDefault();
+        if(!document.getElementById('entity-form').checkValidity()) {
+            document.getElementById('entity-form').reportValidity();
+            return;
+        }
+
         const mode = document.getElementById('form-mode').value;
         const originalKey = document.getElementById('form-original-key').value;
-        const submitBtn = document.getElementById('form-submit-btn');
-        const submitText = document.getElementById('form-submit-text');
+        const btn = document.getElementById('form-submit-btn');
         const payload = {
             key: document.getElementById('form-key').value.trim(),
             odata_entity: document.getElementById('form-odata').value.trim(),
@@ -555,47 +621,452 @@
             type: document.getElementById('form-type').value,
             icon: document.getElementById('form-icon').value.trim() || 'database',
             description: document.getElementById('form-desc').value.trim(),
+            source_connection: document.getElementById('form-source-conn').value,
+            destination_connection: document.getElementById('form-dest-conn').value,
         };
-        submitBtn.disabled = true;
-        submitText.textContent = mode === 'edit' ? 'Saving…' : 'Creating…';
+        btn.disabled = true;
         try {
             const url = mode === 'edit' ? `/api/entities/${originalKey}` : '/api/entities';
             const method = mode === 'edit' ? 'PUT' : 'POST';
             const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' }, body: JSON.stringify(payload) });
             const data = await res.json();
             if (res.ok && data.success) { showToast(data.message, 'success'); closeEntityModal(); setTimeout(() => location.reload(), 800); }
-            else { showToast(data.errors ? Object.values(data.errors).flat().join('\n') : (data.message || 'Operation failed'), 'error'); }
+            else { showToast(data.message || 'Operation failed', 'error'); }
         } catch (e) { showToast('Error: ' + e.message, 'error'); }
-        finally { submitBtn.disabled = false; submitText.textContent = mode === 'edit' ? 'Save Changes' : 'Create Entity'; }
+        finally { btn.disabled = false; }
+    }
+
+    // ── Connection Modal ───────────────────────────────────────────────────
+    function toggleConnectionFields() {
+        const type = document.getElementById('conn-type').value;
+        document.getElementById('conn-fields-db').classList.add('hidden');
+        document.getElementById('conn-fields-odata').classList.add('hidden');
+        document.getElementById('conn-fields-rest').classList.add('hidden');
+        
+        if (type === 'mysql' || type === 'sqlsrv') {
+            document.getElementById('conn-fields-db').classList.remove('hidden');
+        } else if (type === 'odata') {
+            document.getElementById('conn-fields-odata').classList.remove('hidden');
+        } else if (type === 'rest_api') {
+            document.getElementById('conn-fields-rest').classList.remove('hidden');
+        }
+    }
+
+    function openConnectionModal(editKey = null) {
+        const modal = document.getElementById('connection-modal');
+        document.getElementById('connection-form').reset();
+        document.getElementById('conn-form-mode').value = 'create';
+        document.getElementById('conn-form-original-key').value = '';
+
+        if (editKey && connectionData[editKey]) {
+            const c = connectionData[editKey];
+            document.getElementById('conn-form-mode').value = 'edit';
+            document.getElementById('conn-form-original-key').value = editKey;
+            document.getElementById('conn-key').value = editKey;
+            document.getElementById('conn-name').value = c.name;
+            document.getElementById('conn-type').value = c.type;
+            
+            toggleConnectionFields();
+            if (c.type === 'mysql' || c.type === 'sqlsrv') {
+                document.getElementById('conn-db-host').value = c.credentials.host || '';
+                document.getElementById('conn-db-port').value = c.credentials.port || '';
+                document.getElementById('conn-db-name').value = c.credentials.database || '';
+                document.getElementById('conn-db-user').value = c.credentials.username || '';
+                document.getElementById('conn-db-pass').value = c.credentials.password || '';
+            } else if (c.type === 'odata') {
+                document.getElementById('conn-odata-url').value = c.credentials.url || '';
+                document.getElementById('conn-odata-tenant').value = c.credentials.tenant || '';
+                document.getElementById('conn-odata-user').value = c.credentials.username || '';
+                document.getElementById('conn-odata-pass').value = c.credentials.password || '';
+                document.getElementById('conn-odata-path').value = c.credentials.odata_path || 'odatav4';
+            } else if (c.type === 'rest_api') {
+                document.getElementById('conn-rest-url').value = c.credentials.url || '';
+                document.getElementById('conn-rest-token').value = c.credentials.token || '';
+            }
+
+            document.getElementById('conn-modal-title').innerHTML = '<span class="material-symbols-outlined text-brand-500 text-[20px]">edit</span> Edit Connection';
+            document.getElementById('conn-submit-text').textContent = 'Save Changes';
+        } else {
+            toggleConnectionFields();
+            document.getElementById('conn-modal-title').innerHTML = '<span class="material-symbols-outlined text-brand-500 text-[20px]">add_circle</span> Add Connection';
+            document.getElementById('conn-submit-text').textContent = 'Create Connection';
+        }
+        modal.classList.remove('hidden');
+    }
+
+    function closeConnectionModal() { document.getElementById('connection-modal').classList.add('hidden'); }
+
+    async function testConnectionFromForm() {
+        if(!document.getElementById('connection-form').checkValidity()) {
+            document.getElementById('connection-form').reportValidity();
+            return;
+        }
+
+        const type = document.getElementById('conn-type').value;
+        let credentials = {};
+
+        if (type === 'mysql' || type === 'sqlsrv') {
+            credentials = {
+                host: document.getElementById('conn-db-host').value,
+                port: document.getElementById('conn-db-port').value,
+                database: document.getElementById('conn-db-name').value,
+                username: document.getElementById('conn-db-user').value,
+                password: document.getElementById('conn-db-pass').value,
+            };
+        } else if (type === 'odata') {
+            credentials = {
+                url: document.getElementById('conn-odata-url').value,
+                tenant: document.getElementById('conn-odata-tenant').value,
+                username: document.getElementById('conn-odata-user').value,
+                password: document.getElementById('conn-odata-pass').value,
+                odata_path: document.getElementById('conn-odata-path').value,
+            };
+        } else if (type === 'rest_api') {
+            credentials = {
+                url: document.getElementById('conn-rest-url').value,
+                token: document.getElementById('conn-rest-token').value,
+            };
+        }
+
+        const btn = document.getElementById('conn-test-btn');
+        const originalHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="material-symbols-outlined text-[14px] spin">sync</span> Testing...';
+
+        try {
+            const res = await fetch('/api/connections/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' },
+                body: JSON.stringify({ type, credentials })
+            });
+            const data = await res.json();
+            if (res.ok && data.success) {
+                showToast(data.message, 'success');
+            } else {
+                showToast(data.message || 'Connection failed', 'error');
+            }
+        } catch (e) {
+            showToast('Error: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+    }
+
+    async function submitConnectionForm(event) {
+        if(event) event.preventDefault();
+        if(!document.getElementById('connection-form').checkValidity()) {
+            document.getElementById('connection-form').reportValidity();
+            return;
+        }
+
+        const mode = document.getElementById('conn-form-mode').value;
+        const originalKey = document.getElementById('conn-form-original-key').value;
+        const type = document.getElementById('conn-type').value;
+        let credentials = {};
+
+        if (type === 'mysql' || type === 'sqlsrv') {
+            credentials = {
+                host: document.getElementById('conn-db-host').value,
+                port: document.getElementById('conn-db-port').value,
+                database: document.getElementById('conn-db-name').value,
+                username: document.getElementById('conn-db-user').value,
+                password: document.getElementById('conn-db-pass').value,
+            };
+        } else if (type === 'odata') {
+            credentials = {
+                url: document.getElementById('conn-odata-url').value,
+                tenant: document.getElementById('conn-odata-tenant').value,
+                username: document.getElementById('conn-odata-user').value,
+                password: document.getElementById('conn-odata-pass').value,
+                odata_path: document.getElementById('conn-odata-path').value,
+            };
+        } else if (type === 'rest_api') {
+            credentials = {
+                url: document.getElementById('conn-rest-url').value,
+                token: document.getElementById('conn-rest-token').value,
+            };
+        }
+
+        const payload = {
+            key: document.getElementById('conn-key').value.trim(),
+            name: document.getElementById('conn-name').value.trim(),
+            type: type,
+            credentials: credentials
+        };
+
+        const btn = document.getElementById('conn-submit-btn');
+        btn.disabled = true;
+        try {
+            const url = mode === 'edit' ? `/api/connections/${originalKey}` : '/api/connections';
+            const method = mode === 'edit' ? 'PUT' : 'POST';
+            const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' }, body: JSON.stringify(payload) });
+            const data = await res.json();
+            if (res.ok && data.success) { showToast(data.message, 'success'); closeConnectionModal(); setTimeout(() => location.reload(), 800); }
+            else { showToast(data.message || 'Operation failed', 'error'); }
+        } catch (e) { showToast('Error: ' + e.message, 'error'); }
+        finally { btn.disabled = false; }
+    }
+
+    let lastDbFetchKey = '';
+    async function fetchServerDatabases() {
+        const type = document.getElementById('conn-type').value;
+        if (type !== 'mysql' && type !== 'sqlsrv') return;
+
+        const host = document.getElementById('conn-db-host').value;
+        const port = document.getElementById('conn-db-port').value;
+        const user = document.getElementById('conn-db-user').value;
+        const pass = document.getElementById('conn-db-pass').value;
+
+        if (!host || !user) {
+            showToast('Please fill Host and Username first', 'error');
+            return;
+        }
+
+        const currentKey = `${type}-${host}-${port}-${user}-${pass}`;
+        if (lastDbFetchKey === currentKey) {
+            // Already fetched, just show dropdown if there are items
+            document.getElementById('conn-db-dropdown').classList.remove('hidden');
+            return; 
+        }
+        
+        const loading = document.getElementById('conn-db-loading');
+        loading.classList.remove('hidden');
+        
+        try {
+            const res = await fetch('/api/connections/databases', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' },
+                body: JSON.stringify({ type, credentials: { host, port, username: user, password: pass } })
+            });
+            const data = await res.json();
+            if (res.ok && data.success && data.databases) {
+                // Sort databases alphabetically
+                data.databases.sort((a, b) => a.localeCompare(b));
+                
+                const list = document.getElementById('conn-db-list');
+                
+                if (data.databases.length === 0) {
+                    list.innerHTML = '<li class="px-3.5 py-2 text-sm text-surface-400 italic">No databases found</li>';
+                } else {
+                    let html = '';
+                    data.databases.forEach(db => {
+                        html += `<li onclick="document.getElementById('conn-db-name').value = '${db}'" class="px-3.5 py-2 hover:bg-surface-100 cursor-pointer text-sm font-mono text-surface-800 transition-colors">${db}</li>`;
+                    });
+                    list.innerHTML = html;
+                }
+                
+                if (document.activeElement === document.getElementById('conn-db-name')) {
+                    document.getElementById('conn-db-dropdown').classList.remove('hidden');
+                }
+                
+                lastDbFetchKey = currentKey;
+            } else {
+                showToast(data.message || 'Failed to fetch databases', 'error');
+            }
+        } catch (e) {
+            console.error('Failed to fetch databases', e);
+            showToast('Error fetching databases', 'error');
+        } finally {
+            loading.classList.add('hidden');
+        }
+    }
+
+    async function testConnection(key, silent = false) {
+        if (!connectionData[key]) return;
+        const c = connectionData[key];
+        const payload = { type: c.type, credentials: c.credentials, key: key };
+
+        const statusEl = document.getElementById('status-' + key);
+        const btn = document.getElementById('btn-conn-' + key);
+        
+        btn.disabled = true;
+        statusEl.innerHTML = '<span class="material-symbols-outlined text-[12px] spin align-middle">sync</span> Ping...';
+        statusEl.className = "text-label-sm text-amber-500 font-medium flex items-center gap-1";
+
+        try {
+            const res = await fetch('/api/connections/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            
+            if (res.ok && data.success) {
+                statusEl.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block shadow-[0_0_8px_rgba(16,185,129,0.4)]"></span> ' + (data.ping_ms ? data.ping_ms + 'ms' : 'Connected');
+                statusEl.className = "text-label-sm text-emerald-600 font-medium flex items-center gap-1.5";
+                
+                btn.innerHTML = '<span class="material-symbols-outlined text-[14px]">link_off</span> Disconnect';
+                btn.className = "px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-600 transition-all duration-200 text-label-sm font-semibold flex items-center gap-1";
+                btn.setAttribute('onclick', `disconnectConnection('${key}')`);
+                
+                localStorage.setItem('conn_status_' + key, 'Connected');
+                if(!silent) showToast(data.message, 'success');
+            } else {
+                localStorage.removeItem('conn_status_' + key);
+                throw new Error(data.message || 'Connection failed');
+            }
+        } catch (e) {
+            statusEl.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-red-500 inline-block shadow-[0_0_8px_rgba(239,68,68,0.4)]"></span> Failed';
+            statusEl.className = "text-label-sm text-red-600 font-medium flex items-center gap-1.5";
+            
+            btn.innerHTML = '<span class="material-symbols-outlined text-[14px]">link</span> Connect';
+            btn.className = "px-2.5 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 transition-all duration-200 text-label-sm font-semibold flex items-center gap-1";
+            btn.setAttribute('onclick', `testConnection('${key}')`);
+            if(!silent) showToast('Error: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    function disconnectConnection(key) {
+        localStorage.removeItem('conn_status_' + key);
+        
+        const statusEl = document.getElementById('status-' + key);
+        const btn = document.getElementById('btn-conn-' + key);
+        
+        statusEl.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-surface-300"></span> Disconnected';
+        statusEl.className = "text-label-sm text-surface-400 font-medium flex items-center gap-1.5";
+        
+        btn.innerHTML = '<span class="material-symbols-outlined text-[14px]">link</span> Connect';
+        btn.className = "px-2.5 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 transition-all duration-200 text-label-sm font-semibold flex items-center gap-1";
+        btn.setAttribute('onclick', `testConnection('${key}')`);
     }
 
     // ── Delete ─────────────────────────────────────────────────────────────
-    function deleteEntity(key) { deleteTargetKey = key; document.getElementById('delete-entity-name').textContent = key; document.getElementById('delete-modal').classList.remove('hidden'); }
+    function deleteEntity(key) { 
+        document.getElementById('delete-type').value = 'entity';
+        deleteTargetKey = key; 
+        document.getElementById('delete-name').textContent = key; 
+        document.getElementById('delete-modal').classList.remove('hidden'); 
+    }
+    function deleteConnection(key) { 
+        document.getElementById('delete-type').value = 'connection';
+        deleteTargetKey = key; 
+        document.getElementById('delete-name').textContent = connectionData[key] ? connectionData[key].name : key; 
+        document.getElementById('delete-modal').classList.remove('hidden'); 
+    }
+    
+    // ── Batch Delete Entities ──────────────────────────────────────────────
+    function toggleAllEntities(source) {
+        const checkboxes = document.querySelectorAll('.entity-checkbox');
+        checkboxes.forEach(cb => {
+            if (cb.closest('tr').style.display !== 'none') {
+                cb.checked = source.checked;
+            }
+        });
+        updateBatchDeleteBtn();
+    }
+
+    function updateBatchDeleteBtn() {
+        const selectedCount = document.querySelectorAll('.entity-checkbox:checked').length;
+        const btn = document.getElementById('btn-batch-delete');
+        const countSpan = document.getElementById('batch-delete-count');
+        
+        if (selectedCount > 0) {
+            countSpan.textContent = selectedCount;
+            btn.classList.remove('hidden');
+            btn.classList.add('inline-flex');
+        } else {
+            btn.classList.add('hidden');
+            btn.classList.remove('inline-flex');
+        }
+        
+        const selectAll = document.getElementById('selectAllEntities');
+        if(selectAll) {
+            const visibleCheckboxes = Array.from(document.querySelectorAll('.entity-checkbox')).filter(cb => cb.closest('tr').style.display !== 'none');
+            if (visibleCheckboxes.length > 0) {
+                const allChecked = visibleCheckboxes.every(cb => cb.checked);
+                const someChecked = visibleCheckboxes.some(cb => cb.checked);
+                selectAll.checked = allChecked;
+                selectAll.indeterminate = someChecked && !allChecked;
+            } else {
+                selectAll.checked = false;
+                selectAll.indeterminate = false;
+            }
+        }
+    }
+
+    async function batchDeleteEntities() {
+        const selected = Array.from(document.querySelectorAll('.entity-checkbox:checked')).map(cb => cb.value);
+        if (selected.length === 0) return;
+        
+        if(!confirm(`Are you sure you want to delete ${selected.length} entities?`)) return;
+        
+        const btn = document.getElementById('btn-batch-delete');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="material-symbols-outlined text-[14px] spin">sync</span> Deleting...';
+        
+        let successCount = 0;
+        for (const key of selected) {
+            try {
+                const res = await fetch(`/api/entities/${key}`, {
+                    method: 'DELETE',
+                    headers: { 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' }
+                });
+                if(res.ok) successCount++;
+            } catch(e) {
+                console.error('Failed to delete ' + key);
+            }
+        }
+        
+        if (successCount > 0) {
+            showToast(`Successfully deleted ${successCount} entities`, 'success');
+            setTimeout(() => location.reload(), 600);
+        } else {
+            showToast('Failed to delete entities', 'error');
+            btn.disabled = false;
+            btn.innerHTML = `<span class="material-symbols-outlined text-[14px]">delete</span> Delete Selected (<span id="batch-delete-count">${selected.length}</span>)`;
+            updateBatchDeleteBtn();
+        }
+    }
+
     function closeDeleteModal() { document.getElementById('delete-modal').classList.add('hidden'); deleteTargetKey = null; }
+    
     async function confirmDelete() {
         if (!deleteTargetKey) return;
+        const type = document.getElementById('delete-type').value;
         const btn = document.getElementById('delete-confirm-btn');
-        btn.disabled = true; btn.innerHTML = '<span class="material-symbols-outlined text-sm spin">sync</span> Deleting…';
+        btn.disabled = true; 
+        btn.innerHTML = '<span class="material-symbols-outlined text-[14px] spin">sync</span> Deleting…';
         try {
-            const res = await fetch(`/api/entities/${deleteTargetKey}`, { method: 'DELETE', headers: { 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' } });
+            const url = type === 'entity' ? `/api/entities/${deleteTargetKey}` : `/api/connections/${deleteTargetKey}`;
+            const res = await fetch(url, { method: 'DELETE', headers: { 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' } });
             const data = await res.json();
             if (res.ok && data.success) { showToast(data.message, 'success'); closeDeleteModal(); setTimeout(() => location.reload(), 800); }
             else { showToast(data.message || 'Delete failed', 'error'); }
         } catch (e) { showToast('Error: ' + e.message, 'error'); }
-        finally { btn.disabled = false; btn.innerHTML = '<span class="material-symbols-outlined text-sm">delete</span> Delete'; }
+        finally { btn.disabled = false; btn.innerHTML = '<span class="material-symbols-outlined text-[14px]">delete</span> Delete'; }
     }
 
-    function handleConnectionTypeChange() {
-        const type = document.getElementById('db-connection').value;
-        const portInput = document.getElementById('db-port');
-        if (type === 'mysql') {
-            if (portInput.value == '1433' || portInput.value === '') portInput.value = '3306';
-        } else if (type === 'sqlsrv') {
-            if (portInput.value == '3306' || portInput.value === '') portInput.value = '1433';
+    document.addEventListener('DOMContentLoaded', () => {
+        paginateEntities();
+        
+        // Restore connection statuses from localStorage without re-testing
+        const keys = Object.keys(connectionData);
+        for (const key of keys) {
+            const status = localStorage.getItem('conn_status_' + key);
+            if (status === 'Connected') {
+                const statusEl = document.getElementById('status-' + key);
+                const btn = document.getElementById('btn-conn-' + key);
+                if (statusEl && btn) {
+                    statusEl.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block shadow-[0_0_8px_rgba(16,185,129,0.4)]"></span> Connected';
+                    statusEl.className = "text-label-sm text-emerald-600 font-medium flex items-center gap-1.5";
+                    
+                    btn.innerHTML = '<span class="material-symbols-outlined text-[14px]">link_off</span> Disconnect';
+                    btn.className = "px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-600 transition-all duration-200 text-label-sm font-semibold flex items-center gap-1";
+                    btn.setAttribute('onclick', `disconnectConnection('${key}')`);
+                }
+            }
         }
-    }
+    });
 
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeEntityModal(); closeDeleteModal(); } });
+    document.addEventListener('keydown', (e) => { 
+        if (e.key === 'Escape') { 
+            closeEntityModal(); 
+            closeConnectionModal();
+            closeDeleteModal(); 
+        } 
+    });
 </script>
 @endsection
-

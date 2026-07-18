@@ -14,6 +14,7 @@ class SyncLog extends Model
         'odata_entity',
         'table_name',
         'type',
+        'source',
         'status',
         'records_fetched',
         'records_inserted',

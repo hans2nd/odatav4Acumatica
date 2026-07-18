@@ -6,6 +6,7 @@ use App\Jobs\SyncAllJob;
 use App\Jobs\SyncEntityJob;
 use App\Models\SyncLog;
 use App\Services\AcumaticaODataService;
+use App\Services\QueueWorkerService;
 use App\Services\SchemaManager;
 use App\Services\SyncService;
 use Illuminate\Http\JsonResponse;
@@ -14,6 +15,15 @@ use Illuminate\Support\Facades\Schema;
 
 class SyncController extends Controller
 {
+    protected SyncService $syncService;
+    protected QueueWorkerService $queueWorker;
+
+    public function __construct(SyncService $syncService, QueueWorkerService $queueWorker)
+    {
+        $this->syncService = $syncService;
+        $this->queueWorker = $queueWorker;
+    }
+
     /**
      * Sync all entities.
      *
@@ -21,11 +31,11 @@ class SyncController extends Controller
      * the job to the queue for background processing.
      * Otherwise, falls back to synchronous execution.
      */
-    public function syncAll(SyncService $syncService): JsonResponse
+    public function syncAll(): JsonResponse
     {
-        if ($this->isAsyncQueue()) {
+        if ($this->queueWorker->isAsyncQueue()) {
             SyncAllJob::dispatch();
-            $this->startBackgroundWorker();
+            $this->queueWorker->startBackgroundWorker();
 
             return response()->json([
                 'success' => true,
@@ -43,7 +53,7 @@ class SyncController extends Controller
         }
 
         try {
-            $results = $syncService->syncAll();
+            $results = $this->syncService->syncAll();
 
             $summary = [];
             foreach ($results as $key => $log) {
@@ -75,12 +85,46 @@ class SyncController extends Controller
         }
     }
 
+    public function stopQueue(int $id): JsonResponse
+    {
+        try {
+            $log = SyncLog::find($id);
+
+            if (!$log || $log->status !== 'running') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Log not found or sync is not currently running.',
+                ], 404);
+            }
+
+            // Signal running sync to abort specifically for this log ID
+            \Illuminate\Support\Facades\Cache::put("sync_abort_log_{$id}", true, 120);
+
+            // Mark this specific log as failed immediately
+            $log->update([
+                'status' => 'failed',
+                'error_message' => 'Aborted manually by user.',
+                'completed_at' => now()
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Queue stopped successfully for sync task #{$id}.",
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to stop queue: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
     /**
      * Sync a single entity by key, optionally with custom filters.
      *
      * Dispatches to queue if available, otherwise runs synchronously.
      */
-    public function syncEntity(Request $request, SyncService $syncService, string $entity): JsonResponse
+    public function syncEntity(Request $request, string $entity): JsonResponse
     {
         $config = config("acumatica.entities.{$entity}");
         if (! $config) {
@@ -92,9 +136,16 @@ class SyncController extends Controller
 
         // custom_filters should be an array of associative arrays: [['field' => 'X', 'operator' => 'eq', 'value' => 'Y']]
         $customFilters = $request->input('custom_filters', []);
+        
+        if ($request->boolean('save_filters')) {
+            \App\Models\SyncSchedule::updateOrCreate(
+                ['entity_key' => $entity],
+                ['custom_filters' => empty($customFilters) ? null : $customFilters]
+            );
+        }
 
         // Dispatch to queue for async processing
-        if ($this->isAsyncQueue()) {
+        if ($this->queueWorker->isAsyncQueue()) {
             // Initialize progress cache before dispatching so frontend can start polling
             \Illuminate\Support\Facades\Cache::put("sync_progress_{$entity}", [
                 'current' => 0,
@@ -103,7 +154,7 @@ class SyncController extends Controller
             ], 3600);
 
             SyncEntityJob::dispatch($entity, $customFilters);
-            $this->startBackgroundWorker();
+            $this->queueWorker->startBackgroundWorker();
 
             return response()->json([
                 'success' => true,
@@ -124,7 +175,7 @@ class SyncController extends Controller
         }
 
         try {
-            $log = $syncService->syncEntity($entity, $customFilters);
+            $log = $this->syncService->syncEntity($entity, $customFilters);
 
             return response()->json([
                 'success'  => $log->status === 'success',
@@ -198,9 +249,15 @@ class SyncController extends Controller
     /**
      * Logs page view.
      */
-    public function logsPage()
+    public function logsPage(Request $request)
     {
-        $logs = SyncLog::orderByDesc('id')->paginate(15);
+        $query = SyncLog::query();
+        
+        if ($request->has('source')) {
+            $query->where('source', $request->input('source'));
+        }
+
+        $logs = $query->orderByDesc('id')->paginate(15)->appends($request->all());
 
         return view('logs.index', [
             'logs'      => $logs,
@@ -208,10 +265,25 @@ class SyncController extends Controller
         ]);
     }
 
+    public function saveFilters(Request $request, string $entity): JsonResponse
+    {
+        $customFilters = $request->input('custom_filters', []);
+        
+        \App\Models\SyncSchedule::updateOrCreate(
+            ['entity_key' => $entity],
+            ['custom_filters' => empty($customFilters) ? null : $customFilters]
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Filters saved successfully.',
+        ]);
+    }
+
     /**
      * Get available fields for an entity to populate the filter dropdown.
      */
-    public function entityFields(string $entity, SchemaManager $schemaManager, AcumaticaODataService $odataService): JsonResponse
+    public function entityFields(Request $request, string $entity, SchemaManager $schemaManager, AcumaticaODataService $odataService): JsonResponse
     {
         $config = config("acumatica.entities.{$entity}");
         if (!$config) {
@@ -219,75 +291,77 @@ class SyncController extends Controller
         }
 
         $tableName = $config['table'];
+        $connName = $config['destination_connection'] ?? 'database_default';
+        $odataEntity = $config['odata_entity'];
         
-        // Strategy 1: Read from local database if table exists
-        if (Schema::hasTable($tableName)) {
-            $columns = Schema::getColumnListing($tableName);
-            // Filter out internal columns
-            $fields = array_values(array_filter($columns, fn($col) => !in_array(strtolower($col), ['_sync_id', '_synced_at'])));
-            return response()->json(['success' => true, 'fields' => $fields]);
+        $cacheKey = "entity_fields_{$entity}";
+        
+        $isRefresh = $request->boolean('refresh');
+        if ($isRefresh) {
+            \Illuminate\Support\Facades\Cache::forget($cacheKey);
         }
 
-        // Strategy 2: Fetch 1 record from Acumatica and extract keys
-        try {
-            $odataEntity = $config['odata_entity'];
-            if ($odataService->usesSessionAuth()) {
-                $odataService->login();
+        $fields = \Illuminate\Support\Facades\Cache::remember($cacheKey, now()->addDays(1), function () use ($tableName, $connName, $odataEntity, $odataService, $isRefresh) {
+            $dbColumns = [];
+            try {
+                $firstRow = \Illuminate\Support\Facades\DB::connection($connName)->table($tableName)->first();
+                $columns = $firstRow ? array_keys((array)$firstRow) : \Illuminate\Support\Facades\DB::connection($connName)->getSchemaBuilder()->getColumnListing($tableName);
+                
+                if (!empty($columns)) {
+                    $dbColumns = array_values(array_filter($columns, fn($col) => !in_array(strtolower($col), ['_sync_id', '_synced_at', '_row_hash'])));
+                }
+            } catch (\Exception $e) {
+                // Table does not exist in local database yet
             }
+
+            // If not forcing refresh and DB has columns, return them fast
+            if (!$isRefresh && !empty($dbColumns)) {
+                return $dbColumns;
+            }
+
+            // Fetch from Acumatica
+            $odataColumns = [];
+            try {
+                if ($odataService->usesSessionAuth()) {
+                    $odataService->login();
+                }
+                
+                // Just get top 1 using fetchPage to avoid downloading all records
+                $result = $odataService->fetchPage($odataEntity, 1, 0, '');
+                $records = $result['value'] ?? [];
+                
+                if ($odataService->usesSessionAuth()) {
+                    $odataService->logout();
+                }
+
+                if (!empty($records)) {
+                    $cols = array_keys((array)$records[0]);
+                    // Filter out OData metadata columns and our internals
+                    $odataColumns = array_values(array_filter($cols, function ($col) {
+                        return !str_starts_with($col, '@odata') && !in_array(strtolower($col), ['_sync_id', '_synced_at', '_row_hash']);
+                    }));
+                }
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error("Failed to fetch fields for {$odataEntity}", ['error' => $e->getMessage()]);
+            }
+
+            // Merge both DB and OData columns (in case DB has columns not returned in first OData record)
+            $finalFields = array_values(array_unique(array_merge($dbColumns, $odataColumns)));
             
-            // Just get top 1 using fetchPage to avoid downloading all records
-            $result = $odataService->fetchPage($odataEntity, 1, 0, '');
-            $records = $result['value'] ?? [];
-            
-            if ($odataService->usesSessionAuth()) {
-                $odataService->logout();
+            // Explicitly include CompanyID as it is often a valid OData filter but might not be returned in the result set
+            if (!empty($finalFields) && !in_array('CompanyID', $finalFields) && !in_array('companyid', array_map('strtolower', $finalFields))) {
+                $finalFields[] = 'CompanyID';
             }
 
-            if (empty($records)) {
-                return response()->json(['success' => false, 'message' => 'No records found in Acumatica to extract fields from.']);
-            }
+            return $finalFields;
+        });
 
-            // Extract columns, similar to SchemaManager
-            $row = $records[0];
-            $fields = array_values(array_filter(
-                array_keys($row),
-                fn (string $key) => ! str_starts_with($key, '@') && ! str_starts_with($key, 'odata.')
-            ));
-
-            // Sanitize them to match database column names
-            $fields = array_map(fn($f) => $schemaManager->sanitizeColumnName($f), $fields);
-
-            return response()->json(['success' => true, 'fields' => $fields]);
-
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        if (empty($fields)) {
+            return response()->json(['success' => false, 'message' => 'No fields could be loaded. Ensure the entity has data.'], 404);
         }
+
+        return response()->json(['success' => true, 'fields' => $fields]);
     }
 
-    /**
-     * Check if the queue is configured for async processing.
-     * Returns false when using the 'sync' driver (no queue worker needed).
-     */
-    private function isAsyncQueue(): bool
-    {
-        return config('queue.default') !== 'sync';
-    }
 
-    /**
-     * Spawns a background queue worker that processes jobs until the queue is empty.
-     * This avoids needing to run a persistent Supervisor/Daemon manually.
-     */
-    private function startBackgroundWorker(): void
-    {
-        $basePath = base_path();
-        $command = "php {$basePath}" . DIRECTORY_SEPARATOR . "artisan queue:work --stop-when-empty --timeout=1800 --memory=1024";
-
-        if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-            // Detached process in Windows
-            pclose(popen("start /B {$command} > NUL 2>&1", "r"));
-        } else {
-            // Detached process in Linux/Unix
-            exec("{$command} > /dev/null 2>&1 &");
-        }
-    }
 }

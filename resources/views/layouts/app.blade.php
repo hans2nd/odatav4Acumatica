@@ -4,163 +4,86 @@
     <meta charset="utf-8"/>
     <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>@yield('title', 'Enterprise Sync Engine')</title>
-    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet"/>
-    <script>
-        tailwind.config = {
-            darkMode: "class",
-            theme: {
-                extend: {
-                    "colors": {
-                        "on-surface-variant": "#45464d",
-                        "on-error": "#ffffff",
-                        "tertiary-container": "#271901",
-                        "surface-tint": "#565e74",
-                        "on-primary-container": "#7c839b",
-                        "primary": "#000000",
-                        "on-tertiary-fixed": "#271901",
-                        "surface-container": "#f0edef",
-                        "surface": "#fcf8fa",
-                        "primary-container": "#131b2e",
-                        "surface-variant": "#e4e2e4",
-                        "on-secondary-fixed-variant": "#3a485c",
-                        "on-background": "#1b1b1d",
-                        "background": "#fcf8fa",
-                        "secondary-fixed-dim": "#b9c7e0",
-                        "on-surface": "#1b1b1d",
-                        "surface-bright": "#fcf8fa",
-                        "on-primary": "#ffffff",
-                        "surface-container-lowest": "#ffffff",
-                        "tertiary-fixed": "#fcdeb5",
-                        "outline-variant": "#c6c6cd",
-                        "on-error-container": "#93000a",
-                        "error-container": "#ffdad6",
-                        "inverse-surface": "#303032",
-                        "on-secondary": "#ffffff",
-                        "surface-dim": "#dcd9db",
-                        "on-secondary-fixed": "#0d1c2f",
-                        "secondary": "#515f74",
-                        "on-tertiary-fixed-variant": "#574425",
-                        "outline": "#76777d",
-                        "secondary-fixed": "#d5e3fd",
-                        "on-primary-fixed-variant": "#3f465c",
-                        "on-primary-fixed": "#131b2e",
-                        "tertiary": "#000000",
-                        "surface-container-low": "#f6f3f5",
-                        "on-tertiary": "#ffffff",
-                        "primary-fixed": "#dae2fd",
-                        "on-tertiary-container": "#98805d",
-                        "surface-container-highest": "#e4e2e4",
-                        "primary-fixed-dim": "#bec6e0",
-                        "inverse-on-surface": "#f3f0f2",
-                        "on-secondary-container": "#57657b",
-                        "secondary-container": "#d5e3fd",
-                        "inverse-primary": "#bec6e0",
-                        "tertiary-fixed-dim": "#dec29a",
-                        "surface-container-high": "#eae7e9",
-                        "error": "#ba1a1a"
-                    },
-                    "borderRadius": {
-                        "DEFAULT": "0.125rem",
-                        "lg": "0.25rem",
-                        "xl": "0.5rem",
-                        "full": "0.75rem"
-                    },
-                    "spacing": {
-                        "md": "16px",
-                        "lg": "24px",
-                        "unit": "4px",
-                        "container-margin": "32px",
-                        "xs": "4px",
-                        "column-gutter": "20px",
-                        "sm": "8px",
-                        "xl": "32px"
-                    },
-                    "fontFamily": {
-                        "h2": ["Inter"],
-                        "label-sm": ["Inter"],
-                        "display": ["Inter"],
-                        "body-md": ["Inter"],
-                        "h1": ["Inter"],
-                        "body-lg": ["Inter"],
-                        "label-md": ["Inter"],
-                        "code": ["Inter"]
-                    },
-                    "fontSize": {
-                        "h2": ["20px", {"lineHeight": "28px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
-                        "label-sm": ["11px", {"lineHeight": "14px", "letterSpacing": "0.03em", "fontWeight": "500"}],
-                        "display": ["30px", {"lineHeight": "38px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
-                        "body-md": ["14px", {"lineHeight": "20px", "letterSpacing": "0", "fontWeight": "400"}],
-                        "h1": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
-                        "body-lg": ["16px", {"lineHeight": "24px", "letterSpacing": "0", "fontWeight": "400"}],
-                        "label-md": ["12px", {"lineHeight": "16px", "letterSpacing": "0.02em", "fontWeight": "600"}],
-                        "code": ["13px", {"lineHeight": "18px", "letterSpacing": "0", "fontWeight": "400"}]
-                    }
-                }
-            }
-        }
-    </script>
+    <title>@yield('title', 'PL Sync — Data Warehouse')</title>
+
+    <!-- Load compiled CSS and JS containing fonts and Tailwind -->
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
+
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <style>
         body {
-            background-color: theme('colors.background');
-            color: theme('colors.on-background');
+            font-family: 'Inter', system-ui, sans-serif;
+            background: #f1f5f9;
+            color: #1e293b;
         }
         .spin { animation: spin 1s linear infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
-        .fade-in { animation: fadeIn 0.3s ease-in; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        /* Sidebar scrollbar */
+        #sidebar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); }
+        #sidebar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
     </style>
 </head>
-<body class="flex min-h-screen">
+<body class="flex min-h-screen bg-surface-100">
 
     {{-- Sidebar --}}
     @include('partials.sidebar')
 
     {{-- Main Content --}}
-    <div id="main-content" class="flex-1 flex flex-col ml-64 min-w-0 transition-all duration-300">
+    <div id="main-content" class="flex-1 flex flex-col ml-[260px] min-w-0 transition-all duration-300 ease-in-out">
         {{-- Top Bar --}}
-        <header class="flex justify-between items-center h-16 w-full px-8 bg-surface-container-lowest border-b border-outline-variant z-10 sticky top-0">
-            <div class="flex items-center gap-4">
-                <button onclick="toggleSidebar()" class="p-2 rounded text-on-surface-variant hover:bg-surface-container-low transition-colors active:scale-95">
-                    <span class="material-symbols-outlined">menu</span>
+        <header class="flex justify-between items-center h-16 w-full px-6 bg-white/80 backdrop-blur-xl border-b border-surface-200/80 z-10 sticky top-0">
+            <div class="flex items-center gap-3">
+                <button onclick="toggleSidebar()" class="p-2 rounded-xl text-surface-500 hover:text-surface-800 hover:bg-surface-100 transition-all duration-200 active:scale-95">
+                    <span class="material-symbols-outlined text-[20px]">menu</span>
                 </button>
-                <span class="font-h1 text-h1 text-on-surface">@yield('page-title', 'Dashboard')</span>
+                <div class="h-5 w-px bg-surface-200"></div>
+                <span class="text-h3 text-surface-800">@yield('page-title', 'Dashboard')</span>
             </div>
-            <div class="flex items-center gap-4">
+            <div class="flex items-center gap-3">
                 <div class="flex items-center gap-2">
                     {{-- Acumatica status indicator --}}
-                    <button id="acumatica-status" onclick="toggleAcumaticaConnection()" class="flex items-center gap-xs px-2 py-1 bg-gray-50 rounded cursor-pointer hover:bg-gray-100 transition-colors" title="Click to connect">
-                        <div class="w-2 h-2 rounded-full bg-gray-400"></div>
-                        <span class="font-label-sm text-label-sm text-gray-500">Acumatica</span>
+                    <button id="acumatica-status" onclick="toggleAcumaticaConnection()"
+                        class="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-100 rounded-lg cursor-pointer hover:bg-surface-200 transition-all duration-200 border border-surface-200/60"
+                        title="Click to connect">
+                        <div class="w-2 h-2 rounded-full bg-surface-400"></div>
+                        <span class="text-label-sm text-surface-500">Acumatica</span>
                     </button>
                     {{-- SQL status indicator --}}
-                    <button id="sql-status" onclick="toggleDatabaseConnection()" class="flex items-center gap-xs px-2 py-1 bg-gray-50 rounded cursor-pointer hover:bg-gray-100 transition-colors" title="Click to connect">
-                        <div class="w-2 h-2 rounded-full bg-gray-400"></div>
-                        <span class="font-label-sm text-label-sm text-gray-500">Database</span>
+                    <button id="sql-status" onclick="toggleDatabaseConnection()"
+                        class="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-100 rounded-lg cursor-pointer hover:bg-surface-200 transition-all duration-200 border border-surface-200/60"
+                        title="Click to connect">
+                        <div class="w-2 h-2 rounded-full bg-surface-400"></div>
+                        <span class="text-label-sm text-surface-500">Database</span>
                     </button>
                 </div>
                 @auth
-                <div class="h-6 w-px bg-outline-variant"></div>
+                <div class="h-5 w-px bg-surface-200"></div>
                 <div class="relative" id="user-dropdown-container">
-                    <button onclick="document.getElementById('user-dropdown').classList.toggle('hidden')" class="flex items-center gap-2 px-2 py-1 rounded hover:bg-surface-container-low transition-colors">
-                        <div class="w-7 h-7 rounded-full bg-primary-container flex items-center justify-center text-on-primary-container font-bold text-xs">
+                    <button onclick="document.getElementById('user-dropdown').classList.toggle('hidden')"
+                        class="flex items-center gap-2 px-2 py-1.5 rounded-xl hover:bg-surface-100 transition-all duration-200">
+                        <div class="w-8 h-8 rounded-full bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white font-bold text-xs shadow-sm">
                             {{ strtoupper(substr(auth()->user()->name, 0, 1)) }}
                         </div>
-                        <span class="font-label-md text-label-md text-on-surface hidden sm:inline">{{ auth()->user()->name }}</span>
-                        <span class="material-symbols-outlined text-on-surface-variant text-sm">expand_more</span>
+                        <span class="text-body-sm font-medium text-surface-700 hidden sm:inline">{{ auth()->user()->name }}</span>
+                        <span class="material-symbols-outlined text-surface-400 text-[16px]">expand_more</span>
                     </button>
-                    <div id="user-dropdown" class="hidden absolute right-0 top-full mt-1 w-56 bg-surface-container-lowest border border-outline-variant rounded-xl shadow-lg py-2 z-50">
-                        <div class="px-4 py-2 border-b border-outline-variant">
-                            <p class="text-body-md font-medium text-on-surface">{{ auth()->user()->name }}</p>
-                            <p class="text-label-sm text-on-surface-variant">{{ auth()->user()->email }}</p>
-                            <span class="inline-block mt-1 text-xs px-2 py-0.5 rounded-full bg-primary-container text-on-primary-container font-medium">{{ auth()->user()->primary_role }}</span>
+                    <div id="user-dropdown" class="hidden absolute right-0 top-full mt-2 w-60 bg-white border border-surface-200 rounded-2xl shadow-lg py-2 z-50 animate-fade-up">
+                        <div class="px-4 py-3 border-b border-surface-100">
+                            <p class="text-body-md font-semibold text-surface-800">{{ auth()->user()->name }}</p>
+                            <p class="text-label-sm text-surface-500 mt-0.5">{{ auth()->user()->email }}</p>
+                            <span class="inline-block mt-1.5 text-[10px] px-2 py-0.5 rounded-full bg-brand-50 text-brand-700 font-semibold tracking-wide uppercase">{{ auth()->user()->primary_role }}</span>
                         </div>
                         <form method="POST" action="{{ route('logout') }}">
                             @csrf
-                            <button type="submit" class="w-full flex items-center gap-2 px-4 py-2 text-body-md text-on-surface-variant hover:bg-surface-container-low transition-colors">
-                                <span class="material-symbols-outlined text-sm">logout</span>
+                            <button type="submit" class="w-full flex items-center gap-2.5 px-4 py-2.5 text-body-md text-surface-600 hover:bg-surface-50 hover:text-red-600 transition-colors">
+                                <span class="material-symbols-outlined text-[18px]">logout</span>
                                 Sign Out
                             </button>
                         </form>
@@ -171,13 +94,13 @@
         </header>
 
         {{-- Page Content --}}
-        <main class="flex-1 overflow-y-auto p-container-margin space-y-lg bg-surface">
+        <main class="flex-1 overflow-y-auto p-6 lg:p-8 space-y-6">
             @yield('content')
         </main>
     </div>
 
     {{-- Toast notifications container --}}
-    <div id="toast-container" class="fixed bottom-6 right-6 z-50 space-y-2"></div>
+    <div id="toast-container" class="fixed bottom-6 right-6 z-50 space-y-2 pointer-events-none"></div>
 
     <script>
         // CSRF token for AJAX
@@ -194,13 +117,11 @@
         function toggleAcumaticaConnection() {
             const isEnabled = localStorage.getItem(STORAGE_KEY_ACM) === '1';
             if (isEnabled && acumaticaConnected) {
-                // Disconnect
                 localStorage.removeItem(STORAGE_KEY_ACM);
                 acumaticaConnected = false;
                 renderAcumaticaDisconnected();
                 showToast('Acumatica disconnected', 'info');
             } else {
-                // Connect
                 localStorage.setItem(STORAGE_KEY_ACM, '1');
                 checkAcumaticaConnection();
             }
@@ -210,13 +131,11 @@
         function toggleDatabaseConnection() {
             const isEnabled = localStorage.getItem(STORAGE_KEY_DB) === '1';
             if (isEnabled && databaseConnected) {
-                // Disconnect
                 localStorage.removeItem(STORAGE_KEY_DB);
                 databaseConnected = false;
                 renderDatabaseDisconnected();
                 showToast('Database disconnected', 'info');
             } else {
-                // Connect
                 localStorage.setItem(STORAGE_KEY_DB, '1');
                 checkDatabaseConnection();
             }
@@ -225,9 +144,9 @@
         // ── Check Acumatica (ping server) ────────────────────────────────────
         async function checkAcumaticaConnection(silent = false) {
             const acmEl = document.getElementById('acumatica-status');
-            acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-yellow-500 spin"></div>
-                <span class="font-label-sm text-label-sm text-yellow-600">Connecting…</span>`;
-            acmEl.className = 'flex items-center gap-xs px-2 py-1 bg-yellow-50 rounded cursor-pointer hover:bg-yellow-100 transition-colors';
+            acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-amber-500 animate-pulse-dot"></div>
+                <span class="text-label-sm text-amber-600">Connecting…</span>`;
+            acmEl.className = 'flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-50 rounded-lg cursor-pointer hover:bg-amber-100 transition-all duration-200 border border-amber-200/60';
 
             try {
                 const res = await fetch('/api/connection-status');
@@ -235,29 +154,28 @@
 
                 if (data.acumatica && data.acumatica.connected) {
                     acumaticaConnected = true;
-                    acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-green-600"></div>
-                        <span class="font-label-sm text-label-sm text-green-700">Acumatica ${data.acumatica.ping_ms}ms</span>`;
-                    acmEl.className = 'flex items-center gap-xs px-2 py-1 bg-green-50 rounded cursor-pointer hover:bg-green-100 transition-colors';
+                    acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-emerald-500"></div>
+                        <span class="text-label-sm text-emerald-700">Acumatica ${data.acumatica.ping_ms}ms</span>`;
+                    acmEl.className = 'flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 rounded-lg cursor-pointer hover:bg-emerald-100 transition-all duration-200 border border-emerald-200/60';
                     acmEl.title = 'Connected — Click to disconnect';
                     if (!silent) showToast('Acumatica connected successfully', 'success');
                 } else {
                     acumaticaConnected = false;
-                    acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-600"></div>
-                        <span class="font-label-sm text-label-sm text-red-700">Acumatica Offline</span>`;
-                    acmEl.className = 'flex items-center gap-xs px-2 py-1 bg-red-50 rounded cursor-pointer hover:bg-red-100 transition-colors';
+                    acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-500"></div>
+                        <span class="text-label-sm text-red-700">Acumatica Offline</span>`;
+                    acmEl.className = 'flex items-center gap-1.5 px-2.5 py-1.5 bg-red-50 rounded-lg cursor-pointer hover:bg-red-100 transition-all duration-200 border border-red-200/60';
                     acmEl.title = 'Connection failed — Click to retry';
                     if (!silent) showToast('Acumatica connection failed', 'error');
                 }
 
-                // Also update database if it's enabled
                 if (localStorage.getItem(STORAGE_KEY_DB) === '1') {
                     renderDatabaseFromData(data);
                 }
             } catch (e) {
                 acumaticaConnected = false;
-                acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-600"></div>
-                    <span class="font-label-sm text-label-sm text-red-700">Error</span>`;
-                acmEl.className = 'flex items-center gap-xs px-2 py-1 bg-red-50 rounded cursor-pointer hover:bg-red-100 transition-colors';
+                acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-500"></div>
+                    <span class="text-label-sm text-red-700">Error</span>`;
+                acmEl.className = 'flex items-center gap-1.5 px-2.5 py-1.5 bg-red-50 rounded-lg cursor-pointer hover:bg-red-100 transition-all duration-200 border border-red-200/60';
                 if (!silent) showToast('Connection check failed: ' + e.message, 'error');
             }
         }
@@ -265,9 +183,9 @@
         // ── Check Database (ping server) ─────────────────────────────────────
         async function checkDatabaseConnection(silent = false) {
             const sqlEl = document.getElementById('sql-status');
-            sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-yellow-500 spin"></div>
-                <span class="font-label-sm text-label-sm text-yellow-600">Connecting…</span>`;
-            sqlEl.className = 'flex items-center gap-xs px-2 py-1 bg-yellow-50 rounded cursor-pointer hover:bg-yellow-100 transition-colors';
+            sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-amber-500 animate-pulse-dot"></div>
+                <span class="text-label-sm text-amber-600">Connecting…</span>`;
+            sqlEl.className = 'flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-50 rounded-lg cursor-pointer hover:bg-amber-100 transition-all duration-200 border border-amber-200/60';
 
             try {
                 const res = await fetch('/api/connection-status');
@@ -281,15 +199,14 @@
                     if (!silent) showToast('Database connection failed', 'error');
                 }
 
-                // Also update acumatica if it's enabled
                 if (localStorage.getItem(STORAGE_KEY_ACM) === '1') {
                     renderAcumaticaFromData(data);
                 }
             } catch (e) {
                 databaseConnected = false;
-                sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-600"></div>
-                    <span class="font-label-sm text-label-sm text-red-700">Error</span>`;
-                sqlEl.className = 'flex items-center gap-xs px-2 py-1 bg-red-50 rounded cursor-pointer hover:bg-red-100 transition-colors';
+                sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-500"></div>
+                    <span class="text-label-sm text-red-700">Error</span>`;
+                sqlEl.className = 'flex items-center gap-1.5 px-2.5 py-1.5 bg-red-50 rounded-lg cursor-pointer hover:bg-red-100 transition-all duration-200 border border-red-200/60';
                 if (!silent) showToast('Connection check failed: ' + e.message, 'error');
             }
         }
@@ -297,17 +214,17 @@
         // ── Render helpers ───────────────────────────────────────────────────
         function renderAcumaticaDisconnected() {
             const el = document.getElementById('acumatica-status');
-            el.innerHTML = `<div class="w-2 h-2 rounded-full bg-gray-400"></div>
-                <span class="font-label-sm text-label-sm text-gray-500">Acumatica</span>`;
-            el.className = 'flex items-center gap-xs px-2 py-1 bg-gray-50 rounded cursor-pointer hover:bg-gray-100 transition-colors';
+            el.innerHTML = `<div class="w-2 h-2 rounded-full bg-surface-400"></div>
+                <span class="text-label-sm text-surface-500">Acumatica</span>`;
+            el.className = 'flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-100 rounded-lg cursor-pointer hover:bg-surface-200 transition-all duration-200 border border-surface-200/60';
             el.title = 'Click to connect';
         }
 
         function renderDatabaseDisconnected() {
             const el = document.getElementById('sql-status');
-            el.innerHTML = `<div class="w-2 h-2 rounded-full bg-gray-400"></div>
-                <span class="font-label-sm text-label-sm text-gray-500">Database</span>`;
-            el.className = 'flex items-center gap-xs px-2 py-1 bg-gray-50 rounded cursor-pointer hover:bg-gray-100 transition-colors';
+            el.innerHTML = `<div class="w-2 h-2 rounded-full bg-surface-400"></div>
+                <span class="text-label-sm text-surface-500">Database</span>`;
+            el.className = 'flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-100 rounded-lg cursor-pointer hover:bg-surface-200 transition-all duration-200 border border-surface-200/60';
             el.title = 'Click to connect';
         }
 
@@ -315,15 +232,15 @@
             const acmEl = document.getElementById('acumatica-status');
             if (data.acumatica && data.acumatica.connected) {
                 acumaticaConnected = true;
-                acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-green-600"></div>
-                    <span class="font-label-sm text-label-sm text-green-700">Acumatica ${data.acumatica.ping_ms}ms</span>`;
-                acmEl.className = 'flex items-center gap-xs px-2 py-1 bg-green-50 rounded cursor-pointer hover:bg-green-100 transition-colors';
+                acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-emerald-500"></div>
+                    <span class="text-label-sm text-emerald-700">Acumatica ${data.acumatica.ping_ms}ms</span>`;
+                acmEl.className = 'flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 rounded-lg cursor-pointer hover:bg-emerald-100 transition-all duration-200 border border-emerald-200/60';
                 acmEl.title = 'Connected — Click to disconnect';
             } else if (data.acumatica) {
                 acumaticaConnected = false;
-                acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-600"></div>
-                    <span class="font-label-sm text-label-sm text-red-700">Acumatica Offline</span>`;
-                acmEl.className = 'flex items-center gap-xs px-2 py-1 bg-red-50 rounded cursor-pointer hover:bg-red-100 transition-colors';
+                acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-500"></div>
+                    <span class="text-label-sm text-red-700">Acumatica Offline</span>`;
+                acmEl.className = 'flex items-center gap-1.5 px-2.5 py-1.5 bg-red-50 rounded-lg cursor-pointer hover:bg-red-100 transition-all duration-200 border border-red-200/60';
                 acmEl.title = 'Connection failed — Click to retry';
             }
         }
@@ -332,15 +249,15 @@
             const sqlEl = document.getElementById('sql-status');
             if (data.database && data.database.connected) {
                 databaseConnected = true;
-                sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-green-600"></div>
-                    <span class="font-label-sm text-label-sm text-green-700">${data.database.type} ${data.database.ping_ms}ms</span>`;
-                sqlEl.className = 'flex items-center gap-xs px-2 py-1 bg-green-50 rounded cursor-pointer hover:bg-green-100 transition-colors';
+                sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-emerald-500"></div>
+                    <span class="text-label-sm text-emerald-700">${data.database.type} ${data.database.ping_ms}ms</span>`;
+                sqlEl.className = 'flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 rounded-lg cursor-pointer hover:bg-emerald-100 transition-all duration-200 border border-emerald-200/60';
                 sqlEl.title = 'Connected — Click to disconnect';
             } else if (data.database) {
                 databaseConnected = false;
-                sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-600"></div>
-                    <span class="font-label-sm text-label-sm text-red-700">${data.database.type} Offline</span>`;
-                sqlEl.className = 'flex items-center gap-xs px-2 py-1 bg-red-50 rounded cursor-pointer hover:bg-red-100 transition-colors';
+                sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-500"></div>
+                    <span class="text-label-sm text-red-700">${data.database.type} Offline</span>`;
+                sqlEl.className = 'flex items-center gap-1.5 px-2.5 py-1.5 bg-red-50 rounded-lg cursor-pointer hover:bg-red-100 transition-all duration-200 border border-red-200/60';
                 sqlEl.title = 'Connection failed — Click to retry';
             }
         }
@@ -348,17 +265,22 @@
         // Toast notification
         function showToast(message, type = 'info') {
             const container = document.getElementById('toast-container');
-            const colors = {
-                success: 'bg-green-600',
-                error:   'bg-red-600',
-                info:    'bg-primary-container',
-                warning: 'bg-yellow-600',
+            const configs = {
+                success: { bg: 'bg-emerald-600', icon: 'check_circle' },
+                error:   { bg: 'bg-red-600',     icon: 'error' },
+                info:    { bg: 'bg-surface-700',  icon: 'info' },
+                warning: { bg: 'bg-amber-600',   icon: 'warning' },
             };
+            const cfg = configs[type] || configs.info;
             const toast = document.createElement('div');
-            toast.className = `${colors[type] || colors.info} text-white px-4 py-3 rounded shadow-lg font-body-md text-body-md fade-in max-w-sm`;
-            toast.textContent = message;
+            toast.className = `${cfg.bg} text-white px-4 py-3 rounded-xl shadow-toast text-body-md flex items-center gap-2.5 animate-slide-in pointer-events-auto min-w-[280px] max-w-sm`;
+            toast.innerHTML = `<span class="material-symbols-outlined text-[18px]">${cfg.icon}</span><span class="flex-1">${message}</span>`;
             container.appendChild(toast);
-            setTimeout(() => toast.remove(), 6000);
+            setTimeout(() => {
+                toast.classList.remove('animate-slide-in');
+                toast.classList.add('animate-slide-out');
+                setTimeout(() => toast.remove(), 300);
+            }, 5000);
         }
 
         // Sync entity
@@ -416,7 +338,7 @@
             } finally {
                 if (btnEl) {
                     btnEl.disabled = false;
-                    btnEl.innerHTML = 'Force Sync All';
+                    btnEl.innerHTML = '<span class="material-symbols-outlined text-[16px]">sync</span> Force Sync All';
                 }
                 setTimeout(() => location.reload(), 2000);
             }
@@ -429,12 +351,10 @@
             
             if (sidebar.classList.contains('-translate-x-full')) {
                 sidebar.classList.remove('-translate-x-full');
-                mainContent.classList.add('ml-64');
-                mainContent.classList.remove('ml-0');
+                mainContent.style.marginLeft = '260px';
             } else {
                 sidebar.classList.add('-translate-x-full');
-                mainContent.classList.remove('ml-64');
-                mainContent.classList.add('ml-0');
+                mainContent.style.marginLeft = '0px';
             }
         }
 
@@ -444,14 +364,12 @@
             const dbEnabled  = localStorage.getItem(STORAGE_KEY_DB) === '1';
 
             if (acmEnabled && dbEnabled) {
-                // Both enabled — single API call updates both
                 checkAcumaticaConnection(true);
             } else if (acmEnabled) {
                 checkAcumaticaConnection(true);
             } else if (dbEnabled) {
                 checkDatabaseConnection(true);
             }
-            // If neither enabled → stay gray "Not Connected"
 
             // Close user dropdown on outside click
             document.addEventListener('click', (e) => {

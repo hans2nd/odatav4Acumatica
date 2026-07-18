@@ -16,7 +16,7 @@ class SyncAllJob implements ShouldQueue
     public int $timeout = 3600;
     public int $tries = 1;
 
-    public function __construct() {}
+    public function __construct(public string $source = 'manual') {}
 
     public function handle(): void
     {
@@ -27,7 +27,7 @@ class SyncAllJob implements ShouldQueue
 
         foreach ($sorted as $key => $entity) {
             Log::info("SyncAllJob: Dispatching sync for [{$key}]");
-            SyncEntityJob::dispatch($key);
+            SyncEntityJob::dispatch($key, [], $this->source);
         }
     }
 }

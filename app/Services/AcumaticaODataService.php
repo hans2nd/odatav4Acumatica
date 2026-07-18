@@ -38,6 +38,22 @@ class AcumaticaODataService
         $this->timeout   = config('acumatica.timeout', 300);
     }
 
+    /**
+     * Override default configuration with dynamic connection credentials
+     */
+    public function setConnectionConfig(array $connection): void
+    {
+        $creds = $connection['credentials'] ?? [];
+        $this->baseUrl   = rtrim($creds['url'] ?? $this->baseUrl, '/');
+        $this->tenant    = $creds['tenant'] ?? $this->tenant;
+        $this->username  = $creds['username'] ?? $this->username;
+        $this->password  = $creds['password'] ?? $this->password;
+        
+        if (isset($creds['odata_path'])) {
+            config(['acumatica.odata_path' => $creds['odata_path']]);
+        }
+    }
+
     /*
     |--------------------------------------------------------------------------
     | Authentication
@@ -346,6 +362,65 @@ class AcumaticaODataService
                 'ping_ms'   => 0,
                 'message'   => $e->getMessage(),
             ];
+        }
+    }
+
+    /**
+     * Fetch all available OData endpoints (entity sets).
+     */
+    public function getODataEndpoints(): array
+    {
+        try {
+            if ($this->usesSessionAuth()) {
+                if (!$this->login()) {
+                    throw new \Exception('Login authentication failed');
+                }
+            }
+
+            $pathParts = [
+                $this->baseUrl,
+                config('acumatica.odata_path', 'odatav4'),
+            ];
+
+            if ($this->includeTenantInODataUrl) {
+                $pathParts[] = rawurlencode($this->tenant);
+            }
+
+            $url = implode('/', $pathParts);
+
+            $request = Http::retry(3, 5000)->withOptions([
+                'verify'  => $this->verifySsl,
+                'timeout' => 30,
+            ])->acceptJson();
+
+            if ($this->usesSessionAuth()) {
+                $request = $request->withOptions(['cookies' => $this->cookieJar]);
+            } else {
+                $request = $request->withBasicAuth($this->username, $this->password);
+            }
+
+            $response = $request->get($url);
+
+            if ($this->usesSessionAuth()) {
+                $this->logout();
+            }
+
+            if ($response->successful()) {
+                $data = $response->json();
+                $objects = [];
+                if (isset($data['value']) && is_array($data['value'])) {
+                    foreach ($data['value'] as $item) {
+                        if (isset($item['name'])) {
+                            $objects[] = $item['name'];
+                        }
+                    }
+                }
+                return $objects;
+            }
+
+            throw new \Exception('HTTP ' . $response->status() . ' - ' . mb_substr($response->body(), 0, 200));
+        } catch (\Exception $e) {
+            throw $e;
         }
     }
 

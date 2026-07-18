@@ -1,0 +1,127 @@
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Models\ApiEndpoint;
+use App\Services\ConnectionService;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+
+class DataEndpointController extends Controller
+{
+    protected ConnectionService $connectionService;
+
+    public function __construct(ConnectionService $connectionService)
+    {
+        $this->connectionService = $connectionService;
+    }
+
+    public function getData(Request $request, $slug)
+    {
+        $endpoint = ApiEndpoint::where('endpoint_slug', $slug)->where('is_active', true)->first();
+
+        if (!$endpoint) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Endpoint not found or inactive.'
+            ], 404);
+        }
+
+        $permName = "api.endpoint.{$slug}.view";
+        if (!$request->user() || !$request->user()->hasPermission($permName)) {
+            return response()->json([
+                'success' => false,
+                'message' => "Unauthorized. Missing permission: {$permName}"
+            ], 403);
+        }
+
+        try {
+            $connName = $this->resolveConnection($endpoint->connection_key);
+            
+            // Allow dynamic per_page from query, default to 1000
+            $perPage = $request->query('per_page', 1000);
+            if ($perPage > 5000) $perPage = 5000; // Cap it
+
+            $query = DB::connection($connName)->table($endpoint->table_name);
+            
+            if (!empty($endpoint->columns) && is_array($endpoint->columns)) {
+                $query->select($endpoint->columns);
+            }
+            
+            if (!empty($endpoint->filters) && is_array($endpoint->filters)) {
+                foreach ($endpoint->filters as $filter) {
+                    $field = $filter['field'] ?? null;
+                    $op = $filter['operator'] ?? 'eq';
+                    $val = $filter['value'] ?? '';
+                    
+                    if ($field) {
+                        switch ($op) {
+                            case 'eq': $query->where($field, '=', $val); break;
+                            case 'ne': $query->where($field, '!=', $val); break;
+                            case 'contains': $query->where($field, 'LIKE', '%' . $val . '%'); break;
+                            case 'lt': $query->where($field, '<', $val); break;
+                            case 'le': $query->where($field, '<=', $val); break;
+                            case 'gt': $query->where($field, '>', $val); break;
+                            case 'ge': $query->where($field, '>=', $val); break;
+                        }
+                    }
+                }
+            }
+            
+            // Execute the query
+            // If user requests a limit, apply it to prevent huge memory spikes, otherwise get all.
+            $limit = $request->query('limit');
+            if ($limit) {
+                $query->limit($limit);
+            }
+            
+            $items = $query->get();
+
+            return response()->json([
+                'data' => $items
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch data: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    protected function resolveConnection($connectionKey)
+    {
+        $conn = $this->connectionService->get($connectionKey);
+        if (!$conn) {
+            throw new \Exception("Connection not found: {$connectionKey}");
+        }
+
+        $type = $conn['type'];
+        $creds = $conn['credentials'] ?? [];
+        $laravelConnName = 'dyn_' . $connectionKey;
+        
+        if (!config()->has("database.connections.{$laravelConnName}")) {
+            $mergedConfig = array_merge(
+                is_array(config("database.connections.{$type}")) ? config("database.connections.{$type}") : [],
+                [
+                    'driver'   => $type,
+                    'host'     => $creds['host'] ?? '',
+                    'port'     => $creds['port'] ?? '',
+                    'database' => $creds['database'] ?? '',
+                    'username' => $creds['username'] ?? '',
+                    'password' => $creds['password'] ?? '',
+                ]
+            );
+
+            if ($type === 'sqlsrv') {
+                $mergedConfig['encrypt'] = $mergedConfig['encrypt'] ?? 'no';
+                $mergedConfig['trust_server_certificate'] = $mergedConfig['trust_server_certificate'] ?? 'true';
+            }
+
+            config(["database.connections.{$laravelConnName}" => $mergedConfig]);
+        }
+
+        return $laravelConnName;
+    }
+}

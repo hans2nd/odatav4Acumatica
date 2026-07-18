@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Services\EntityConfigService;
+use App\Services\ConnectionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
@@ -10,171 +11,185 @@ use Illuminate\Support\Facades\DB;
 
 class SettingsController extends Controller
 {
+    protected ConnectionService $connectionService;
+
+    public function __construct(ConnectionService $connectionService)
+    {
+        $this->connectionService = $connectionService;
+    }
+
     public function index(EntityConfigService $entityConfig)
     {
         $entities = $entityConfig->getAll();
-
-        $dbConnection = config('database.default', 'sqlsrv');
-
+        $connections = array_merge([
+            'acumatica_default' => ['name' => 'Acumatica Default', 'type' => 'odata'],
+            'database_default' => ['name' => 'Laravel Default DB', 'type' => 'database']
+        ], $this->connectionService->getAll());
         return view('settings.index', [
-            'acumaticaUrl'      => config('acumatica.url'),
-            'acumaticaUser'     => config('acumatica.username'),
-            'acumaticaPassword' => config('acumatica.password'),
-            'acumaticaTenant'   => config('acumatica.tenant'),
-            'acumaticaVerifySsl'=> config('acumatica.verify_ssl'),
-            'dbConnection'      => $dbConnection,
-            'dbHost'            => config("database.connections.{$dbConnection}.host"),
-            'dbPort'            => config("database.connections.{$dbConnection}.port"),
-            'dbName'            => config("database.connections.{$dbConnection}.database"),
-            'dbUsername'        => config("database.connections.{$dbConnection}.username"),
-            'dbPassword'        => config("database.connections.{$dbConnection}.password"),
-            'odataPath'         => config('acumatica.odata_path'),
-            'entities'          => $entities,
-            'activeTab'         => 'settings',
+            'entities'    => $entities,
+            'connections' => $connections,
+            'activeTab'   => 'settings',
         ]);
     }
 
-    /**
-     * Update Acumatica ERP settings in the .env file.
-     */
-    public function updateAcumatica(Request $request): JsonResponse
+    public function getConnections(): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'connections' => $this->connectionService->getAll(),
+        ]);
+    }
+
+    public function storeConnection(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'url'        => 'required|url|max:500',
-            'username'   => 'required|string|max:100',
-            'password'   => 'required|string|max:255',
-            'tenant'     => 'nullable|string|max:100',
-            'verify_ssl' => 'nullable|boolean',
-            'odata_path' => 'required|in:odata,odatav4',
+            'key'         => 'required|string|max:100|regex:/^[A-Za-z0-9_]*$/',
+            'name'        => 'required|string|max:255',
+            'type'        => 'required|in:odata,rest_api,mysql,sqlsrv',
+            'credentials' => 'required|array',
         ]);
 
-        try {
-            $this->setEnvValue('ACUMATICA_URL', $validated['url']);
-            $this->setEnvValue('ACUMATICA_USERNAME', $validated['username']);
-            $this->setEnvValue('ACUMATICA_PASSWORD', $validated['password']);
-            $this->setEnvValue('ACUMATICA_TENANT', $validated['tenant'] ?? '');
-            $this->setEnvValue('ACUMATICA_VERIFY_SSL', ($validated['verify_ssl'] ?? false) ? 'true' : 'false');
-            $this->setEnvValue('ACUMATICA_ODATA_PATH', $validated['odata_path']);
-
-            // Clear config cache so changes take effect immediately
-            Artisan::call('config:clear');
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Acumatica ERP settings updated successfully.',
-            ]);
-        } catch (\Throwable $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to update settings: ' . $e->getMessage(),
-            ], 500);
+        if ($this->connectionService->exists($validated['key'])) {
+            return response()->json(['success' => false, 'message' => 'Connection key already exists.'], 422);
         }
+
+        $this->connectionService->save($validated['key'], $validated);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Connection created successfully.',
+            'connection' => $this->connectionService->get($validated['key']),
+        ]);
     }
 
-    /**
-     * Update SQL Server settings in the .env file.
-     */
-    public function updateDatabase(Request $request): JsonResponse
+    public function updateConnection(Request $request, string $key): JsonResponse
     {
+        if (!$this->connectionService->exists($key)) {
+            return response()->json(['success' => false, 'message' => 'Connection not found.'], 404);
+        }
+
         $validated = $request->validate([
-            'connection' => 'required|in:sqlsrv,mysql',
-            'host'       => 'required|string|max:255',
-            'port'       => 'required|integer|min:1|max:65535',
-            'database'   => 'required|string|max:255',
-            'username'   => 'required|string|max:100',
-            'password'   => 'nullable|string|max:255',
+            'key'         => 'required|string|max:100|regex:/^[A-Za-z0-9_]*$/',
+            'name'        => 'required|string|max:255',
+            'type'        => 'required|in:odata,rest_api,mysql,sqlsrv',
+            'credentials' => 'required|array',
         ]);
 
-        try {
-            // 1. Ensure the database exists on the server
-            $tempConfig = array_merge(config("database.connections.{$validated['connection']}"), [
-                'host'     => $validated['host'],
-                'port'     => $validated['port'],
-                'database' => '', // Connect to server level
-                'username' => $validated['username'],
-                'password' => $validated['password'] ?? '',
-            ]);
-            
-            $this->ensureDatabaseExists($validated['connection'], $tempConfig, $validated['database']);
-
-            // 2. Update .env file
-            $this->setEnvValue('DB_CONNECTION', $validated['connection']);
-            $this->setEnvValue('DB_HOST', $validated['host']);
-            $this->setEnvValue('DB_PORT', (string) $validated['port']);
-            $this->setEnvValue('DB_DATABASE', $validated['database']);
-            $this->setEnvValue('DB_USERNAME', $validated['username']);
-            $this->setEnvValue('DB_PASSWORD', $validated['password'] ?? '');
-
-            // 3. Update runtime config and run migrations
-            config([
-                'database.default' => $validated['connection'],
-                "database.connections.{$validated['connection']}.host" => $validated['host'],
-                "database.connections.{$validated['connection']}.port" => $validated['port'],
-                "database.connections.{$validated['connection']}.database" => $validated['database'],
-                "database.connections.{$validated['connection']}.username" => $validated['username'],
-                "database.connections.{$validated['connection']}.password" => $validated['password'] ?? '',
-            ]);
-            
-            DB::purge($validated['connection']);
-            Artisan::call('migrate', ['--force' => true]);
-
-            // Clear config cache so changes persist for next requests
-            Artisan::call('config:clear');
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Database settings updated and migrations applied successfully.',
-            ]);
-        } catch (\Throwable $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to update settings: ' . $e->getMessage(),
-            ], 500);
+        $newKey = $validated['key'];
+        if ($newKey !== $key && $this->connectionService->exists($newKey)) {
+            return response()->json(['success' => false, 'message' => 'Connection key already exists.'], 422);
         }
+
+        $this->connectionService->update($key, $newKey, $validated);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Connection updated successfully.',
+            'connection' => $this->connectionService->get($newKey),
+        ]);
     }
 
-    /**
-     * Test database connection with provided settings (without saving).
-     */
+    public function destroyConnection(string $key): JsonResponse
+    {
+        if (!$this->connectionService->delete($key)) {
+            return response()->json(['success' => false, 'message' => 'Connection not found.'], 404);
+        }
+        return response()->json(['success' => true, 'message' => 'Connection deleted successfully.']);
+    }
+
     public function testConnection(Request $request): JsonResponse
     {
         $type = $request->input('type');
+        $credentials = $request->input('credentials', []);
+        $key = $request->input('key');
 
-        if ($type === 'database') {
-            $validated = $request->validate([
-                'connection' => 'required|in:sqlsrv,mysql',
-                'host'       => 'required|string',
-                'port'       => 'required|integer',
-                'database'   => 'required|string',
-                'username'   => 'required|string',
-                'password'   => 'nullable|string',
-            ]);
-
+        if (in_array($type, ['mysql', 'sqlsrv'])) {
             try {
-                $connectionName = $validated['connection'];
+                $connectionName = 'test_connection_' . time();
+                $mergedConfig = array_merge(
+                    is_array(config("database.connections.{$type}")) ? config("database.connections.{$type}") : [],
+                    [
+                        'driver'   => $type,
+                        'host'     => $credentials['host'] ?? '',
+                        'port'     => $credentials['port'] ?? '',
+                        'database' => $credentials['database'] ?? '',
+                        'username' => $credentials['username'] ?? '',
+                        'password' => $credentials['password'] ?? '',
+                    ]
+                );
+                
+                if ($type === 'sqlsrv') {
+                    $mergedConfig['encrypt'] = $mergedConfig['encrypt'] ?? 'no';
+                    $mergedConfig['trust_server_certificate'] = $mergedConfig['trust_server_certificate'] ?? 'true';
+                }
+                
+                \Illuminate\Support\Facades\Log::info("Testing DB Connection", ['config' => $mergedConfig]);
+
                 config([
-                    "database.connections.{$connectionName}_test" => array_merge(
-                        config("database.connections.{$connectionName}"),
-                        [
-                            'host'     => $validated['host'],
-                            'port'     => $validated['port'],
-                            'database' => $validated['database'],
-                            'username' => $validated['username'],
-                            'password' => $validated['password'] ?? '',
-                        ]
-                    ),
+                    "database.connections.{$connectionName}" => $mergedConfig,
                 ]);
 
                 $start = microtime(true);
-                DB::connection("{$connectionName}_test")->getPdo();
+                
+                try {
+                    DB::connection($connectionName)->getPdo();
+                } catch (\Throwable $e) {
+                    $isUnknownDb = false;
+                    $msg = $e->getMessage();
+                    if ($type === 'mysql' && str_contains($msg, 'Unknown database')) {
+                        $isUnknownDb = true;
+                    } elseif ($type === 'sqlsrv' && (str_contains($msg, 'Cannot open database') || str_contains($msg, 'Login failed'))) {
+                        // Sometimes SQL Server throws 'Login failed' if default DB is invalid, or 'Cannot open database'
+                        $isUnknownDb = true;
+                    }
+
+                    if ($isUnknownDb && !empty($credentials['database'])) {
+                        // Try to create the database
+                        $tempConfig = $mergedConfig;
+                        $tempConfig['database'] = $type === 'sqlsrv' ? 'master' : '';
+                        $tempConnName = $connectionName . '_temp';
+                        config(["database.connections.{$tempConnName}" => $tempConfig]);
+                        
+                        try {
+                            $pdo = DB::connection($tempConnName)->getPdo();
+                            $dbName = $credentials['database'];
+                            if ($type === 'mysql') {
+                                $pdo->exec("CREATE DATABASE IF NOT EXISTS `" . str_replace('`', '``', $dbName) . "`");
+                            } elseif ($type === 'sqlsrv') {
+                                $dbNameEscaped = str_replace("'", "''", $dbName);
+                                $pdo->exec("IF NOT EXISTS (SELECT name FROM sys.databases WHERE name = N'{$dbNameEscaped}') BEGIN CREATE DATABASE [{$dbName}] END");
+                            }
+                            
+                            // Retry connection
+                            DB::purge($connectionName);
+                            DB::connection($connectionName)->getPdo();
+                        } catch (\Throwable $createEx) {
+                            // If creation fails, throw original exception or creation exception
+                            throw $e;
+                        }
+                    } else {
+                        throw $e;
+                    }
+                }
+                
                 $elapsed = round((microtime(true) - $start) * 1000);
 
+                if ($key && $conn = \App\Models\Connection::where('key', $key)->first()) {
+                    $conn->update(['is_connected' => true]);
+                }
+
                 return response()->json([
-                    'success'   => true,
-                    'message'   => "Connected successfully ({$elapsed}ms)",
-                    'ping_ms'   => $elapsed,
+                    'success' => true,
+                    'message' => "Connected successfully ({$elapsed}ms)",
+                    'ping_ms' => $elapsed,
                 ]);
             } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::error("DB Connection Test Failed", ['type' => $type, 'error' => $e->getMessage()]);
+                
+                if ($key && $conn = \App\Models\Connection::where('key', $key)->first()) {
+                    $conn->update(['is_connected' => false]);
+                }
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Connection failed: ' . $e->getMessage(),
@@ -182,22 +197,15 @@ class SettingsController extends Controller
             }
         }
 
-        if ($type === 'acumatica') {
-            $validated = $request->validate([
-                'url'      => 'required|url',
-                'tenant'   => 'nullable|string',
-                'username' => 'required|string',
-                'password' => 'required|string',
-                'odata_path' => 'required|in:odata,odatav4',
-            ]);
-
+        if ($type === 'odata') {
             try {
+                // We'll temporarily override the acumatica config to use the AcumaticaODataService
                 config([
-                    'acumatica.url'      => $validated['url'],
-                    'acumatica.tenant'   => $validated['tenant'],
-                    'acumatica.username' => $validated['username'],
-                    'acumatica.password' => $validated['password'],
-                    'acumatica.odata_path' => $validated['odata_path'],
+                    'acumatica.url'      => $credentials['url'] ?? '',
+                    'acumatica.tenant'   => $credentials['tenant'] ?? '',
+                    'acumatica.username' => $credentials['username'] ?? '',
+                    'acumatica.password' => $credentials['password'] ?? '',
+                    'acumatica.odata_path' => $credentials['odata_path'] ?? 'odatav4',
                 ]);
 
                 $odataService = app(\App\Services\AcumaticaODataService::class);
@@ -223,59 +231,144 @@ class SettingsController extends Controller
             }
         }
 
-        return response()->json(['success' => false, 'message' => 'Unknown connection type.'], 400);
+        return response()->json(['success' => false, 'message' => 'Unsupported connection type or test failed.'], 400);
     }
 
-    /**
-     * Update a single key=value pair in the .env file.
-     */
-    protected function setEnvValue(string $key, string $value): void
+    public function fetchDatabases(Request $request): JsonResponse
     {
-        $envPath = base_path('.env');
-        $content = file_get_contents($envPath);
+        $type = $request->input('type');
+        $credentials = $request->input('credentials', []);
 
-        // Determine if value needs quotes (contains spaces, special chars, or is empty)
-        $quotedValue = $value;
-        if ($value === '' || preg_match('/[\s#"\'\\\\]/', $value)) {
-            $quotedValue = '"' . addcslashes($value, '"') . '"';
+        if (!in_array($type, ['mysql', 'sqlsrv'])) {
+            return response()->json(['success' => false, 'message' => 'Unsupported type for database listing'], 400);
         }
-
-        // Check if key already exists in .env
-        $pattern = '/^' . preg_quote($key, '/') . '=.*/m';
-        if (preg_match($pattern, $content)) {
-            $content = preg_replace($pattern, $key . '=' . $quotedValue, $content);
-        } else {
-            // Append at end of file
-            $content .= "\n{$key}={$quotedValue}";
-        }
-
-        file_put_contents($envPath, $content);
-    }
-
-    /**
-     * Create the database if it doesn't exist on the target server.
-     */
-    protected function ensureDatabaseExists(string $driver, array $config, string $dbName): void
-    {
-        config(['database.connections.server_setup' => $config]);
 
         try {
-            $pdo = DB::connection('server_setup')->getPdo();
-
-            if ($driver === 'mysql') {
-                $dbNameSafe = str_replace('`', '``', $dbName);
-                $pdo->exec("CREATE DATABASE IF NOT EXISTS `{$dbNameSafe}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
-            } elseif ($driver === 'sqlsrv') {
-                $dbNameSafe = str_replace(']', ']]', $dbName);
-                $pdo->exec("
-                    IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = '{$dbName}')
-                    BEGIN
-                        CREATE DATABASE [{$dbNameSafe}]
-                    END
-                ");
+            $connName = 'temp_databases_' . time();
+            $mergedConfig = array_merge(
+                is_array(config("database.connections.{$type}")) ? config("database.connections.{$type}") : [],
+                [
+                    'driver'   => $type,
+                    'host'     => $credentials['host'] ?? '',
+                    'port'     => $credentials['port'] ?? '',
+                    'database' => $type === 'sqlsrv' ? 'master' : '',
+                    'username' => $credentials['username'] ?? '',
+                    'password' => $credentials['password'] ?? '',
+                ]
+            );
+            if ($type === 'sqlsrv') {
+                $mergedConfig['encrypt'] = $mergedConfig['encrypt'] ?? 'no';
+                $mergedConfig['trust_server_certificate'] = $mergedConfig['trust_server_certificate'] ?? 'true';
             }
-        } finally {
-            DB::purge('server_setup');
+            config(["database.connections.{$connName}" => $mergedConfig]);
+
+            $pdo = \Illuminate\Support\Facades\DB::connection($connName)->getPdo();
+            $databases = [];
+
+            if ($type === 'mysql') {
+                $stmt = $pdo->query("SHOW DATABASES");
+                while ($row = $stmt->fetch(\PDO::FETCH_NUM)) {
+                    $databases[] = $row[0];
+                }
+            } elseif ($type === 'sqlsrv') {
+                $stmt = $pdo->query("SELECT name FROM sys.databases WHERE state_desc = 'ONLINE'");
+                while ($row = $stmt->fetch(\PDO::FETCH_NUM)) {
+                    $databases[] = $row[0];
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'databases' => $databases
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch databases: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function getConnectionObjects(string $key, \App\Services\AcumaticaODataService $odataService): JsonResponse
+    {
+        try {
+            $type = '';
+            $credentials = [];
+
+            if ($key === 'acumatica_default') {
+                $type = 'odata';
+                $credentials = [
+                    'url'      => config('acumatica.url'),
+                    'tenant'   => config('acumatica.tenant'),
+                    'username' => config('acumatica.username'),
+                    'password' => config('acumatica.password'),
+                ];
+            } elseif ($key === 'database_default') {
+                $type = config('database.default');
+                // The default database is already configured in Laravel, we don't need credentials directly
+            } else {
+                $conn = $this->connectionService->get($key);
+                if (!$conn) {
+                    return response()->json(['success' => false, 'message' => 'Connection not found.'], 404);
+                }
+                $type = $conn['type'];
+                $credentials = $conn['credentials'] ?? [];
+            }
+
+            $objects = [];
+
+            if ($type === 'odata') {
+                if ($key !== 'acumatica_default') {
+                    $odataService->setConnectionConfig(['credentials' => $credentials]);
+                }
+                $objects = $odataService->getODataEndpoints();
+            } elseif (in_array($type, ['mysql', 'sqlsrv'])) {
+                // If it's a dynamic connection (not database_default), we configure it
+                $connName = 'temp_objects_' . time();
+                if ($key !== 'database_default') {
+                    $mergedConfig = array_merge(
+                        is_array(config("database.connections.{$type}")) ? config("database.connections.{$type}") : [],
+                        [
+                            'driver'   => $type,
+                            'host'     => $credentials['host'] ?? '',
+                            'port'     => $credentials['port'] ?? '',
+                            'database' => $credentials['database'] ?? '',
+                            'username' => $credentials['username'] ?? '',
+                            'password' => $credentials['password'] ?? '',
+                        ]
+                    );
+                    if ($type === 'sqlsrv') {
+                        $mergedConfig['encrypt'] = $mergedConfig['encrypt'] ?? 'no';
+                        $mergedConfig['trust_server_certificate'] = $mergedConfig['trust_server_certificate'] ?? 'true';
+                    }
+                    config(["database.connections.{$connName}" => $mergedConfig]);
+                } else {
+                    $connName = config('database.default'); // Use default directly
+                }
+
+                $pdo = \Illuminate\Support\Facades\DB::connection($connName)->getPdo();
+                if ($type === 'mysql') {
+                    $stmt = $pdo->query("SHOW TABLES");
+                    while ($row = $stmt->fetch(\PDO::FETCH_NUM)) {
+                        $objects[] = $row[0];
+                    }
+                } elseif ($type === 'sqlsrv') {
+                    $stmt = $pdo->query("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' OR TABLE_TYPE = 'VIEW'");
+                    while ($row = $stmt->fetch(\PDO::FETCH_NUM)) {
+                        $objects[] = $row[0];
+                    }
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'objects' => $objects
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch objects: ' . $e->getMessage()
+            ], 500);
         }
     }
 }

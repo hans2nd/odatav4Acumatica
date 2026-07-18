@@ -1,3 +1,14 @@
+﻿@import '@fontsource/inter';
+@import 'material-symbols/outlined.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+    .material-symbols-outlined {
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        /* Using display block for icon font to avoid text fallback */
+        font-display: block;
+    }
+}

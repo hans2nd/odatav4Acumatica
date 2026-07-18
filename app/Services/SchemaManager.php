@@ -14,30 +14,45 @@ class SchemaManager
      * Creates the table from a sample data row if it doesn't exist,
      * or adds missing columns if the table already exists.
      */
-    public function ensureTable(string $tableName, array $sampleRow): void
+    public function ensureTable(?string $connectionName, string $tableName, array $sampleRow): void
     {
         $columns = $this->extractColumns($sampleRow);
 
-        if (! Schema::hasTable($tableName)) {
-            $this->createTable($tableName, $sampleRow, $columns);
-            Log::info("SchemaManager: Created table [{$tableName}] with " . count($columns) . " columns.");
+        $driver = DB::connection($connectionName)->getDriverName();
+        $isMysql = in_array($driver, ['mysql', 'mariadb']);
+
+        if ($isMysql) {
+            try {
+                DB::connection($connectionName)->statement('SET innodb_strict_mode = 0;');
+            } catch (\Exception $e) {}
+        }
+
+        if (! Schema::connection($connectionName)->hasTable($tableName)) {
+            $this->createTable($connectionName, $tableName, $sampleRow, $columns);
+            Log::info("SchemaManager: Created table [{$tableName}] on connection [{$connectionName}] with " . count($columns) . " columns.");
         } else {
-            $added = $this->addMissingColumns($tableName, $sampleRow, $columns);
+            $added = $this->addMissingColumns($connectionName, $tableName, $sampleRow, $columns);
             if ($added > 0) {
-                Log::info("SchemaManager: Added {$added} new columns to [{$tableName}].");
+                Log::info("SchemaManager: Added {$added} new columns to [{$tableName}] on connection [{$connectionName}].");
             }
         }
 
-        $this->ensureODataColumnsAreText($tableName, $columns);
-        $this->ensureRowHashColumn($tableName);
+        $this->ensureODataColumnsAreText($connectionName, $tableName, $columns);
+        $this->ensureRowHashColumn($connectionName, $tableName);
+
+        if ($isMysql) {
+            try {
+                DB::connection($connectionName)->statement('SET innodb_strict_mode = 1;');
+            } catch (\Exception $e) {}
+        }
     }
 
     /**
      * Create a new table based on a sample OData record.
      */
-    private function createTable(string $tableName, array $sampleRow, array $columns): void
+    private function createTable(?string $connectionName, string $tableName, array $sampleRow, array $columns): void
     {
-        Schema::create($tableName, function (Blueprint $table) use ($sampleRow, $columns) {
+        Schema::connection($connectionName)->create($tableName, function (Blueprint $table) use ($sampleRow, $columns) {
             $table->bigIncrements('_sync_id');
 
             foreach ($columns as $originalName) {
@@ -54,9 +69,9 @@ class SchemaManager
     /**
      * Add columns that exist in the sample data but not yet in the table.
      */
-    private function addMissingColumns(string $tableName, array $sampleRow, array $columns): int
+    private function addMissingColumns(?string $connectionName, string $tableName, array $sampleRow, array $columns): int
     {
-        $existing = array_map('strtolower', Schema::getColumnListing($tableName));
+        $existing = array_map('strtolower', Schema::connection($connectionName)->getColumnListing($tableName));
         $added = 0;
 
         foreach ($columns as $originalName) {
@@ -66,7 +81,7 @@ class SchemaManager
                 continue;
             }
 
-            Schema::table($tableName, function (Blueprint $table) use ($colName, $sampleRow, $originalName) {
+            Schema::connection($connectionName)->table($tableName, function (Blueprint $table) use ($colName, $sampleRow, $originalName) {
                 $value = $sampleRow[$originalName] ?? null;
                 $this->addColumn($table, $colName, $value);
             });
@@ -105,8 +120,13 @@ class SchemaManager
         $lowerName = strtolower($name);
 
         // Detect Unique Keys for Upsert
-        if ($lowerName === 'id' || $lowerName === 'noteid') {
+        if ($lowerName === 'id') {
             $table->string($name, 64)->nullable()->unique();
+            return;
+        }
+
+        if ($lowerName === 'noteid') {
+            $table->string($name, 64)->nullable()->index();
             return;
         }
 
@@ -127,28 +147,23 @@ class SchemaManager
      * OData DAC values are not always type-stable across rows. Store mirrored
      * fields as NVARCHAR(MAX) so later rows cannot fail numeric/date conversion.
      */
-    private function ensureODataColumnsAreText(string $tableName, array $columns): void
+    private function ensureODataColumnsAreText(?string $connectionName, string $tableName, array $columns): void
     {
         // NO-OP.
-        // Previously this altered all columns to NVARCHAR(MAX) / LONGTEXT to avoid type strictness.
-        // However, MySQL has a strict 8126 byte inline row size limit.
-        // 400+ LONGTEXT columns will exceed this limit and crash the database.
-        // By relying on the initial type inference (boolean, decimal, bigInt, text), 
-        // we keep the row size small and stable.
     }
 
     /**
      * Ensure the _row_hash column exists on an existing table.
      * This column stores an MD5 hash of all business columns for dedup.
      */
-    private function ensureRowHashColumn(string $tableName): void
+    private function ensureRowHashColumn(?string $connectionName, string $tableName): void
     {
-        $columns = array_map('strtolower', Schema::getColumnListing($tableName));
+        $columns = array_map('strtolower', Schema::connection($connectionName)->getColumnListing($tableName));
         if (!in_array('_row_hash', $columns)) {
-            Schema::table($tableName, function (Blueprint $table) {
+            Schema::connection($connectionName)->table($tableName, function (Blueprint $table) {
                 $table->string('_row_hash', 64)->nullable()->index();
             });
-            Log::info("SchemaManager: Added _row_hash column to [{$tableName}].");
+            Log::info("SchemaManager: Added _row_hash column to [{$tableName}] on connection [{$connectionName}].");
         }
     }
 
@@ -218,12 +233,35 @@ class SchemaManager
                 $value = json_encode($value);
             }
 
-            // OData v4 returns Edm.Binary (like tstamp) as Base64.
-            // Convert it to a standard Hex string (e.g., 0x00000000397677AB)
-            if (strtolower($colName) === 'tstamp' && is_string($value)) {
-                $decoded = base64_decode($value, true);
-                if ($decoded !== false) {
-                    $value = '0x' . strtoupper(bin2hex($decoded));
+            if (is_resource($value)) {
+                $value = stream_get_contents($value);
+            }
+
+            if (is_string($value) && !mb_check_encoding($value, 'UTF-8')) {
+                $value = '0x' . strtoupper(bin2hex($value));
+            }
+
+            // OData v4 returns Edm.Binary (like tstamp) as Base64 (12 chars).
+            // SQL Server returns it as raw 8-byte binary, or sometimes as a 16-char hex string depending on PDO driver config.
+            // Convert everything to a standard Hex string (e.g., 0x00000000397677AB)
+            if (strtolower($colName) === 'tstamp' && is_string($value) && !str_starts_with($value, '0x')) {
+                // If it is 16 chars and valid hex, prefix with 0x
+                if (strlen($value) === 16 && ctype_xdigit($value)) {
+                    $value = '0x' . strtoupper($value);
+                } 
+                // If it is exactly 12 characters, and it doesn't have invalid base64 chars, it might be base64
+                elseif (strlen($value) === 12 && preg_match('/^[a-zA-Z0-9+\/]+={0,2}$/', $value)) {
+                    $decoded = base64_decode($value, true);
+                    if ($decoded !== false) {
+                        $value = '0x' . strtoupper(bin2hex($decoded));
+                    } else {
+                        // fallback if base64 decode somehow fails
+                        $value = '0x' . strtoupper(bin2hex($value));
+                    }
+                } 
+                // Otherwise, it must be raw binary data (even if length isn't exactly 8 for some weird reason)
+                else {
+                    $value = '0x' . strtoupper(bin2hex($value));
                 }
             }
 
@@ -266,69 +304,38 @@ class SchemaManager
         }
 
         // Now use the cached map for every record.
-        $now = now()->toDateTimeString();
         $result = [];
 
         foreach ($records as $record) {
-            $clean = [];
-
-            foreach ($record as $key => $value) {
-                if (!isset($columnMap[$key])) {
-                    // Skip metadata keys (already filtered) or handle any new key on the fly
-                    if (str_starts_with($key, '@') || str_starts_with($key, 'odata.') || $key === '__metadata') {
-                        continue;
-                    }
-                    $columnMap[$key] = $this->sanitizeColumnName($key);
-                }
-
-                $colName = $columnMap[$key];
-
-                if (is_array($value) || is_object($value)) {
-                    $value = json_encode($value);
-                }
-
-                if (strtolower($colName) === 'tstamp' && is_string($value)) {
-                    $decoded = base64_decode($value, true);
-                    if ($decoded !== false) {
-                        $value = '0x' . strtoupper(bin2hex($decoded));
-                    }
-                }
-
-                $clean[$colName] = $value;
-            }
-
-            $clean['_synced_at'] = $now;
-
-            // Compute _row_hash
-            $hashData = $clean;
-            unset($hashData['_synced_at'], $hashData['_row_hash'], $hashData['_sync_id']);
-            ksort($hashData);
-            $hashString = implode('|', array_map(function ($v) { return (string)($v ?? ''); }, $hashData));
-            $clean['_row_hash'] = md5($hashString);
-
-            $result[] = $clean;
+            $result[] = $this->cleanRecord((array)$record, $columnMap);
         }
 
         return $result;
     }
 
+    protected array $tableExistsCache = [];
+
     /**
      * Check if a table exists.
      */
-    public function tableExists(string $tableName): bool
+    public function tableExists(?string $connectionName, string $tableName): bool
     {
-        return Schema::hasTable($tableName);
+        $cacheKey = ($connectionName ?? 'default') . '.' . $tableName;
+        if (!array_key_exists($cacheKey, $this->tableExistsCache)) {
+            $this->tableExistsCache[$cacheKey] = Schema::connection($connectionName)->hasTable($tableName);
+        }
+        return $this->tableExistsCache[$cacheKey];
     }
 
     /**
      * Get the row count for a table.
      */
-    public function getRowCount(string $tableName): int
+    public function getRowCount(?string $connectionName, string $tableName): int
     {
-        if (! $this->tableExists($tableName)) {
+        if (! $this->tableExists($connectionName, $tableName)) {
             return 0;
         }
 
-        return DB::table($tableName)->count();
+        return DB::connection($connectionName)->table($tableName)->count();
     }
 }

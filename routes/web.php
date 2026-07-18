@@ -5,10 +5,11 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DynamicReportController;
 use App\Http\Controllers\EntityController;
 use App\Http\Controllers\MasterDataController;
+use App\Http\Controllers\ReportBuilderController;
+use App\Http\Controllers\ReportController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\SyncController;
 use App\Http\Controllers\TransactionController;
-use App\Http\Controllers\ReportController;
 use App\Http\Controllers\UserManagementController;
 use Illuminate\Support\Facades\Route;
 
@@ -24,12 +25,15 @@ Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
 
 /*
 |--------------------------------------------------------------------------
-| Protected Routes (require login)
+| Secured API Data Endpoints (Basic Auth for PowerBI/Excel)
 |--------------------------------------------------------------------------
 */
 
-Route::middleware(['auth'])->group(function () {
+Route::middleware(['auth.basic'])->group(function () {
+    Route::get('/data/{slug}', [\App\Http\Controllers\Api\DataEndpointController::class, 'getData'])->name('api.data.endpoint');
+});
 
+Route::middleware(['auth'])->group(function () {
     /*
     |--------------------------------------------------------------------------
     | Dashboard
@@ -45,11 +49,13 @@ Route::middleware(['auth'])->group(function () {
     |--------------------------------------------------------------------------
     */
 
-    Route::post('/sync/all', [SyncController::class, 'syncAll'])->name('sync.all');
-    Route::post('/sync/{entity}', [SyncController::class, 'syncEntity'])->name('sync.entity');
-    Route::get('/sync/{entity}/progress', [SyncController::class, 'progress'])->name('sync.progress');
-    Route::get('/sync/logs', [SyncController::class, 'logs'])->name('sync.logs');
-    Route::get('/sync/status', [SyncController::class, 'status'])->name('sync.status');
+    Route::middleware(['permission:sync.manage'])->group(function () {
+        Route::post('/sync/all', [SyncController::class, 'syncAll'])->name('sync.all');
+        Route::post('/sync/stop/{id}', [SyncController::class, 'stopQueue'])->name('sync.stop');
+        Route::post('/sync/{entity}', [SyncController::class, 'syncEntity'])->name('sync.entity');
+        Route::get('/sync/{entity}/progress', [SyncController::class, 'progress'])->name('sync.progress');
+        Route::get('/sync/status', [SyncController::class, 'status'])->name('sync.status');
+    });
 
     /*
     |--------------------------------------------------------------------------
@@ -57,8 +63,10 @@ Route::middleware(['auth'])->group(function () {
     |--------------------------------------------------------------------------
     */
 
-    Route::get('/master-data', [MasterDataController::class, 'index'])->name('master-data.index');
-    Route::get('/master-data/{entity}', [MasterDataController::class, 'show'])->name('master-data.show');
+    Route::middleware(['auth'])->group(function () {
+        Route::get('/master-data', [MasterDataController::class, 'index'])->name('master-data.index');
+        Route::get('/master-data/{entity}', [MasterDataController::class, 'show'])->name('master-data.show');
+    });
 
     /*
     |--------------------------------------------------------------------------
@@ -66,8 +74,10 @@ Route::middleware(['auth'])->group(function () {
     |--------------------------------------------------------------------------
     */
 
-    Route::get('/transactions', [TransactionController::class, 'index'])->name('transactions.index');
-    Route::get('/transactions/{entity}', [TransactionController::class, 'show'])->name('transactions.show');
+    Route::middleware(['auth'])->group(function () {
+        Route::get('/transactions', [TransactionController::class, 'index'])->name('transactions.index');
+        Route::get('/transactions/{entity}', [TransactionController::class, 'show'])->name('transactions.show');
+    });
 
     /*
     |--------------------------------------------------------------------------
@@ -80,10 +90,12 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/api/entities/{key}', [EntityController::class, 'show'])->name('api.entities.show');
         Route::post('/api/entities', [EntityController::class, 'store'])->name('api.entities.store');
         Route::put('/api/entities/{key}', [EntityController::class, 'update'])->name('api.entities.update');
+        Route::post('/api/entities/{key}/schedule', [EntityController::class, 'updateSchedule'])->name('api.entities.schedule');
         Route::delete('/api/entities/{key}', [EntityController::class, 'destroy'])->name('api.entities.destroy');
     });
 
     Route::get('/api/entities/{entity}/fields', [SyncController::class, 'entityFields'])->name('api.entities.fields');
+    Route::post('/api/entities/{entity}/filters', [SyncController::class, 'saveFilters'])->name('api.entities.filters.save');
 
     /*
     |--------------------------------------------------------------------------
@@ -97,19 +109,47 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/report/{entityKey}/export', [DynamicReportController::class, 'export'])->name('report.dynamic.export');
     });
 
+    Route::middleware(['permission:report_builder.manage'])->group(function () {
+        Route::get('/report-builder', [ReportBuilderController::class, 'index'])->name('report.builder');
+        Route::get('/api/report-builder/connections', [ReportBuilderController::class, 'connections']);
+        Route::get('/api/report-builder/tables', [ReportBuilderController::class, 'tables']);
+        Route::get('/api/report-builder/columns', [ReportBuilderController::class, 'columns']);
+        Route::post('/api/report-builder/prepare', [ReportBuilderController::class, 'prepare']);
+        Route::get('/api/report-builder/download/{token}', [ReportBuilderController::class, 'download'])->name('report.builder.download');
+    });
+
+    Route::middleware(['permission:endpoint_api.manage'])->group(function () {
+        Route::get('/endpoint-api', [\App\Http\Controllers\EndpointApiController::class, 'index'])->name('endpoint.api.index');
+        Route::get('/endpoint-api/create', [\App\Http\Controllers\EndpointApiController::class, 'create'])->name('endpoint.api.create');
+        Route::post('/endpoint-api', [\App\Http\Controllers\EndpointApiController::class, 'store'])->name('endpoint.api.store');
+        Route::get('/endpoint-api/{id}/edit', [\App\Http\Controllers\EndpointApiController::class, 'edit'])->name('endpoint.api.edit');
+        Route::put('/endpoint-api/{id}', [\App\Http\Controllers\EndpointApiController::class, 'update'])->name('endpoint.api.update');
+        Route::delete('/endpoint-api/{id}', [\App\Http\Controllers\EndpointApiController::class, 'destroy'])->name('endpoint.api.destroy');
+        Route::post('/endpoint-api/{id}/toggle', [\App\Http\Controllers\EndpointApiController::class, 'toggle'])->name('endpoint.api.toggle');
+    });
+
     /*
     |--------------------------------------------------------------------------
     | Logs & Settings
     |--------------------------------------------------------------------------
     */
 
-    Route::get('/logs', [SyncController::class, 'logsPage'])->name('logs.index');
+    Route::middleware(['permission:logs.view'])->group(function () {
+        Route::get('/logs', [SyncController::class, 'logsPage'])->name('logs.index');
+        Route::get('/sync/logs', [SyncController::class, 'logs'])->name('sync.logs');
+    });
 
     Route::middleware(['permission:settings.manage'])->group(function () {
         Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
-        Route::post('/api/settings/acumatica', [SettingsController::class, 'updateAcumatica'])->name('api.settings.acumatica');
-        Route::post('/api/settings/database', [SettingsController::class, 'updateDatabase'])->name('api.settings.database');
-        Route::post('/api/settings/test-connection', [SettingsController::class, 'testConnection'])->name('api.settings.test-connection');
+        
+        // Connections CRUD
+        Route::get('/api/connections', [SettingsController::class, 'getConnections'])->name('api.connections.index');
+        Route::post('/api/connections', [SettingsController::class, 'storeConnection'])->name('api.connections.store');
+        Route::put('/api/connections/{key}', [SettingsController::class, 'updateConnection'])->name('api.connections.update');
+        Route::delete('/api/connections/{key}', [SettingsController::class, 'destroyConnection'])->name('api.connections.destroy');
+        Route::post('/api/connections/test', [SettingsController::class, 'testConnection'])->name('api.connections.test');
+        Route::post('/api/connections/databases', [SettingsController::class, 'fetchDatabases'])->name('api.connections.databases');
+        Route::get('/api/connections/{key}/objects', [SettingsController::class, 'getConnectionObjects'])->name('api.connections.objects');
     });
 
     /*

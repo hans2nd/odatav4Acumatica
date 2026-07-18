@@ -19,6 +19,60 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        try {
+            // Only proceed if the connections table exists
+            if (!\Illuminate\Support\Facades\Schema::hasTable('connections')) {
+                return;
+            }
+
+            $connectionService = app(\App\Services\ConnectionService::class);
+            $connectionService->ensureDefaults();
+            $connections = $connectionService->getAll();
+            
+            foreach ($connections as $key => $conn) {
+                if ($conn['type'] === 'mysql' || $conn['type'] === 'sqlsrv') {
+                    $creds = $conn['credentials'] ?? [];
+                    
+                    if ($conn['type'] === 'mysql') {
+                        config(["database.connections.{$key}" => [
+                            'driver' => 'mysql',
+                            'url' => env('DATABASE_URL'),
+                            'host' => $creds['host'] ?? '127.0.0.1',
+                            'port' => $creds['port'] ?? '3306',
+                            'database' => $creds['database'] ?? '',
+                            'username' => $creds['username'] ?? '',
+                            'password' => $creds['password'] ?? '',
+                            'unix_socket' => env('DB_SOCKET', ''),
+                            'charset' => 'utf8mb4',
+                            'collation' => 'utf8mb4_unicode_ci',
+                            'prefix' => '',
+                            'prefix_indexes' => true,
+                            'strict' => true,
+                            'engine' => null,
+                            'options' => extension_loaded('pdo_mysql') ? array_filter([
+                                \PDO::MYSQL_ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
+                            ]) : [],
+                        ]]);
+                    } elseif ($conn['type'] === 'sqlsrv') {
+                        config(["database.connections.{$key}" => [
+                            'driver' => 'sqlsrv',
+                            'url' => env('DATABASE_URL'),
+                            'host' => $creds['host'] ?? 'localhost',
+                            'port' => $creds['port'] ?? '1433',
+                            'database' => $creds['database'] ?? '',
+                            'username' => $creds['username'] ?? '',
+                            'password' => $creds['password'] ?? '',
+                            'charset' => 'utf8',
+                            'prefix' => '',
+                            'prefix_indexes' => true,
+                            // 'encrypt' => env('DB_ENCRYPT', 'yes'),
+                            // 'trust_server_certificate' => env('DB_TRUST_SERVER_CERTIFICATE', 'false'),
+                        ]]);
+                    }
+                }
+            }
+        } catch (\Exception $e) {
+            // Ignore during initial setup or if table doesn't exist yet
+        }
     }
 }

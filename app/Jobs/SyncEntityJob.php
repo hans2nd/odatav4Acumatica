@@ -10,6 +10,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Queue\Middleware\WithoutOverlapping;
 
 class SyncEntityJob implements ShouldQueue
 {
@@ -23,8 +24,21 @@ class SyncEntityJob implements ShouldQueue
 
     public function __construct(
         public string $entityKey,
-        public array $customFilters = []
+        public array $customFilters = [],
+        public string $source = 'manual'
     ) {}
+
+    /**
+     * Get the middleware the job should pass through.
+     * Prevents multiple concurrent syncs for the same entity.
+     */
+    public function middleware()
+    {
+        return [
+            // Do not release back to queue; discard overlapping jobs to prevent queue pile-up.
+            (new WithoutOverlapping($this->entityKey))->dontRelease()
+        ];
+    }
 
     public function handle(SyncService $syncService): void
     {
@@ -33,7 +47,7 @@ class SyncEntityJob implements ShouldQueue
         ]);
 
         try {
-            $syncService->syncEntity($this->entityKey, $this->customFilters);
+            $syncService->syncEntity($this->entityKey, $this->customFilters, $this->source);
         } finally {
             // Release persistent HTTP resources after sync completes
             try {

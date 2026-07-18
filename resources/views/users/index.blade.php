@@ -1,64 +1,64 @@
 @extends('layouts.app')
-@section('title', 'User Management — PL Sync Engine')
+@section('title', 'User Management — PL Sync Data Warehouse')
 @section('page-title', 'User Management')
 
 @section('content')
 <div class="space-y-6">
     {{-- Header --}}
-    <div class="flex justify-between items-center">
+    <div class="flex justify-between items-center animate-fade-up">
         <div>
-            <h2 class="text-h2 font-h2 text-on-surface">Users & Roles</h2>
-            <p class="text-body-md text-on-surface-variant mt-1">Manage user accounts, roles, and permissions</p>
+            <h2 class="text-h1 text-surface-800">Users & Roles</h2>
+            <p class="text-body-md text-surface-500 mt-1">Manage user accounts, roles, and permissions</p>
         </div>
-        <button onclick="openCreateUserModal()" class="flex items-center gap-2 bg-primary text-on-primary px-4 py-2 rounded hover:bg-primary-container hover:text-on-primary-container transition-colors text-label-md font-label-md">
-            <span class="material-symbols-outlined text-sm">person_add</span> Add User
+        <button onclick="openCreateUserModal()" class="flex items-center gap-2 bg-brand-600 text-white px-4 py-2.5 rounded-xl hover:bg-brand-700 transition-all duration-200 text-label-md shadow-sm active:scale-[0.97]">
+            <span class="material-symbols-outlined text-[16px]">person_add</span> Add User
         </button>
     </div>
 
     {{-- Users Table --}}
-    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden">
+    <div class="bg-white rounded-2xl border border-surface-200/60 overflow-hidden shadow-card animate-fade-up">
         <table class="w-full text-left">
-            <thead class="bg-surface-container-low border-b border-outline-variant">
+            <thead class="border-b border-surface-100">
                 <tr>
-                    <th class="px-6 py-3 text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wider">User</th>
-                    <th class="px-6 py-3 text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wider">Email</th>
-                    <th class="px-6 py-3 text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wider">Role</th>
-                    <th class="px-6 py-3 text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wider">Created</th>
-                    <th class="px-6 py-3 text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wider text-right">Actions</th>
+                    <th class="px-5 py-3 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">User</th>
+                    <th class="px-5 py-3 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">Email</th>
+                    <th class="px-5 py-3 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">Role</th>
+                    <th class="px-5 py-3 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">Created</th>
+                    <th class="px-5 py-3 text-label-sm text-surface-500 font-semibold uppercase tracking-wider text-right">Actions</th>
                 </tr>
             </thead>
-            <tbody class="divide-y divide-outline-variant">
+            <tbody class="divide-y divide-surface-100">
                 @foreach($users as $u)
-                <tr class="hover:bg-surface-container-low transition-colors" id="user-row-{{ $u->id }}">
-                    <td class="px-6 py-4">
+                <tr class="hover:bg-surface-50/50 transition-colors" id="user-row-{{ $u->id }}">
+                    <td class="px-5 py-4">
                         <div class="flex items-center gap-3">
-                            <div class="w-9 h-9 rounded-full bg-primary-container flex items-center justify-center text-on-primary-container font-bold text-sm">
+                            <div class="w-9 h-9 rounded-full bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white font-bold text-sm shadow-sm">
                                 {{ strtoupper(substr($u->name, 0, 1)) }}
                             </div>
-                            <span class="font-medium text-on-surface text-body-md">{{ $u->name }}</span>
+                            <span class="font-medium text-surface-800 text-body-md">{{ $u->name }}</span>
                         </div>
                     </td>
-                    <td class="px-6 py-4 text-body-md text-on-surface-variant">{{ $u->email }}</td>
-                    <td class="px-6 py-4">
+                    <td class="px-5 py-4 text-body-md text-surface-500">{{ $u->email }}</td>
+                    <td class="px-5 py-4">
                         @foreach($u->roles as $r)
-                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
-                            {{ $r->is_superadmin ? 'bg-red-100 text-red-800' : ($r->name === 'operator' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800') }}">
+                        <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-label-sm font-semibold
+                            {{ $r->is_superadmin ? 'bg-red-50 text-red-700' : ($r->name === 'operator' ? 'bg-sky-50 text-sky-700' : 'bg-emerald-50 text-emerald-700') }}">
                             {{ $r->display_name }}
                         </span>
                         @endforeach
                     </td>
-                    <td class="px-6 py-4 text-body-md text-on-surface-variant">{{ $u->created_at->format('d M Y') }}</td>
-                    <td class="px-6 py-4 text-right">
+                    <td class="px-5 py-4 text-body-md text-surface-500">{{ $u->created_at->format('d M Y') }}</td>
+                    <td class="px-5 py-4 text-right">
                         <div class="flex items-center justify-end gap-1">
-                            <button onclick="openEditUserModal({{ json_encode($u) }})" class="p-1.5 rounded hover:bg-surface-container transition-colors text-on-surface-variant" title="Edit">
-                                <span class="material-symbols-outlined text-sm">edit</span>
+                            <button onclick="openEditUserModal({{ json_encode($u) }})" class="p-1.5 rounded-lg hover:bg-surface-100 text-surface-400 hover:text-surface-700 transition-all duration-200" title="Edit">
+                                <span class="material-symbols-outlined text-[16px]">edit</span>
                             </button>
-                            <button onclick="openResetPasswordModal({{ $u->id }}, '{{ $u->name }}')" class="p-1.5 rounded hover:bg-surface-container transition-colors text-on-surface-variant" title="Reset Password">
-                                <span class="material-symbols-outlined text-sm">key</span>
+                            <button onclick="openResetPasswordModal({{ $u->id }}, '{{ $u->name }}')" class="p-1.5 rounded-lg hover:bg-surface-100 text-surface-400 hover:text-surface-700 transition-all duration-200" title="Reset Password">
+                                <span class="material-symbols-outlined text-[16px]">key</span>
                             </button>
                             @if($u->id !== auth()->id())
-                            <button onclick="deleteUser({{ $u->id }}, '{{ $u->name }}')" class="p-1.5 rounded hover:bg-red-50 transition-colors text-red-600" title="Delete">
-                                <span class="material-symbols-outlined text-sm">delete</span>
+                            <button onclick="deleteUser({{ $u->id }}, '{{ $u->name }}')" class="p-1.5 rounded-lg hover:bg-red-50 text-surface-400 hover:text-red-600 transition-all duration-200" title="Delete">
+                                <span class="material-symbols-outlined text-[16px]">delete</span>
                             </button>
                             @endif
                         </div>
@@ -70,37 +70,39 @@
     </div>
 
     {{-- Roles Section --}}
-    <div class="flex justify-between items-center mt-8">
-        <h2 class="text-h2 font-h2 text-on-surface">Roles & Permissions</h2>
-        <button onclick="openCreateRoleModal()" class="flex items-center gap-2 bg-surface-container-low text-on-surface px-4 py-2 rounded border border-outline-variant hover:bg-surface-container transition-colors text-label-md font-label-md">
-            <span class="material-symbols-outlined text-sm">add</span> New Role
+    <div class="flex justify-between items-center mt-8 animate-fade-up">
+        <h2 class="text-h1 text-surface-800">Roles & Permissions</h2>
+        <button onclick="openCreateRoleModal()" class="flex items-center gap-2 bg-surface-100 text-surface-700 px-4 py-2.5 rounded-xl border border-surface-200 hover:bg-surface-200 transition-all duration-200 text-label-md active:scale-[0.97]">
+            <span class="material-symbols-outlined text-[16px]">add</span> New Role
         </button>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         @foreach($roles as $role)
-        <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-5 hover:shadow-md transition-shadow">
+        <div class="bg-white rounded-2xl border border-surface-200/60 p-5 hover:shadow-card-hover transition-all duration-300 animate-fade-up shadow-card group">
             <div class="flex items-center justify-between mb-3">
-                <div class="flex items-center gap-2">
-                    <span class="material-symbols-outlined text-on-surface-variant" style="font-variation-settings: 'FILL' 1;">
-                        {{ $role->is_superadmin ? 'shield_person' : 'group' }}
-                    </span>
-                    <h3 class="font-semibold text-on-surface">{{ $role->display_name }}</h3>
+                <div class="flex items-center gap-2.5">
+                    <div class="p-2 {{ $role->is_superadmin ? 'bg-gradient-to-br from-red-50 to-red-100' : 'bg-gradient-to-br from-brand-50 to-brand-100' }} rounded-xl">
+                        <span class="material-symbols-outlined {{ $role->is_superadmin ? 'text-red-600' : 'text-brand-600' }} text-[20px]" style="font-variation-settings: 'FILL' 1;">
+                            {{ $role->is_superadmin ? 'shield_person' : 'group' }}
+                        </span>
+                    </div>
+                    <h3 class="font-semibold text-surface-800">{{ $role->display_name }}</h3>
                 </div>
                 @if($role->is_superadmin)
-                    <span class="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">Super</span>
+                    <span class="text-label-sm bg-red-50 text-red-700 px-2.5 py-1 rounded-lg font-semibold">Super</span>
                 @endif
             </div>
-            <p class="text-sm text-on-surface-variant mb-3">{{ $role->description ?? 'No description' }}</p>
-            <div class="flex items-center justify-between text-xs text-on-surface-variant">
+            <p class="text-body-sm text-surface-500 mb-4">{{ $role->description ?? 'No description' }}</p>
+            <div class="flex items-center justify-between text-label-sm text-surface-400 pt-3 border-t border-surface-100">
                 <span>{{ $role->users_count }} user(s) · {{ $role->is_superadmin ? 'All' : $role->permissions_count }} permissions</span>
                 <div class="flex gap-1">
-                    <button onclick="openRolePermissionsModal({{ $role->id }}, '{{ $role->display_name }}', {{ $role->is_superadmin ? 'true' : 'false' }})" class="p-1 rounded hover:bg-surface-container transition-colors" title="Edit Permissions">
-                        <span class="material-symbols-outlined text-sm">tune</span>
+                    <button onclick="openRolePermissionsModal({{ $role->id }}, '{{ $role->display_name }}', {{ $role->is_superadmin ? 'true' : 'false' }})" class="p-1.5 rounded-lg hover:bg-surface-100 text-surface-400 hover:text-surface-700 transition-all duration-200" title="Edit Permissions">
+                        <span class="material-symbols-outlined text-[16px]">tune</span>
                     </button>
                     @if(!$role->is_superadmin && $role->users_count === 0)
-                    <button onclick="deleteRole({{ $role->id }}, '{{ $role->display_name }}')" class="p-1 rounded hover:bg-red-50 text-red-600 transition-colors" title="Delete">
-                        <span class="material-symbols-outlined text-sm">delete</span>
+                    <button onclick="deleteRole({{ $role->id }}, '{{ $role->display_name }}')" class="p-1.5 rounded-lg hover:bg-red-50 text-surface-400 hover:text-red-600 transition-all duration-200" title="Delete">
+                        <span class="material-symbols-outlined text-[16px]">delete</span>
                     </button>
                     @endif
                 </div>
@@ -112,102 +114,116 @@
 
 {{-- Modal: Create/Edit User --}}
 <div id="user-modal" class="fixed inset-0 z-50 hidden">
-    <div class="absolute inset-0 bg-black/40" onclick="closeModal('user-modal')"></div>
-    <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-surface-container-lowest rounded-2xl shadow-2xl border border-outline-variant p-6">
-        <h3 id="user-modal-title" class="text-h2 font-h2 text-on-surface mb-4">Add User</h3>
-        <form id="user-form" onsubmit="submitUserForm(event)">
-            <input type="hidden" id="user-id" value="">
-            <div class="space-y-4">
-                <div>
-                    <label class="block text-label-sm font-label-sm text-on-surface-variant mb-1">Name</label>
-                    <input type="text" id="user-name" required class="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface text-on-surface text-body-md focus:ring-2 focus:ring-primary focus:border-primary">
-                </div>
-                <div>
-                    <label class="block text-label-sm font-label-sm text-on-surface-variant mb-1">Email</label>
-                    <input type="email" id="user-email" required class="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface text-on-surface text-body-md focus:ring-2 focus:ring-primary focus:border-primary">
-                </div>
-                <div id="password-field">
-                    <label class="block text-label-sm font-label-sm text-on-surface-variant mb-1">Password</label>
-                    <input type="password" id="user-password" class="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface text-on-surface text-body-md focus:ring-2 focus:ring-primary focus:border-primary" minlength="6">
-                </div>
-                <div>
-                    <label class="block text-label-sm font-label-sm text-on-surface-variant mb-1">Role</label>
-                    <select id="user-role" required class="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface text-on-surface text-body-md focus:ring-2 focus:ring-primary focus:border-primary">
-                        @foreach($roles as $role)
-                        <option value="{{ $role->id }}">{{ $role->display_name }}</option>
-                        @endforeach
-                    </select>
-                </div>
+    <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" onclick="closeModal('user-modal')"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl border border-surface-200/60 shadow-2xl w-full max-w-md animate-fade-up overflow-hidden">
+            <div class="px-5 py-4 border-b border-surface-100">
+                <h3 id="user-modal-title" class="text-h3 text-surface-800">Add User</h3>
             </div>
-            <div class="flex justify-end gap-2 mt-6">
-                <button type="button" onclick="closeModal('user-modal')" class="px-4 py-2 text-on-surface-variant hover:bg-surface-container rounded-lg transition-colors text-label-md">Cancel</button>
-                <button type="submit" id="user-submit-btn" class="px-4 py-2 bg-primary text-on-primary rounded-lg hover:bg-primary-container hover:text-on-primary-container transition-colors text-label-md font-label-md">Save</button>
-            </div>
-        </form>
+            <form id="user-form" onsubmit="submitUserForm(event)">
+                <input type="hidden" id="user-id" value="">
+                <div class="p-5 space-y-4">
+                    <div>
+                        <label class="text-label-md text-surface-600 block mb-1.5">Name</label>
+                        <input type="text" id="user-name" required class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all duration-200">
+                    </div>
+                    <div>
+                        <label class="text-label-md text-surface-600 block mb-1.5">Email</label>
+                        <input type="email" id="user-email" required class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all duration-200">
+                    </div>
+                    <div id="password-field">
+                        <label class="text-label-md text-surface-600 block mb-1.5">Password</label>
+                        <input type="password" id="user-password" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all duration-200" minlength="6">
+                    </div>
+                    <div>
+                        <label class="text-label-md text-surface-600 block mb-1.5">Role</label>
+                        <select id="user-role" required class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all duration-200">
+                            @foreach($roles as $role)
+                            <option value="{{ $role->id }}">{{ $role->display_name }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                </div>
+                <div class="px-5 py-4 border-t border-surface-100 flex justify-end gap-2">
+                    <button type="button" onclick="closeModal('user-modal')" class="px-4 py-2 rounded-xl text-label-md text-surface-600 hover:bg-surface-100 transition-all duration-200">Cancel</button>
+                    <button type="submit" id="user-submit-btn" class="px-4 py-2 bg-brand-600 text-white rounded-xl hover:bg-brand-700 transition-all duration-200 text-label-md shadow-sm active:scale-[0.97]">Save</button>
+                </div>
+            </form>
+        </div>
     </div>
 </div>
 
 {{-- Modal: Reset Password --}}
 <div id="reset-modal" class="fixed inset-0 z-50 hidden">
-    <div class="absolute inset-0 bg-black/40" onclick="closeModal('reset-modal')"></div>
-    <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-sm bg-surface-container-lowest rounded-2xl shadow-2xl border border-outline-variant p-6">
-        <h3 class="text-h2 font-h2 text-on-surface mb-2">Reset Password</h3>
-        <p id="reset-user-name" class="text-body-md text-on-surface-variant mb-4"></p>
-        <input type="hidden" id="reset-user-id">
-        <div>
-            <label class="block text-label-sm font-label-sm text-on-surface-variant mb-1">New Password</label>
-            <input type="password" id="reset-password" required minlength="6" class="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface text-on-surface text-body-md">
-        </div>
-        <div class="flex justify-end gap-2 mt-6">
-            <button onclick="closeModal('reset-modal')" class="px-4 py-2 text-on-surface-variant hover:bg-surface-container rounded-lg transition-colors text-label-md">Cancel</button>
-            <button onclick="submitResetPassword()" class="px-4 py-2 bg-primary text-on-primary rounded-lg hover:bg-primary-container hover:text-on-primary-container transition-colors text-label-md font-label-md">Reset</button>
+    <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" onclick="closeModal('reset-modal')"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl border border-surface-200/60 shadow-2xl w-full max-w-sm animate-fade-up overflow-hidden">
+            <div class="px-5 py-4 border-b border-surface-100">
+                <h3 class="text-h3 text-surface-800">Reset Password</h3>
+                <p id="reset-user-name" class="text-body-sm text-surface-500 mt-1"></p>
+            </div>
+            <input type="hidden" id="reset-user-id">
+            <div class="p-5">
+                <label class="text-label-md text-surface-600 block mb-1.5">New Password</label>
+                <input type="password" id="reset-password" required minlength="6" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all duration-200">
+            </div>
+            <div class="px-5 py-4 border-t border-surface-100 flex justify-end gap-2">
+                <button onclick="closeModal('reset-modal')" class="px-4 py-2 rounded-xl text-label-md text-surface-600 hover:bg-surface-100 transition-all duration-200">Cancel</button>
+                <button onclick="submitResetPassword()" class="px-4 py-2 bg-brand-600 text-white rounded-xl hover:bg-brand-700 transition-all duration-200 text-label-md shadow-sm active:scale-[0.97]">Reset</button>
+            </div>
         </div>
     </div>
 </div>
 
 {{-- Modal: Role Permissions --}}
 <div id="perm-modal" class="fixed inset-0 z-50 hidden">
-    <div class="absolute inset-0 bg-black/40" onclick="closeModal('perm-modal')"></div>
-    <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-2xl max-h-[80vh] bg-surface-container-lowest rounded-2xl shadow-2xl border border-outline-variant flex flex-col">
-        <div class="p-6 border-b border-outline-variant">
-            <h3 id="perm-modal-title" class="text-h2 font-h2 text-on-surface">Role Permissions</h3>
-            <p class="text-body-md text-on-surface-variant mt-1">Select permissions for this role</p>
-        </div>
-        <div id="perm-content" class="p-6 overflow-y-auto flex-1">
-            <p class="text-on-surface-variant">Loading...</p>
-        </div>
-        <div class="p-4 border-t border-outline-variant flex justify-end gap-2">
-            <button onclick="closeModal('perm-modal')" class="px-4 py-2 text-on-surface-variant hover:bg-surface-container rounded-lg transition-colors text-label-md">Cancel</button>
-            <button id="perm-save-btn" onclick="saveRolePermissions()" class="px-4 py-2 bg-primary text-on-primary rounded-lg hover:bg-primary-container hover:text-on-primary-container transition-colors text-label-md font-label-md">Save Permissions</button>
+    <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" onclick="closeModal('perm-modal')"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl border border-surface-200/60 shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col animate-fade-up overflow-hidden">
+            <div class="px-5 py-4 border-b border-surface-100">
+                <h3 id="perm-modal-title" class="text-h3 text-surface-800">Role Permissions</h3>
+                <p class="text-body-sm text-surface-500 mt-1">Select permissions for this role</p>
+            </div>
+            <div id="perm-content" class="p-5 overflow-y-auto flex-1">
+                <p class="text-surface-500">Loading...</p>
+            </div>
+            <div class="px-5 py-4 border-t border-surface-100 flex justify-end gap-2">
+                <button onclick="closeModal('perm-modal')" class="px-4 py-2 rounded-xl text-label-md text-surface-600 hover:bg-surface-100 transition-all duration-200">Cancel</button>
+                <button id="perm-save-btn" onclick="saveRolePermissions()" class="px-4 py-2 bg-brand-600 text-white rounded-xl hover:bg-brand-700 transition-all duration-200 text-label-md shadow-sm active:scale-[0.97]">Save Permissions</button>
+            </div>
         </div>
     </div>
 </div>
 
 {{-- Modal: Create Role --}}
 <div id="role-modal" class="fixed inset-0 z-50 hidden">
-    <div class="absolute inset-0 bg-black/40" onclick="closeModal('role-modal')"></div>
-    <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-surface-container-lowest rounded-2xl shadow-2xl border border-outline-variant p-6">
-        <h3 class="text-h2 font-h2 text-on-surface mb-4">Create Role</h3>
-        <form onsubmit="submitCreateRole(event)">
-            <div class="space-y-4">
-                <div>
-                    <label class="block text-label-sm font-label-sm text-on-surface-variant mb-1">Name (lowercase, no spaces)</label>
-                    <input type="text" id="role-name" required pattern="^[a-z][a-z0-9_]*$" class="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface text-on-surface text-body-md">
-                </div>
-                <div>
-                    <label class="block text-label-sm font-label-sm text-on-surface-variant mb-1">Display Name</label>
-                    <input type="text" id="role-display-name" required class="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface text-on-surface text-body-md">
-                </div>
-                <div>
-                    <label class="block text-label-sm font-label-sm text-on-surface-variant mb-1">Description</label>
-                    <input type="text" id="role-description" class="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface text-on-surface text-body-md">
-                </div>
+    <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" onclick="closeModal('role-modal')"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl border border-surface-200/60 shadow-2xl w-full max-w-md animate-fade-up overflow-hidden">
+            <div class="px-5 py-4 border-b border-surface-100">
+                <h3 class="text-h3 text-surface-800">Create Role</h3>
             </div>
-            <div class="flex justify-end gap-2 mt-6">
-                <button type="button" onclick="closeModal('role-modal')" class="px-4 py-2 text-on-surface-variant hover:bg-surface-container rounded-lg transition-colors text-label-md">Cancel</button>
-                <button type="submit" class="px-4 py-2 bg-primary text-on-primary rounded-lg hover:bg-primary-container hover:text-on-primary-container transition-colors text-label-md font-label-md">Create</button>
-            </div>
-        </form>
+            <form onsubmit="submitCreateRole(event)">
+                <div class="p-5 space-y-4">
+                    <div>
+                        <label class="text-label-md text-surface-600 block mb-1.5">Name (lowercase, no spaces)</label>
+                        <input type="text" id="role-name" required pattern="^[a-z][a-z0-9_]*$" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all duration-200">
+                    </div>
+                    <div>
+                        <label class="text-label-md text-surface-600 block mb-1.5">Display Name</label>
+                        <input type="text" id="role-display-name" required class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all duration-200">
+                    </div>
+                    <div>
+                        <label class="text-label-md text-surface-600 block mb-1.5">Description</label>
+                        <input type="text" id="role-description" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all duration-200">
+                    </div>
+                </div>
+                <div class="px-5 py-4 border-t border-surface-100 flex justify-end gap-2">
+                    <button type="button" onclick="closeModal('role-modal')" class="px-4 py-2 rounded-xl text-label-md text-surface-600 hover:bg-surface-100 transition-all duration-200">Cancel</button>
+                    <button type="submit" class="px-4 py-2 bg-brand-600 text-white rounded-xl hover:bg-brand-700 transition-all duration-200 text-label-md shadow-sm active:scale-[0.97]">Create</button>
+                </div>
+            </form>
+        </div>
     </div>
 </div>
 @endsection
@@ -314,12 +330,12 @@
         document.getElementById('perm-save-btn').style.display = isSuperadmin ? 'none' : '';
 
         if (isSuperadmin) {
-            document.getElementById('perm-content').innerHTML = '<div class="text-center py-8"><span class="material-symbols-outlined text-4xl text-on-surface-variant mb-2">shield_person</span><p class="text-on-surface-variant">Superadmin has access to all permissions automatically.</p></div>';
+            document.getElementById('perm-content').innerHTML = '<div class="text-center py-8"><span class="material-symbols-outlined text-4xl text-surface-400 mb-2">shield_person</span><p class="text-surface-500">Superadmin has access to all permissions automatically.</p></div>';
             openModal('perm-modal');
             return;
         }
 
-        document.getElementById('perm-content').innerHTML = '<p class="text-on-surface-variant">Loading permissions...</p>';
+        document.getElementById('perm-content').innerHTML = '<p class="text-surface-500">Loading permissions...</p>';
         openModal('perm-modal');
 
         try {
@@ -333,12 +349,12 @@
 
             let html = '';
             for (const [group, perms] of Object.entries(permData.permissions)) {
-                html += `<div class="mb-4"><h4 class="text-label-md font-label-md text-on-surface uppercase tracking-wider mb-2 border-b border-outline-variant pb-1">${group}</h4><div class="grid grid-cols-1 md:grid-cols-2 gap-1">`;
+                html += `<div class="mb-4"><h4 class="text-label-md text-surface-500 uppercase tracking-wider mb-2 border-b border-surface-100 pb-2 font-semibold">${group}</h4><div class="grid grid-cols-1 md:grid-cols-2 gap-1">`;
                 for (const p of perms) {
                     const checked = assignedIds.includes(p.id) ? 'checked' : '';
-                    html += `<label class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-surface-container-low cursor-pointer transition-colors">
-                        <input type="checkbox" class="perm-checkbox rounded border-outline text-primary focus:ring-primary" value="${p.id}" ${checked}>
-                        <span class="text-body-md text-on-surface">${p.display_name}</span>
+                    html += `<label class="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-surface-50 cursor-pointer transition-colors">
+                        <input type="checkbox" class="perm-checkbox rounded border-surface-300 text-brand-600 focus:ring-brand-500/20" value="${p.id}" ${checked}>
+                        <span class="text-body-sm text-surface-700">${p.display_name}</span>
                     </label>`;
                 }
                 html += '</div></div>';

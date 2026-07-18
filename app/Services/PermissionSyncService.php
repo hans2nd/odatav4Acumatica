@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Permission;
 use App\Models\Role;
+use App\Models\ApiEndpoint;
 
 class PermissionSyncService
 {
@@ -23,12 +24,15 @@ class PermissionSyncService
      * Static (non-entity) permissions.
      */
     public const STATIC_PERMISSIONS = [
-        'settings.manage'  => ['display_name' => 'Manage Settings',           'group' => 'System'],
-        'entities.manage'  => ['display_name' => 'Manage Entity Config',      'group' => 'System'],
-        'logs.view'        => ['display_name' => 'View Sync Logs',            'group' => 'System'],
-        'reports.view'     => ['display_name' => 'View Reports',              'group' => 'Reports'],
-        'users.manage'     => ['display_name' => 'Manage Users & Roles',      'group' => 'System'],
-        'dashboard.view'   => ['display_name' => 'View Dashboard',            'group' => 'System'],
+        'settings.manage'       => ['display_name' => 'Manage Settings',           'group' => 'System'],
+        'entities.manage'       => ['display_name' => 'Manage Entity Config',      'group' => 'System'],
+        'logs.view'             => ['display_name' => 'View Sync Logs',            'group' => 'System'],
+        'reports.view'          => ['display_name' => 'View Reports',              'group' => 'Reports'],
+        'report_builder.manage' => ['display_name' => 'Manage Report Builder',     'group' => 'Reports'],
+        'endpoint_api.manage'   => ['display_name' => 'Manage Endpoint API',       'group' => 'Reports'],
+        'users.manage'          => ['display_name' => 'Manage Users & Roles',      'group' => 'System'],
+        'dashboard.view'        => ['display_name' => 'View Dashboard',            'group' => 'System'],
+        'sync.manage'           => ['display_name' => 'Manage ODataV4 Sync',       'group' => 'System'],
     ];
 
     /**
@@ -37,12 +41,19 @@ class PermissionSyncService
      */
     public const ROLE_DEFAULTS = [
         'operator' => [
-            'static'          => ['logs.view', 'reports.view', 'dashboard.view'],
+            'static'          => [
+                'logs.view', 'reports.view', 'dashboard.view',
+                'sync.manage', 'report_builder.manage', 'endpoint_api.manage'
+            ],
             'entity_actions'  => ['view', 'sync', 'export'],
+            'endpoint_actions'=> ['view'],
         ],
         'viewer' => [
-            'static'          => ['logs.view', 'reports.view', 'dashboard.view'],
+            'static'          => [
+                'logs.view', 'reports.view', 'dashboard.view'
+            ],
             'entity_actions'  => ['view'],
+            'endpoint_actions'=> ['view'],
         ],
     ];
 
@@ -112,10 +123,59 @@ class PermissionSyncService
     /**
      * Ensure all static permissions exist in the database.
      */
+    public function syncApiEndpoints(): void
+    {
+        $endpoints = ApiEndpoint::all();
+        $expectedPermissions = [];
+
+        foreach ($endpoints as $ep) {
+            $permName = "api.endpoint.{$ep->endpoint_slug}.view";
+            $expectedPermissions[$permName] = [
+                'display_name' => "View API Endpoint - {$ep->name}",
+                'group'        => 'API Endpoints',
+            ];
+        }
+
+        $existingDynamic = Permission::where('name', 'like', 'api.endpoint.%')->pluck('name')->toArray();
+
+        $toCreate = array_diff(array_keys($expectedPermissions), $existingDynamic);
+        $toDelete = array_diff($existingDynamic, array_keys($expectedPermissions));
+
+        $newPermissions = [];
+        foreach ($toCreate as $permName) {
+            $newPermissions[] = Permission::create([
+                'name'         => $permName,
+                'display_name' => $expectedPermissions[$permName]['display_name'],
+                'group'        => $expectedPermissions[$permName]['group'],
+                'is_dynamic'   => true,
+            ]);
+        }
+
+        if (!empty($toDelete)) {
+            Permission::whereIn('name', $toDelete)->delete();
+        }
+
+        if (!empty($newPermissions)) {
+            // Auto-assign new dynamic API permissions
+            foreach (self::ROLE_DEFAULTS as $roleName => $config) {
+                $role = Role::where('name', $roleName)->first();
+                if (!$role) continue;
+
+                if (in_array('view', $config['endpoint_actions'] ?? [])) {
+                    $role->permissions()->syncWithoutDetaching(collect($newPermissions)->pluck('id'));
+                }
+            }
+        }
+    }
+
+    /**
+     * Ensure all static permissions exist in the database and are auto-assigned to default roles.
+     */
     public function ensureStaticPermissions(): void
     {
+        $newStatics = [];
         foreach (self::STATIC_PERMISSIONS as $name => $meta) {
-            Permission::firstOrCreate(
+            $perm = Permission::firstOrCreate(
                 ['name' => $name],
                 [
                     'display_name' => $meta['display_name'],
@@ -123,16 +183,31 @@ class PermissionSyncService
                     'is_dynamic'   => false,
                 ]
             );
+            if ($perm->wasRecentlyCreated) {
+                $newStatics[] = $perm;
+            }
+        }
+
+        // Auto assign static permissions to default roles
+        foreach (self::ROLE_DEFAULTS as $roleName => $config) {
+            $role = Role::where('name', $roleName)->first();
+            if (!$role) continue;
+
+            $staticsToAttach = Permission::whereIn('name', $config['static'] ?? [])->pluck('id')->toArray();
+            if (!empty($staticsToAttach)) {
+                $role->permissions()->syncWithoutDetaching($staticsToAttach);
+            }
         }
     }
 
     /**
-     * Full sync: static + dynamic permissions.
+     * Full sync: static + dynamic permissions + endpoints.
      */
     public function fullSync(): void
     {
         $this->ensureStaticPermissions();
         $this->syncFromEntities();
+        $this->syncApiEndpoints();
     }
 
     /**

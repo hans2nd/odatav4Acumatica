@@ -23,13 +23,14 @@ class DynamicReportController extends Controller
         }
 
         $tableName   = $config['table'];
-        $tableExists = $schemaManager->tableExists($tableName);
+        $connName    = $config['destination_connection'] ?? 'database_default';
+        $tableExists = $schemaManager->tableExists($connName, $tableName);
         $columns     = [];
         $data        = collect();
         $dateColumns = [];
 
         if ($tableExists) {
-            $columns = $this->getVisibleColumns($tableName);
+            $columns = $this->getVisibleColumns($connName, $tableName);
             $dateColumns = $this->detectDateColumns($tableName, $columns);
 
             $query = DB::table($tableName);
@@ -98,11 +99,12 @@ class DynamicReportController extends Controller
         }
 
         $tableName = $config['table'];
-        if (!$schemaManager->tableExists($tableName)) {
+        $connName  = $config['destination_connection'] ?? 'database_default';
+        if (!$schemaManager->tableExists($connName, $tableName)) {
             abort(404, 'Table does not exist yet.');
         }
 
-        $columns     = $this->getVisibleColumns($tableName);
+        $columns     = $this->getVisibleColumns($connName, $tableName);
         $dateColumns = $this->detectDateColumns($tableName, $columns);
         $query       = $this->buildFilteredQuery($request, $tableName, $columns, $dateColumns);
 
@@ -303,9 +305,10 @@ class DynamicReportController extends Controller
     /**
      * Get visible columns (exclude internal ones).
      */
-    private function getVisibleColumns(string $tableName): array
+    private function getVisibleColumns(string $connName, string $tableName): array
     {
-        $allColumns = DB::getSchemaBuilder()->getColumnListing($tableName);
+        $firstRow = DB::connection($connName)->table($tableName)->first();
+        $allColumns = $firstRow ? array_keys((array)$firstRow) : DB::connection($connName)->getSchemaBuilder()->getColumnListing($tableName);
         return array_values(array_filter($allColumns, function ($col) {
             return !in_array($col, ['_sync_id', '_synced_at', '_row_hash']);
         }));

@@ -53,6 +53,11 @@ class AuthController extends Controller
         $request->session()->invalidate();
         $request->session()->regenerateToken();
 
+        // Disconnect all active database connections
+        foreach (\Illuminate\Support\Facades\DB::getConnections() as $connection) {
+            $connection->disconnect();
+        }
+
         return redirect()->route('login');
     }
 }

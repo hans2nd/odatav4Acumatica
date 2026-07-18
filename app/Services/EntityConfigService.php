@@ -65,11 +65,14 @@ class EntityConfigService
     {
         $entities = $this->getAll();
         $entities[$key] = [
-            'odata_entity' => $data['odata_entity'],
-            'table'        => $data['table'],
-            'type'         => $data['type'],
-            'icon'         => $data['icon'] ?? 'database',
-            'description'  => $data['description'],
+            'odata_entity'           => $data['odata_entity'],
+            'table'                  => $data['table'],
+            'type'                   => $data['type'],
+            'icon'                   => $data['icon'] ?? 'database',
+            'description'            => $data['description'],
+            'source_connection'      => $data['source_connection'] ?? 'acumatica_default',
+            'destination_connection' => $data['destination_connection'] ?? 'database_default',
+            'schedule_minutes'       => $data['schedule_minutes'] ?? null,
         ];
         $this->writeFile($entities);
         $this->syncPermissions();
@@ -88,11 +91,14 @@ class EntityConfigService
         }
 
         $entities[$newKey] = [
-            'odata_entity' => $data['odata_entity'],
-            'table'        => $data['table'],
-            'type'         => $data['type'],
-            'icon'         => $data['icon'] ?? 'database',
-            'description'  => $data['description'],
+            'odata_entity'           => $data['odata_entity'],
+            'table'                  => $data['table'],
+            'type'                   => $data['type'],
+            'icon'                   => $data['icon'] ?? 'database',
+            'description'            => $data['description'],
+            'source_connection'      => $data['source_connection'] ?? 'acumatica_default',
+            'destination_connection' => $data['destination_connection'] ?? 'database_default',
+            'schedule_minutes'       => $data['schedule_minutes'] ?? null,
         ];
         $this->writeFile($entities);
         $this->syncPermissions();

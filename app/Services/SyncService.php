@@ -10,11 +10,13 @@ class SyncService
 {
     private AcumaticaODataService $odataService;
     private SchemaManager $schemaManager;
+    private ConnectionService $connectionService;
 
-    public function __construct(AcumaticaODataService $odataService, SchemaManager $schemaManager)
+    public function __construct(AcumaticaODataService $odataService, SchemaManager $schemaManager, ConnectionService $connectionService)
     {
         $this->odataService  = $odataService;
         $this->schemaManager = $schemaManager;
+        $this->connectionService = $connectionService;
     }
 
     /*
@@ -23,14 +25,7 @@ class SyncService
     |--------------------------------------------------------------------------
     */
 
-    /**
-     * Sync a single entity from Acumatica OData to the local SQL Server.
-     *
-     * @param  string  $entityKey  Key from config('acumatica.entities')
-     * @param  array   $customFilters Array of custom filter conditions
-     * @return SyncLog
-     */
-    public function syncEntity(string $entityKey, array $customFilters = []): SyncLog
+    public function syncEntity(string $entityKey, array $customFilters = [], string $source = 'manual'): SyncLog
     {
         $entity = config("acumatica.entities.{$entityKey}");
 
@@ -40,6 +35,17 @@ class SyncService
 
         $odataEntity = $entity['odata_entity'];
         $tableName   = $entity['table'];
+        $sourceConnKey = $entity['source_connection'] ?? 'acumatica_default';
+        $destConnKey   = $entity['destination_connection'] ?? 'database_default';
+
+        $sourceConnection = $this->connectionService->get($sourceConnKey);
+        
+        // Ensure default connections fallback if missing
+        if (!$sourceConnection && $sourceConnKey === 'acumatica_default') {
+            $sourceConnection = ['type' => 'odata'];
+        }
+
+        $destConnection = $destConnKey !== 'database_default' ? $destConnKey : null; // null uses laravel default DB connection
 
         // Create a log record
         $log = SyncLog::create([
@@ -48,6 +54,7 @@ class SyncService
             'odata_entity'       => $odataEntity,
             'table_name'         => $tableName,
             'type'               => $entity['type'] ?? 'master',
+            'source'             => $source,
             'status'             => 'running',
             'started_at'         => now(),
         ]);
@@ -55,19 +62,15 @@ class SyncService
         $startTime = microtime(true);
 
         try {
-            // 1. Login to Acumatica when OData is configured for session cookies
             Log::info("Sync [{$entityKey}]: Starting…");
-            if ($this->odataService->usesSessionAuth()) {
-                $this->odataService->login();
-            }
-
+            
             // --- BEGIN INCREMENTAL LOGIC ---
             $filter = '';
             $isIncremental = false;
             $lastModifiedCol = null;
 
-            if ($this->schemaManager->tableExists($tableName)) {
-                $columns = \Illuminate\Support\Facades\Schema::getColumnListing($tableName);
+            if ($this->schemaManager->tableExists($destConnection, $tableName)) {
+                $columns = \Illuminate\Support\Facades\Schema::connection($destConnection)->getColumnListing($tableName);
                 foreach ($columns as $col) {
                     if (strtolower($col) === 'lastmodifieddatetime') {
                         $lastModifiedCol = $col;
@@ -76,10 +79,9 @@ class SyncService
                 }
 
                 if ($lastModifiedCol) {
-                    $maxModifiedStr = DB::table($tableName)->max($lastModifiedCol);
+                    $maxModifiedStr = DB::connection($destConnection)->table($tableName)->max($lastModifiedCol);
                     if ($maxModifiedStr) {
                         try {
-                            // Preserve milliseconds to prevent continuously re-fetching the exact same last record
                             $isV4 = config('acumatica.odata_path', 'odatav4') === 'odatav4';
                             $dateStr = \Carbon\Carbon::parse($maxModifiedStr)->setTimezone('UTC')->format('Y-m-d\TH:i:s.v');
                             $odataDate = $isV4 ? "{$dateStr}Z" : "datetime'{$dateStr}'";
@@ -103,16 +105,12 @@ class SyncService
                 $val   = $cf['value'] ?? '';
                 
                 if ($field && $val !== '') {
-                    // Escape single quotes
                     $valSafe = str_replace("'", "''", $val);
-                    
-                    // Detect if the field is likely a Date/Time based on naming convention
                     $isDateField = stripos($field, 'date') !== false || stripos($field, 'time') !== false;
                     $parsedDateStr = null;
                     
                     if ($isDateField) {
                         try {
-                            // Try DD/MM/YYYY first since it's a common input format
                             if (preg_match('/^(\d{2})\/(\d{2})\/(\d{4})$/', $valSafe, $m)) {
                                 $date = \Carbon\Carbon::create($m[3], $m[2], $m[1], 0, 0, 0);
                             } else {
@@ -133,15 +131,11 @@ class SyncService
                     } elseif ($op === 'endswith') {
                         $customFilterStrings[] = "endswith({$field}, '{$valSafe}')";
                     } else {
-                        // eq, ne, gt, lt, ge, le
                         if ($parsedDateStr) {
-                            // OData DateTimeOffset literals DO NOT have quotes
                             $customFilterStrings[] = "{$field} {$op} {$parsedDateStr}";
                         } elseif (is_numeric($valSafe) || in_array(strtolower($valSafe), ['true', 'false'])) {
-                            // Numbers and booleans DO NOT have quotes
                             $customFilterStrings[] = "{$field} {$op} {$valSafe}";
                         } else {
-                            // Strings MUST have quotes
                             $customFilterStrings[] = "{$field} {$op} '{$valSafe}'";
                         }
                     }
@@ -152,13 +146,9 @@ class SyncService
             if (!empty($customFilterStrings)) {
                 $customCombined = implode(' and ', $customFilterStrings);
                 $finalFilters[] = "({$customCombined})";
-                
-                // If custom filters are used, we MUST treat this as an incremental/partial sync
-                // to avoid wiping the table if the user only syncs a subset.
                 $isIncremental = true;
                 Log::info("Sync [{$entityKey}]: Custom filters applied -> {$customCombined}. Auto-incremental filter is disabled to allow fetching historical data.");
             } else if ($filter) {
-                // Only apply the auto-incremental LastModifiedDateTime filter if NO custom filters are used
                 $finalFilters[] = "({$filter})";
             }
 
@@ -172,51 +162,117 @@ class SyncService
                 'status' => 'fetching'
             ], 3600);
 
-            // 2. Fetch records via OData and process them in chunks
-            Log::info("Sync [{$entityKey}]: Fetching data from {$odataEntity}…");
-            
             $fetchedCount = 0;
             $insertedCount = 0;
             $hasData = false;
             $totalRecordsCount = null;
 
-            $this->odataService->fetchAllRecords($odataEntity, $finalFilterString, 
-                function($current, $total) use ($progressKey, &$totalRecordsCount) {
-                    if ($total !== null) {
-                        $totalRecordsCount = $total;
-                    }
-                    \Illuminate\Support\Facades\Cache::put($progressKey, [
-                        'current' => $current,
-                        'total' => $totalRecordsCount,
-                        'status' => 'fetching'
-                    ], 3600);
-                },
-                function($recordsChunk) use (&$fetchedCount, &$insertedCount, &$hasData, &$totalRecordsCount, $tableName, $isIncremental, $customFilters, $progressKey) {
-                    $isFirstChunk = !$hasData;
-                    $hasData = true;
-                    
-                    $fetchedCount += count($recordsChunk);
-                    
-                    // 3. Ensure table exists (create from first record if needed)
-                    if ($isFirstChunk) {
-                        $this->schemaManager->ensureTable($tableName, $recordsChunk[0]);
-                    }
-
-                    // 4. Clean records (remove @odata.* metadata, sanitize column names)
-                    $cleanData = $this->schemaManager->cleanRecords($recordsChunk);
-
-                    // 5. Upsert existing data or Insert new data
-                    if ($isIncremental) {
-                        $inserted = $this->upsertTableData($tableName, $cleanData, $customFilters, $progressKey, $isFirstChunk, $insertedCount, $totalRecordsCount);
-                    } else {
-                        $inserted = $this->replaceTableData($tableName, $cleanData, $progressKey, $isFirstChunk, $insertedCount, $totalRecordsCount);
-                    }
-                    
-                    $insertedCount += $inserted;
+            $processChunkCallback = function($recordsChunk) use (&$fetchedCount, &$insertedCount, &$hasData, &$totalRecordsCount, $tableName, $isIncremental, $customFilters, $progressKey, $destConnection, $log) {
+                if (\Illuminate\Support\Facades\Cache::get('sync_abort_log_' . $log->id)) {
+                    throw new \Exception('Sync aborted manually by user.');
                 }
-            );
 
-            Log::info("Sync [{$entityKey}]: Fetched {$fetchedCount} records.");
+                $isFirstChunk = !$hasData;
+                $hasData = true;
+                
+                $fetchedCount += count($recordsChunk);
+                
+                if ($isFirstChunk) {
+                    $this->schemaManager->ensureTable($destConnection, $tableName, $recordsChunk[0]);
+                }
+                Log::debug("schemaManager class: " . get_class($this->schemaManager));
+                $cleanData = $this->schemaManager->cleanRecords($recordsChunk);
+
+                if ($isIncremental) {
+                    $inserted = $this->upsertTableData($destConnection, $tableName, $cleanData, $customFilters, $progressKey, $isFirstChunk, $insertedCount, $totalRecordsCount);
+                } else {
+                    $inserted = $this->replaceTableData($destConnection, $tableName, $cleanData, $progressKey, $isFirstChunk, $insertedCount, $totalRecordsCount);
+                }
+                
+                $insertedCount += $inserted;
+            };
+
+            $progressCallback = function($current, $total) use ($progressKey, &$totalRecordsCount) {
+                if ($total !== null) {
+                    $totalRecordsCount = $total;
+                }
+                \Illuminate\Support\Facades\Cache::put($progressKey, [
+                    'current' => $current,
+                    'total' => $totalRecordsCount,
+                    'status' => 'fetching'
+                ], 3600);
+            };
+
+            // FETCH DATA BASED ON SOURCE CONNECTION TYPE
+            if (($sourceConnection['type'] ?? 'odata') === 'odata') {
+                $this->odataService->setConnectionConfig($sourceConnection);
+
+                if ($this->odataService->usesSessionAuth()) {
+                    $this->odataService->login();
+                }
+                
+                $this->odataService->fetchAllRecords($odataEntity, $finalFilterString, $progressCallback, $processChunkCallback);
+                
+                if ($this->odataService->usesSessionAuth()) {
+                    $this->odataService->logout();
+                }
+                $this->odataService->resetPersistentHttp();
+            } else if (in_array($sourceConnection['type'], ['mysql', 'sqlsrv'])) {
+                // Relational DB Source
+                // Using Laravel's DB chunking
+                $query = DB::connection($sourceConnKey)->table($odataEntity);
+                
+                // Apply custom filters for DB sources
+                if (!empty($customFilters)) {
+                    $query->where(function ($q) use ($customFilters) {
+                        foreach ($customFilters as $cf) {
+                            $field = $cf['field'] ?? '';
+                            $op    = $cf['operator'] ?? 'eq';
+                            $val   = $cf['value'] ?? '';
+                            
+                            if ($field && $val !== '') {
+                                switch ($op) {
+                                    case 'eq': $q->where($field, '=', $val); break;
+                                    case 'ne': $q->where($field, '!=', $val); break;
+                                    case 'contains': $q->where($field, 'like', '%' . $val . '%'); break;
+                                    case 'startswith': $q->where($field, 'like', $val . '%'); break;
+                                    case 'endswith': $q->where($field, 'like', '%' . $val); break;
+                                    case 'gt': $q->where($field, '>', $val); break;
+                                    case 'ge': $q->where($field, '>=', $val); break;
+                                    case 'lt': $q->where($field, '<', $val); break;
+                                    case 'le': $q->where($field, '<=', $val); break;
+                                }
+                            }
+                        }
+                    });
+                }
+                
+                $totalRecordsCount = $query->count();
+                $progressCallback(0, $totalRecordsCount);
+                
+                $chunkSize = 1000;
+                // If there's no PK, chunk may fail, we'll use chunkById if 'id' exists, else basic get() chunks if possible
+                try {
+                    $query->chunkById($chunkSize, function($records) use ($processChunkCallback, &$fetchedCount, $progressCallback, $totalRecordsCount) {
+                        $arr = $records->map(fn($record) => (array) $record)->toArray();
+                        $processChunkCallback($arr);
+                        $progressCallback($fetchedCount, $totalRecordsCount);
+                    });
+                } catch (\Exception $e) {
+                    // Fallback if no 'id' column. chunk() requires an orderBy clause
+                    $firstRow = DB::connection($sourceConnKey)->table($odataEntity)->first();
+                    $firstCol = $firstRow ? array_key_first((array)$firstRow) : null;
+                    if ($firstCol) {
+                        $query->orderBy($firstCol);
+                    }
+                    
+                    $query->chunk($chunkSize, function($records) use ($processChunkCallback, &$fetchedCount, $progressCallback, $totalRecordsCount) {
+                        $arr = $records->map(fn($record) => (array) $record)->toArray();
+                        $processChunkCallback($arr);
+                        $progressCallback($fetchedCount, $totalRecordsCount);
+                    });
+                }
+            }
 
             if ($fetchedCount === 0) {
                 $log->update([
@@ -226,14 +282,9 @@ class SyncService
                     'duration_seconds' => round(microtime(true) - $startTime, 2),
                     'completed_at'     => now(),
                 ]);
-
-                if ($this->odataService->usesSessionAuth()) {
-                    $this->odataService->logout();
-                }
                 return $log;
             }
 
-            // 6. Update log
             $log->update([
                 'status'           => 'success',
                 'records_fetched'  => $fetchedCount,
@@ -242,16 +293,10 @@ class SyncService
                 'completed_at'     => now(),
             ]);
 
+            \Illuminate\Support\Facades\Cache::forget("entity_fields_{$entityKey}");
+
             Log::info("Sync [{$entityKey}]: Completed — {$insertedCount} records inserted in {$log->duration_seconds}s.");
-
-            // 7. Logout and cleanup
-            if ($this->odataService->usesSessionAuth()) {
-                $this->odataService->logout();
-            }
-            $this->odataService->resetPersistentHttp();
-
             \Illuminate\Support\Facades\Cache::forget($progressKey);
-
             return $log;
 
         } catch (\Throwable $e) {
@@ -262,18 +307,10 @@ class SyncService
 
             $log->update([
                 'status'           => 'failed',
-                'error_message'    => mb_substr($e->getMessage(), 0, 2000),
+                'error_message'    => mb_substr($e->getMessage(), 0, 15000),
                 'duration_seconds' => round(microtime(true) - $startTime, 2),
                 'completed_at'     => now(),
             ]);
-
-            try {
-                if ($this->odataService->usesSessionAuth()) {
-                    $this->odataService->logout();
-                }
-                $this->odataService->resetPersistentHttp();
-            } catch (\Throwable $ignored) {
-            }
 
             if (isset($progressKey)) {
                 \Illuminate\Support\Facades\Cache::forget($progressKey);
@@ -283,88 +320,36 @@ class SyncService
         }
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Sync All Entities
-    |--------------------------------------------------------------------------
-    */
-
-    /**
-     * Sync all configured entities. Master data first, then transactions.
-     *
-     * @return array<string, SyncLog>
-     */
     public function syncAll(): array
     {
         $entities = config('acumatica.entities', []);
         $results  = [];
-
-        // Sort: master first, then transaction
-        $sorted = collect($entities)->sortBy(fn ($e) => $e['type'] === 'master' ? 0 : 1);
-
+        $sorted = collect($entities)->sortBy(fn ($e) => ($e['type'] ?? '') === 'master' ? 0 : 1);
         foreach ($sorted as $key => $entity) {
             $results[$key] = $this->syncEntity($key);
         }
-
         return $results;
     }
 
-    /**
-     * Sync only master data entities.
-     */
-    public function syncMaster(): array
-    {
-        return $this->syncByType('master');
-    }
-
-    /**
-     * Sync only transaction entities.
-     */
-    public function syncTransactions(): array
-    {
-        return $this->syncByType('transaction');
-    }
-
-    private function syncByType(string $type): array
-    {
-        $entities = config('acumatica.entities', []);
-        $results  = [];
-
-        foreach ($entities as $key => $entity) {
-            if (($entity['type'] ?? '') === $type) {
-                $results[$key] = $this->syncEntity($key);
-            }
-        }
-
-        return $results;
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Data Insertion
-    |--------------------------------------------------------------------------
-    */
-
-    /**
-     * Replace data in a table for a chunk. If it's the first chunk, truncate existing rows first.
-     */
-    private function replaceTableData(string $tableName, array $cleanData, ?string $progressKey = null, bool $isFirstChunk = false, int $baseInserted = 0, ?int $totalRecordsCount = null): int
+    private function replaceTableData(?string $destConnection, string $tableName, array $cleanData, ?string $progressKey = null, bool $isFirstChunk = false, int $baseInserted = 0, ?int $totalRecordsCount = null): int
     {
         $inserted = 0;
-        
-        DB::transaction(function () use ($tableName, $cleanData, &$inserted, $progressKey, $isFirstChunk, $baseInserted, $totalRecordsCount) {
-            // Delete all existing rows ONLY on the first chunk
+        DB::connection($destConnection)->transaction(function () use ($destConnection, $tableName, $cleanData, &$inserted, $progressKey, $isFirstChunk, $baseInserted, $totalRecordsCount) {
             if ($isFirstChunk) {
-                DB::table($tableName)->delete();
+                DB::connection($destConnection)->table($tableName)->delete();
             }
 
-            // MySQL supports up to 65,535 placeholders per statement.
+            $driver = DB::connection($destConnection)->getDriverName();
+            $maxParams = $driver === 'sqlsrv' ? 2000 : 60000;
             $columnCount = max(count($cleanData[0] ?? []), 1);
-            $chunkSize = max(intdiv(60000, $columnCount), 1);
+            $chunkSize = max(intdiv($maxParams, $columnCount), 1);
             $chunks = array_chunk($cleanData, $chunkSize);
 
             foreach ($chunks as $chunk) {
-                DB::table($tableName)->insert($chunk);
+                if (isset($chunk[0]['tstamp'])) {
+                    Log::debug('replaceTableData tstamp dump:', ['value' => $chunk[0]['tstamp'], 'type' => gettype($chunk[0]['tstamp'])]);
+                }
+                DB::connection($destConnection)->table($tableName)->insert($chunk);
                 $inserted += count($chunk);
                 
                 if ($progressKey) {
@@ -375,40 +360,34 @@ class SyncService
                     ], 3600);
                 }
             }
-        });
-
+        }, 5);
         return $inserted;
     }
 
-    /**
-     * Upsert data in a table for a chunk.
-     * For entities without id/NoteID, uses filter-scope delete (only on first chunk) or _row_hash dedup.
-     */
-    private function upsertTableData(string $tableName, array $cleanData, array $customFilters = [], ?string $progressKey = null, bool $isFirstChunk = false, int $baseInserted = 0, ?int $totalRecordsCount = null): int
+    private function upsertTableData(?string $destConnection, string $tableName, array $cleanData, array $customFilters = [], ?string $progressKey = null, bool $isFirstChunk = false, int $baseInserted = 0, ?int $totalRecordsCount = null): int
     {
         $insertedOrUpdated = 0;
 
-        DB::transaction(function () use ($tableName, $cleanData, &$insertedOrUpdated, $customFilters, $progressKey, $isFirstChunk, $baseInserted, $totalRecordsCount) {
+        DB::connection($destConnection)->transaction(function () use ($destConnection, $tableName, $cleanData, &$insertedOrUpdated, $customFilters, $progressKey, $isFirstChunk, $baseInserted, $totalRecordsCount) {
             $hasId = isset($cleanData[0]['id']);
-            $hasNoteId = isset($cleanData[0]['NoteID']);
 
-            if ($hasId || $hasNoteId) {
-                // --- Strategy A: Bulk Upsert using id or NoteID ---
-                $uniqueKey = $hasId ? 'id' : 'NoteID';
-
-                // Get list of columns to update (all except the unique key and _sync_id)
+            if ($hasId) {
+                $uniqueKey = 'id';
                 $columnsToUpdate = array_keys($cleanData[0]);
                 $columnsToUpdate = array_values(array_diff($columnsToUpdate, [$uniqueKey, '_sync_id']));
 
-                // Chunk the cleanData for upsert (prevent max placeholders error in MySQL)
-                // MySQL limit is 65,535 placeholders. If we have 100 columns, max chunk is ~650.
+                $driver = DB::connection($destConnection)->getDriverName();
+                $maxParams = $driver === 'sqlsrv' ? 2000 : 60000;
                 $columnCount = max(count($cleanData[0] ?? []), 1);
-                $chunkSize = max(intdiv(60000, $columnCount), 1);
+                $chunkSize = max(intdiv($maxParams, $columnCount), 1);
                 
                 $chunks = array_chunk($cleanData, $chunkSize);
 
                 foreach ($chunks as $chunk) {
-                    DB::table($tableName)->upsert($chunk, [$uniqueKey], $columnsToUpdate);
+                    if (isset($chunk[0]['tstamp'])) {
+                        Log::debug('upsertTableData tstamp dump:', ['value' => $chunk[0]['tstamp'], 'type' => gettype($chunk[0]['tstamp'])]);
+                    }
+                    DB::connection($destConnection)->table($tableName)->upsert($chunk, [$uniqueKey], $columnsToUpdate);
                     $insertedOrUpdated += count($chunk);
                     
                     if ($progressKey) {
@@ -420,59 +399,54 @@ class SyncService
                     }
                 }
             } else {
-                // --- Strategy B: No unique key (e.g. SQL View entities) ---
                 if (!empty($customFilters)) {
-                    // Only delete existing rows within scope on the FIRST chunk,
-                    // otherwise subsequent chunks will delete rows inserted by previous chunks!
                     if ($isFirstChunk) {
-                        $deletedCount = $this->deleteByFilterScope($tableName, $customFilters);
+                        $deletedCount = $this->deleteByFilterScope($destConnection, $tableName, $customFilters);
                         Log::info("Sync: Deleted {$deletedCount} existing rows from [{$tableName}] within filter scope before re-insert.");
                     }
                 } else {
-                    // No custom filters — delete rows with matching _row_hash
-                    // to prevent exact-duplicate inserts within this chunk.
-                    $hashes = array_filter(array_column($cleanData, '_row_hash'));
-                    if (!empty($hashes)) {
-                        foreach (array_chunk($hashes, 500) as $hashChunk) {
-                            DB::table($tableName)->whereIn('_row_hash', $hashChunk)->delete();
+                    $noteIds = [];
+                    if (isset($cleanData[0]['NoteID'])) {
+                        $noteIds = array_filter(array_column($cleanData, 'NoteID'));
+                        $noteIdCol = 'NoteID';
+                    } elseif (isset($cleanData[0]['noteid'])) {
+                        $noteIds = array_filter(array_column($cleanData, 'noteid'));
+                        $noteIdCol = 'noteid';
+                    }
+
+                    if (!empty($noteIds)) {
+                        foreach (array_chunk(array_unique($noteIds), 500) as $chunk) {
+                            DB::connection($destConnection)->table($tableName)->whereIn($noteIdCol, $chunk)->delete();
+                        }
+                    } else {
+                        $hashes = array_filter(array_column($cleanData, '_row_hash'));
+                        if (!empty($hashes)) {
+                            foreach (array_chunk($hashes, 500) as $hashChunk) {
+                                DB::connection($destConnection)->table($tableName)->whereIn('_row_hash', $hashChunk)->delete();
+                            }
                         }
                     }
                 }
 
-                // Bulk insert the fresh data
-                $insertedOrUpdated = $this->bulkInsertData($tableName, $cleanData, $progressKey, $baseInserted);
+                $insertedOrUpdated = $this->bulkInsertData($destConnection, $tableName, $cleanData, $progressKey, $baseInserted);
             }
-        });
+        }, 5);
 
         return $insertedOrUpdated;
     }
 
-    /**
-     * Delete rows from a local table that match the given OData-style custom filters.
-     * Maps OData operators to SQL WHERE conditions.
-     */
-    private function deleteByFilterScope(string $tableName, array $customFilters): int
+    private function deleteByFilterScope(?string $destConnection, string $tableName, array $customFilters): int
     {
-        $query = DB::table($tableName);
+        $query = DB::connection($destConnection)->table($tableName);
         $hasCondition = false;
-
-        $operatorMap = [
-            'eq' => '=',
-            'ne' => '!=',
-            'gt' => '>',
-            'lt' => '<',
-            'ge' => '>=',
-            'le' => '<=',
-        ];
+        $operatorMap = ['eq' => '=', 'ne' => '!=', 'gt' => '>', 'lt' => '<', 'ge' => '>=', 'le' => '<='];
 
         foreach ($customFilters as $cf) {
             $field = $cf['field'] ?? '';
             $op    = $cf['operator'] ?? 'eq';
             $val   = $cf['value'] ?? '';
 
-            if (!$field || $val === '') {
-                continue;
-            }
+            if (!$field || $val === '') continue;
 
             $colName = $this->schemaManager->sanitizeColumnName($field);
 
@@ -490,27 +464,22 @@ class SyncService
             $hasCondition = true;
         }
 
-        if (!$hasCondition) {
-            return 0;
-        }
-
+        if (!$hasCondition) return 0;
         return $query->delete();
     }
 
-    /**
-     * Bulk insert data into a table, respecting the SQL parameter limit.
-     */
-    private function bulkInsertData(string $tableName, array $cleanData, ?string $progressKey = null, int $baseInserted = 0): int
+    private function bulkInsertData(?string $destConnection, string $tableName, array $cleanData, ?string $progressKey = null, int $baseInserted = 0): int
     {
         $inserted = 0;
+        $driver = DB::connection($destConnection)->getDriverName();
+        $maxParams = $driver === 'sqlsrv' ? 2000 : 60000;
         $columnCount = max(count($cleanData[0] ?? []), 1);
-        $chunkSize = max(intdiv(60000, $columnCount), 1);
+        $chunkSize = max(intdiv($maxParams, $columnCount), 1);
         $chunks = array_chunk($cleanData, $chunkSize);
 
         foreach ($chunks as $chunk) {
-            DB::table($tableName)->insert($chunk);
+            DB::connection($destConnection)->table($tableName)->insert($chunk);
             $inserted += count($chunk);
-            
             if ($progressKey) {
                 \Illuminate\Support\Facades\Cache::put($progressKey, [
                     'current' => $baseInserted + $inserted,
@@ -519,19 +488,9 @@ class SyncService
                 ], 3600);
             }
         }
-
         return $inserted;
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Statistics
-    |--------------------------------------------------------------------------
-    */
-
-    /**
-     * Get summary statistics for the dashboard.
-     */
     public function getDashboardStats(): array
     {
         $entities = config('acumatica.entities', []);
@@ -540,7 +499,10 @@ class SyncService
         $hasLogsTable = \Illuminate\Support\Facades\Schema::hasTable('sync_logs');
 
         foreach ($entities as $key => $entity) {
-            $count = $this->schemaManager->getRowCount($entity['table']);
+            $destConnKey = $entity['destination_connection'] ?? 'database_default';
+            $destConnection = $destConnKey !== 'database_default' ? $destConnKey : null;
+
+            $count = $this->schemaManager->getRowCount($destConnection, $entity['table']);
             $totalRecords += $count;
 
             $lastSync = null;
@@ -557,7 +519,7 @@ class SyncService
                 'type'        => $entity['type'],
                 'records'     => $count,
                 'last_sync'   => $lastSync,
-                'table_exists' => $this->schemaManager->tableExists($entity['table']),
+                'table_exists' => $this->schemaManager->tableExists($destConnection, $entity['table']),
             ];
         }
 
