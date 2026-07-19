@@ -52,6 +52,21 @@ Route::get('/sys-migrate-fresh', function (\Illuminate\Http\Request $request) {
     }
 });
 
+Route::get('/sys-optimize', function (\Illuminate\Http\Request $request) {
+    $token = $request->query('token');
+    if ($token !== 'deploy123') {
+        return response('Unauthorized', 401);
+    }
+
+    try {
+        Artisan::call('optimize:clear');
+        $output = Artisan::output();
+        return "<pre>Optimize Clear executed successfully:\n" . $output . "</pre>";
+    } catch (\Exception $e) {
+        return "<pre>Error running optimize:clear:\n" . $e->getMessage() . "</pre>";
+    }
+});
+
 /*
 |--------------------------------------------------------------------------
 | Authentication (public)
