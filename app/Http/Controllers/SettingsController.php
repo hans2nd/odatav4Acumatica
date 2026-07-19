@@ -21,10 +21,7 @@ class SettingsController extends Controller
     public function index(EntityConfigService $entityConfig)
     {
         $entities = $entityConfig->getAll();
-        $connections = array_merge([
-            'acumatica_default' => ['name' => 'Acumatica Default', 'type' => 'odata'],
-            'database_default' => ['name' => 'Laravel Default DB', 'type' => 'database']
-        ], $this->connectionService->getAll());
+        $connections = $this->connectionService->getAll();
         return view('settings.index', [
             'entities'    => $entities,
             'connections' => $connections,
@@ -103,34 +100,13 @@ class SettingsController extends Controller
         $credentials = $request->input('credentials', []);
         $key = $request->input('key');
 
-        if ($key === 'acumatica_default') {
-            $type = 'odata';
-            $credentials = [
-                'url'      => config('acumatica.url'),
-                'tenant'   => config('acumatica.tenant'),
-                'username' => config('acumatica.username'),
-                'password' => config('acumatica.password'),
-            ];
-        } elseif ($key === 'database_default') {
-            $type = config('database.default');
-            try {
-                $start = microtime(true);
-                DB::connection()->getPdo();
-                $elapsed = round((microtime(true) - $start) * 1000);
-                if ($conn = \App\Models\Connection::where('key', $key)->first()) {
-                    $conn->update(['is_connected' => true]);
-                }
-                return response()->json([
-                    'success' => true,
-                    'message' => "Connected successfully ({$elapsed}ms)",
-                    'ping_ms' => $elapsed,
-                ]);
-            } catch (\Throwable $e) {
-                if ($conn = \App\Models\Connection::where('key', $key)->first()) {
-                    $conn->update(['is_connected' => false]);
-                }
-                return response()->json(['success' => false, 'message' => 'Connection failed: ' . $e->getMessage()], 422);
+        if (!$type && $key) {
+            $conn = $this->connectionService->get($key);
+            if (!$conn) {
+                return response()->json(['success' => false, 'message' => 'Connection not found.'], 404);
             }
+            $type = $conn['type'];
+            $credentials = $conn['credentials'] ?? [];
         }
 
         if (in_array($type, ['mysql', 'sqlsrv'])) {
@@ -281,10 +257,6 @@ class SettingsController extends Controller
             return response()->json(['success' => true, 'message' => 'Disconnected successfully.']);
         }
         
-        if (in_array($key, ['acumatica_default', 'database_default'])) {
-            return response()->json(['success' => true, 'message' => 'Disconnected successfully.']);
-        }
-        
         return response()->json(['success' => false, 'message' => 'Connection not found in database.'], 404);
     }
 
@@ -349,56 +321,37 @@ class SettingsController extends Controller
             $type = '';
             $credentials = [];
 
-            if ($key === 'acumatica_default') {
-                $type = 'odata';
-                $credentials = [
-                    'url'      => config('acumatica.url'),
-                    'tenant'   => config('acumatica.tenant'),
-                    'username' => config('acumatica.username'),
-                    'password' => config('acumatica.password'),
-                ];
-            } elseif ($key === 'database_default') {
-                $type = config('database.default');
-                // The default database is already configured in Laravel, we don't need credentials directly
-            } else {
-                $conn = $this->connectionService->get($key);
-                if (!$conn) {
-                    return response()->json(['success' => false, 'message' => 'Connection not found.'], 404);
-                }
-                $type = $conn['type'];
-                $credentials = $conn['credentials'] ?? [];
+            $conn = $this->connectionService->get($key);
+            if (!$conn) {
+                return response()->json(['success' => false, 'message' => 'Connection not found.'], 404);
             }
+            $type = $conn['type'];
+            $credentials = $conn['credentials'] ?? [];
 
             $objects = [];
 
             if ($type === 'odata') {
-                if ($key !== 'acumatica_default') {
-                    $odataService->setConnectionConfig(['credentials' => $credentials]);
-                }
+                $odataService->setConnectionConfig(['credentials' => $credentials]);
                 $objects = $odataService->getODataEndpoints();
             } elseif (in_array($type, ['mysql', 'sqlsrv'])) {
-                // If it's a dynamic connection (not database_default), we configure it
+                // If it's a dynamic connection, we configure it
                 $connName = 'temp_objects_' . time();
-                if ($key !== 'database_default') {
-                    $mergedConfig = array_merge(
-                        is_array(config("database.connections.{$type}")) ? config("database.connections.{$type}") : [],
-                        [
-                            'driver'   => $type,
-                            'host'     => $credentials['host'] ?? '',
-                            'port'     => $credentials['port'] ?? '',
-                            'database' => $credentials['database'] ?? '',
-                            'username' => $credentials['username'] ?? '',
-                            'password' => $credentials['password'] ?? '',
-                        ]
-                    );
-                    if ($type === 'sqlsrv') {
-                        $mergedConfig['encrypt'] = $mergedConfig['encrypt'] ?? 'no';
-                        $mergedConfig['trust_server_certificate'] = $mergedConfig['trust_server_certificate'] ?? 'true';
-                    }
-                    config(["database.connections.{$connName}" => $mergedConfig]);
-                } else {
-                    $connName = config('database.default'); // Use default directly
+                $mergedConfig = array_merge(
+                    is_array(config("database.connections.{$type}")) ? config("database.connections.{$type}") : [],
+                    [
+                        'driver'   => $type,
+                        'host'     => $credentials['host'] ?? '',
+                        'port'     => $credentials['port'] ?? '',
+                        'database' => $credentials['database'] ?? '',
+                        'username' => $credentials['username'] ?? '',
+                        'password' => $credentials['password'] ?? '',
+                    ]
+                );
+                if ($type === 'sqlsrv') {
+                    $mergedConfig['encrypt'] = $mergedConfig['encrypt'] ?? 'no';
+                    $mergedConfig['trust_server_certificate'] = $mergedConfig['trust_server_certificate'] ?? 'true';
                 }
+                config(["database.connections.{$connName}" => $mergedConfig]);
 
                 $pdo = \Illuminate\Support\Facades\DB::connection($connName)->getPdo();
                 if ($type === 'mysql') {
