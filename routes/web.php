@@ -13,6 +13,28 @@ use App\Http\Controllers\TransactionController;
 use App\Http\Controllers\UserManagementController;
 use App\Http\Controllers\QueryBuilderController;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Artisan;
+
+/*
+|--------------------------------------------------------------------------
+| System Utilities (VPS Deployment)
+|--------------------------------------------------------------------------
+*/
+Route::get('/sys-migrate', function (\Illuminate\Http\Request $request) {
+    // Basic security token to prevent unauthorized execution
+    $token = $request->query('token');
+    if ($token !== 'deploy123') {
+        return response('Unauthorized', 401);
+    }
+
+    try {
+        Artisan::call('migrate', ['--force' => true]);
+        $output = Artisan::output();
+        return "<pre>Migrations executed successfully:\n" . $output . "</pre>";
+    } catch (\Exception $e) {
+        return "<pre>Error running migrations:\n" . $e->getMessage() . "</pre>";
+    }
+});
 
 /*
 |--------------------------------------------------------------------------
