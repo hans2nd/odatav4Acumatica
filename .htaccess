@@ -1,0 +1,12 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Arahkan semua request ke folder public/
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>
+
+# Blokir akses ke file sensitif (seperti .env)
+<FilesMatch "^\.">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
