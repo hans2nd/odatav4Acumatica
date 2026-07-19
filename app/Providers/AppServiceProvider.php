@@ -26,7 +26,6 @@ class AppServiceProvider extends ServiceProvider
             }
 
             $connectionService = app(\App\Services\ConnectionService::class);
-            $connectionService->ensureDefaults();
             $connections = $connectionService->getAll();
             
             foreach ($connections as $key => $conn) {
