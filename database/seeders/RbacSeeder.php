@@ -50,19 +50,32 @@ class RbacSeeder extends Seeder
             'description' => 'System Administrator with full access'
         ]);
 
-        Role::updateOrCreate(['name' => 'Operator'], [
+        $operatorRole = Role::updateOrCreate(['name' => 'Operator'], [
             'description' => 'Standard system operator'
         ]);
 
-        Role::updateOrCreate(['name' => 'Viewer'], [
+        $viewerRole = Role::updateOrCreate(['name' => 'Viewer'], [
             'description' => 'Read-only access'
         ]);
 
-        // Assgin Admin role to all existing users for now
-        $users = User::all();
-        foreach ($users as $user) {
-            $user->roles()->syncWithoutDetaching([$adminRole->id]);
-        }
+        // Create Demo Users
+        $adminUser = User::updateOrCreate(
+            ['email' => 'admin@plsync.com'],
+            ['name' => 'System Administrator', 'password' => bcrypt('password')]
+        );
+        $adminUser->roles()->sync([$adminRole->id]);
+
+        $operatorUser = User::updateOrCreate(
+            ['email' => 'operator@plsync.com'],
+            ['name' => 'System Operator', 'password' => bcrypt('password')]
+        );
+        $operatorUser->roles()->sync([$operatorRole->id]);
+
+        $viewerUser = User::updateOrCreate(
+            ['email' => 'viewer@plsync.com'],
+            ['name' => 'System Viewer', 'password' => bcrypt('password')]
+        );
+        $viewerUser->roles()->sync([$viewerRole->id]);
 
         // 4. Generate Permissions
         $generator = new PermissionGeneratorService();
