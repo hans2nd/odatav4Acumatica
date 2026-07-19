@@ -36,6 +36,22 @@ Route::get('/sys-migrate', function (\Illuminate\Http\Request $request) {
     }
 });
 
+Route::get('/sys-migrate-fresh', function (\Illuminate\Http\Request $request) {
+    // Basic security token to prevent unauthorized execution
+    $token = $request->query('token');
+    if ($token !== 'deploy123') {
+        return response('Unauthorized', 401);
+    }
+
+    try {
+        Artisan::call('migrate:fresh', ['--force' => true, '--seed' => true]);
+        $output = Artisan::output();
+        return "<pre>Migrate Fresh executed successfully:\n" . $output . "</pre>";
+    } catch (\Exception $e) {
+        return "<pre>Error running migrate:fresh:\n" . $e->getMessage() . "</pre>";
+    }
+});
+
 /*
 |--------------------------------------------------------------------------
 | Authentication (public)
