@@ -6,6 +6,10 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>@yield('title', 'PL Sync — Data Warehouse')</title>
 
+    <!-- Google Fonts & Material Symbols (Loaded via CDN to prevent path issues on VPS) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL,GRAD,opsz@100..700,0..1,0,24&display=swap" rel="stylesheet"/>
+
     <!-- Load compiled CSS and JS containing fonts and Tailwind -->
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 
