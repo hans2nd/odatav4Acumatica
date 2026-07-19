@@ -29,7 +29,16 @@
     @endif
 
     <div class="bg-white rounded-2xl border border-surface-200 shadow-sm p-6">
-        <form action="{{ route('endpoint.api.store') }}" method="POST" class="space-y-5" onsubmit="return onFormSubmit()">
+        @if(empty($dbConnections))
+            <div class="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 flex items-start gap-3">
+                <span class="material-symbols-outlined shrink-0">warning</span>
+                <div>
+                    <p class="font-medium text-label-md">No connected database available.</p>
+                    <p class="text-body-sm mt-1">You need to connect to at least one database in <a href="{{ route('settings.index') }}" class="underline font-semibold text-amber-800 hover:text-amber-900">Settings &gt; Connection Management</a> before creating an endpoint.</p>
+                </div>
+            </div>
+        @else
+            <form action="{{ route('endpoint.api.store') }}" method="POST" class="space-y-5" onsubmit="return onFormSubmit()">
             @csrf
             
             <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -129,6 +138,7 @@
                 </button>
             </div>
         </form>
+        @endif
     </div>
 </div>
 

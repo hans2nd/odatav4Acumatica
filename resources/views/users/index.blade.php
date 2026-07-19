@@ -42,8 +42,8 @@
                     <td class="px-5 py-4">
                         @foreach($u->roles as $r)
                         <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-label-sm font-semibold
-                            {{ $r->is_superadmin ? 'bg-red-50 text-red-700' : ($r->name === 'operator' ? 'bg-sky-50 text-sky-700' : 'bg-emerald-50 text-emerald-700') }}">
-                            {{ $r->display_name }}
+                            {{ $r->name === 'Administrator' ? 'bg-red-50 text-red-700' : ($r->name === 'Operator' ? 'bg-sky-50 text-sky-700' : 'bg-emerald-50 text-emerald-700') }}">
+                            {{ $r->name }}
                         </span>
                         @endforeach
                     </td>
@@ -77,31 +77,30 @@
         </button>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        @foreach($roles as $role)
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5"        @foreach($roles as $role)
         <div class="bg-white rounded-2xl border border-surface-200/60 p-5 hover:shadow-card-hover transition-all duration-300 animate-fade-up shadow-card group">
             <div class="flex items-center justify-between mb-3">
                 <div class="flex items-center gap-2.5">
-                    <div class="p-2 {{ $role->is_superadmin ? 'bg-gradient-to-br from-red-50 to-red-100' : 'bg-gradient-to-br from-brand-50 to-brand-100' }} rounded-xl">
-                        <span class="material-symbols-outlined {{ $role->is_superadmin ? 'text-red-600' : 'text-brand-600' }} text-[20px]" style="font-variation-settings: 'FILL' 1;">
-                            {{ $role->is_superadmin ? 'shield_person' : 'group' }}
+                    <div class="p-2 {{ $role->name === 'Administrator' ? 'bg-gradient-to-br from-red-50 to-red-100' : 'bg-gradient-to-br from-brand-50 to-brand-100' }} rounded-xl">
+                        <span class="material-symbols-outlined {{ $role->name === 'Administrator' ? 'text-red-600' : 'text-brand-600' }} text-[20px]" style="font-variation-settings: 'FILL' 1;">
+                            {{ $role->name === 'Administrator' ? 'shield_person' : 'group' }}
                         </span>
                     </div>
-                    <h3 class="font-semibold text-surface-800">{{ $role->display_name }}</h3>
+                    <h3 class="font-semibold text-surface-800">{{ $role->name }}</h3>
                 </div>
-                @if($role->is_superadmin)
+                @if($role->name === 'Administrator')
                     <span class="text-label-sm bg-red-50 text-red-700 px-2.5 py-1 rounded-lg font-semibold">Super</span>
                 @endif
             </div>
             <p class="text-body-sm text-surface-500 mb-4">{{ $role->description ?? 'No description' }}</p>
             <div class="flex items-center justify-between text-label-sm text-surface-400 pt-3 border-t border-surface-100">
-                <span>{{ $role->users_count }} user(s) · {{ $role->is_superadmin ? 'All' : $role->permissions_count }} permissions</span>
+                <span>{{ $role->users_count }} user(s) &bull; {{ $role->name === 'Administrator' ? 'All' : $role->permissions_count }} permissions</span>
                 <div class="flex gap-1">
-                    <button onclick="openRolePermissionsModal({{ $role->id }}, '{{ $role->display_name }}', {{ $role->is_superadmin ? 'true' : 'false' }})" class="p-1.5 rounded-lg hover:bg-surface-100 text-surface-400 hover:text-surface-700 transition-all duration-200" title="Edit Permissions">
+                    <button onclick="openRolePermissionsModal({{ $role->id }}, '{{ $role->name }}', {{ $role->name === 'Administrator' ? 'true' : 'false' }})" class="p-1.5 rounded-lg hover:bg-surface-100 text-surface-400 hover:text-surface-700 transition-all duration-200" title="Edit Permissions">
                         <span class="material-symbols-outlined text-[16px]">tune</span>
                     </button>
-                    @if(!$role->is_superadmin && $role->users_count === 0)
-                    <button onclick="deleteRole({{ $role->id }}, '{{ $role->display_name }}')" class="p-1.5 rounded-lg hover:bg-red-50 text-surface-400 hover:text-red-600 transition-all duration-200" title="Delete">
+                    @if($role->name !== 'Administrator' && $role->users_count === 0)
+                    <button onclick="deleteRole({{ $role->id }}, '{{ $role->name }}')" class="p-1.5 rounded-lg hover:bg-red-50 text-surface-400 hover:text-red-600 transition-all duration-200" title="Delete">
                         <span class="material-symbols-outlined text-[16px]">delete</span>
                     </button>
                     @endif
@@ -139,7 +138,7 @@
                         <label class="text-label-md text-surface-600 block mb-1.5">Role</label>
                         <select id="user-role" required class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all duration-200">
                             @foreach($roles as $role)
-                            <option value="{{ $role->id }}">{{ $role->display_name }}</option>
+                            <option value="{{ $role->id }}">{{ $role->name }}</option>
                             @endforeach
                         </select>
                     </div>
@@ -206,12 +205,8 @@
             <form onsubmit="submitCreateRole(event)">
                 <div class="p-5 space-y-4">
                     <div>
-                        <label class="text-label-md text-surface-600 block mb-1.5">Name (lowercase, no spaces)</label>
-                        <input type="text" id="role-name" required pattern="^[a-z][a-z0-9_]*$" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all duration-200">
-                    </div>
-                    <div>
-                        <label class="text-label-md text-surface-600 block mb-1.5">Display Name</label>
-                        <input type="text" id="role-display-name" required class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all duration-200">
+                        <label class="text-label-md text-surface-600 block mb-1.5">Role Name</label>
+                        <input type="text" id="role-name" required class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all duration-200">
                     </div>
                     <div>
                         <label class="text-label-md text-surface-600 block mb-1.5">Description</label>
@@ -326,7 +321,7 @@
 
     async function openRolePermissionsModal(roleId, roleName, isSuperadmin) {
         currentPermRoleId = roleId;
-        document.getElementById('perm-modal-title').textContent = `Permissions — ${roleName}`;
+        document.getElementById('perm-modal-title').textContent = `Permissions - ${roleName}`;
         document.getElementById('perm-save-btn').style.display = isSuperadmin ? 'none' : '';
 
         if (isSuperadmin) {
@@ -348,16 +343,20 @@
             const assignedIds = roleData.permissions.map(p => p.id);
 
             let html = '';
-            for (const [group, perms] of Object.entries(permData.permissions)) {
-                html += `<div class="mb-4"><h4 class="text-label-md text-surface-500 uppercase tracking-wider mb-2 border-b border-surface-100 pb-2 font-semibold">${group}</h4><div class="grid grid-cols-1 md:grid-cols-2 gap-1">`;
-                for (const p of perms) {
-                    const checked = assignedIds.includes(p.id) ? 'checked' : '';
-                    html += `<label class="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-surface-50 cursor-pointer transition-colors">
-                        <input type="checkbox" class="perm-checkbox rounded border-surface-300 text-brand-600 focus:ring-brand-500/20" value="${p.id}" ${checked}>
-                        <span class="text-body-sm text-surface-700">${p.display_name}</span>
-                    </label>`;
+            for (const module of permData.modules) {
+                html += `<div class="mb-4"><h4 class="text-label-md text-surface-500 uppercase tracking-wider mb-2 border-b border-surface-100 pb-2 font-semibold">${module.name}</h4>`;
+                for (const resource of module.resources) {
+                    html += `<div class="mb-2 pl-2"><h5 class="text-body-sm font-semibold text-surface-700 mb-1">${resource.name}</h5><div class="grid grid-cols-1 md:grid-cols-3 gap-1">`;
+                    for (const p of resource.permissions) {
+                        const checked = assignedIds.includes(p.id) ? 'checked' : '';
+                        html += `<label class="flex items-center gap-2.5 px-3 py-1.5 rounded-lg hover:bg-surface-50 cursor-pointer transition-colors">
+                            <input type="checkbox" class="perm-checkbox rounded border-surface-300 text-brand-600 focus:ring-brand-500/20" value="${p.id}" ${checked}>
+                            <span class="text-body-sm text-surface-600">${p.action.name}</span>
+                        </label>`;
+                    }
+                    html += `</div></div>`;
                 }
-                html += '</div></div>';
+                html += `</div>`;
             }
             document.getElementById('perm-content').innerHTML = html;
         } catch (err) {
@@ -387,7 +386,6 @@
                 method: 'POST', headers: { 'X-CSRF-TOKEN': csrfToken, 'Content-Type': 'application/json', 'Accept': 'application/json' },
                 body: JSON.stringify({
                     name: document.getElementById('role-name').value,
-                    display_name: document.getElementById('role-display-name').value,
                     description: document.getElementById('role-description').value,
                 }),
             });

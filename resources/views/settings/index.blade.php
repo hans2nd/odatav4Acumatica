@@ -47,17 +47,31 @@
                                     </span>
                                 </td>
                                 <td class="py-3 px-5">
-                                    <span id="status-{{ $key }}" class="text-label-sm text-surface-400 font-medium flex items-center gap-1.5">
-                                        <span class="w-1.5 h-1.5 rounded-full bg-surface-300"></span> Unchecked
-                                    </span>
+                                    @if(isset($c['is_connected']) && $c['is_connected'])
+                                        <span id="status-{{ $key }}" class="text-label-sm text-emerald-600 font-medium flex items-center gap-1.5">
+                                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block shadow-[0_0_8px_rgba(16,185,129,0.4)]"></span> Connected
+                                        </span>
+                                    @else
+                                        <span id="status-{{ $key }}" class="text-label-sm text-surface-400 font-medium flex items-center gap-1.5">
+                                            <span class="w-1.5 h-1.5 rounded-full bg-surface-300"></span> Disconnected
+                                        </span>
+                                    @endif
                                 </td>
                                 <td class="py-3 px-5 text-right">
                                     <div class="inline-flex items-center gap-1.5">
-                                        <button onclick="testConnection('{{ $key }}')" id="btn-conn-{{ $key }}"
-                                            class="px-2.5 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 transition-all duration-200 text-label-sm font-semibold flex items-center gap-1"
-                                            title="Test Connection">
-                                            <span class="material-symbols-outlined text-[14px]">link</span> Connect
-                                        </button>
+                                        @if(isset($c['is_connected']) && $c['is_connected'])
+                                            <button onclick="disconnectConnection('{{ $key }}')" id="btn-conn-{{ $key }}"
+                                                class="px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-600 transition-all duration-200 text-label-sm font-semibold flex items-center gap-1"
+                                                title="Disconnect">
+                                                <span class="material-symbols-outlined text-[14px]">link_off</span> Disconnect
+                                            </button>
+                                        @else
+                                            <button onclick="testConnection('{{ $key }}')" id="btn-conn-{{ $key }}"
+                                                class="px-2.5 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 transition-all duration-200 text-label-sm font-semibold flex items-center gap-1"
+                                                title="Test Connection">
+                                                <span class="material-symbols-outlined text-[14px]">link</span> Connect
+                                            </button>
+                                        @endif
                                         <button onclick="editConnection('{{ $key }}')"
                                             class="p-1.5 rounded-lg hover:bg-surface-100 text-surface-400 hover:text-surface-700 transition-all duration-200"
                                             title="Edit">
@@ -345,8 +359,11 @@
                             <div>
                                 <label for="form-source-conn" class="text-label-md text-surface-600 block mb-1.5">Source Connection <span class="text-red-500">*</span></label>
                                 <select id="form-source-conn" required onchange="fetchSourceObjects()" class="w-full bg-white border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                                    <option value="" disabled selected>Select Source Connection</option>
                                     @foreach($connections as $k => $c)
-                                        <option value="{{ $k }}">{{ $c['name'] }} ({{ strtoupper($c['type']) }})</option>
+                                        @if(isset($c['is_connected']) && $c['is_connected'])
+                                            <option value="{{ $k }}">{{ $c['name'] }} ({{ strtoupper($c['type']) }})</option>
+                                        @endif
                                     @endforeach
                                 </select>
                             </div>
@@ -375,16 +392,13 @@
                             </div>
                         </div>
 
-                        <div class="flex items-center gap-2 justify-center py-2">
-                            <span class="material-symbols-outlined text-surface-300">arrow_downward</span>
-                        </div>
-
                         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div>
                                 <label for="form-dest-conn" class="text-label-md text-surface-600 block mb-1.5">Destination Connection <span class="text-red-500">*</span></label>
                                 <select id="form-dest-conn" required class="w-full bg-white border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                                    <option value="" disabled selected>Select Destination Connection</option>
                                     @foreach($connections as $k => $c)
-                                        @if(in_array($c['type'], ['mysql', 'sqlsrv', 'sqlite']))
+                                        @if(in_array($c['type'], ['mysql', 'sqlsrv', 'sqlite']) && isset($c['is_connected']) && $c['is_connected'])
                                             <option value="{{ $k }}">{{ $c['name'] }} ({{ strtoupper($c['type']) }})</option>
                                         @endif
                                     @endforeach
@@ -900,10 +914,8 @@
                 btn.className = "px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-600 transition-all duration-200 text-label-sm font-semibold flex items-center gap-1";
                 btn.setAttribute('onclick', `disconnectConnection('${key}')`);
                 
-                localStorage.setItem('conn_status_' + key, 'Connected');
                 if(!silent) showToast(data.message, 'success');
             } else {
-                localStorage.removeItem('conn_status_' + key);
                 throw new Error(data.message || 'Connection failed');
             }
         } catch (e) {
@@ -919,18 +931,45 @@
         }
     }
 
-    function disconnectConnection(key) {
-        localStorage.removeItem('conn_status_' + key);
-        
-        const statusEl = document.getElementById('status-' + key);
-        const btn = document.getElementById('btn-conn-' + key);
-        
-        statusEl.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-surface-300"></span> Disconnected';
-        statusEl.className = "text-label-sm text-surface-400 font-medium flex items-center gap-1.5";
-        
-        btn.innerHTML = '<span class="material-symbols-outlined text-[14px]">link</span> Connect';
-        btn.className = "px-2.5 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 transition-all duration-200 text-label-sm font-semibold flex items-center gap-1";
-        btn.setAttribute('onclick', `testConnection('${key}')`);
+    async function disconnectConnection(key) {
+        try {
+            const btn = document.getElementById('btn-conn-' + key);
+            const originalBtnHtml = btn.innerHTML;
+            btn.innerHTML = '<span class="material-symbols-outlined animate-spin text-[14px]">progress_activity</span> Disconnecting...';
+            btn.disabled = true;
+
+            const res = await fetch(`/api/connections/${key}/disconnect`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                }
+            });
+            const data = await res.json();
+            
+            if (data.success) {
+                const statusEl = document.getElementById('status-' + key);
+                const btn = document.getElementById('btn-conn-' + key);
+                
+                statusEl.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-surface-300"></span> Disconnected';
+                statusEl.className = "text-label-sm text-surface-400 font-medium flex items-center gap-1.5";
+                
+                btn.innerHTML = '<span class="material-symbols-outlined text-[14px]">link</span> Connect';
+                btn.className = "px-2.5 py-1.5 rounded-lg bg-surface-50 hover:bg-surface-100 text-surface-600 transition-all duration-200 text-label-sm font-semibold flex items-center gap-1";
+                btn.setAttribute('onclick', `testConnection('${key}', true)`);
+                btn.disabled = false;
+                showToast('Disconnected successfully', 'success');
+            } else {
+                throw new Error(data.message || 'Failed to disconnect');
+            }
+        } catch(err) {
+            console.error(err);
+            const btn = document.getElementById('btn-conn-' + key);
+            btn.innerHTML = '<span class="material-symbols-outlined text-[14px]">link_off</span> Disconnect';
+            btn.disabled = false;
+            showToast(err.message, 'error');
+        }
     }
 
     // ── Delete ─────────────────────────────────────────────────────────────
@@ -1039,27 +1078,6 @@
         finally { btn.disabled = false; btn.innerHTML = '<span class="material-symbols-outlined text-[14px]">delete</span> Delete'; }
     }
 
-    document.addEventListener('DOMContentLoaded', () => {
-        paginateEntities();
-        
-        // Restore connection statuses from localStorage without re-testing
-        const keys = Object.keys(connectionData);
-        for (const key of keys) {
-            const status = localStorage.getItem('conn_status_' + key);
-            if (status === 'Connected') {
-                const statusEl = document.getElementById('status-' + key);
-                const btn = document.getElementById('btn-conn-' + key);
-                if (statusEl && btn) {
-                    statusEl.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block shadow-[0_0_8px_rgba(16,185,129,0.4)]"></span> Connected';
-                    statusEl.className = "text-label-sm text-emerald-600 font-medium flex items-center gap-1.5";
-                    
-                    btn.innerHTML = '<span class="material-symbols-outlined text-[14px]">link_off</span> Disconnect';
-                    btn.className = "px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-600 transition-all duration-200 text-label-sm font-semibold flex items-center gap-1";
-                    btn.setAttribute('onclick', `disconnectConnection('${key}')`);
-                }
-            }
-        }
-    });
 
     document.addEventListener('keydown', (e) => { 
         if (e.key === 'Escape') { 

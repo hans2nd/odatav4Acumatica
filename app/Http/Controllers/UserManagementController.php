@@ -20,12 +20,12 @@ class UserManagementController extends Controller
     {
         $users = User::with('roles')->get();
         $roles = Role::withCount(['users', 'permissions'])->get();
-        $permissions = Permission::orderBy('group')->orderBy('name')->get();
+        $modules = \App\Models\Module::with(['resources.permissions.action'])->orderBy('sort_order')->get();
 
         return view('users.index', [
             'users'       => $users,
             'roles'       => $roles,
-            'permissions' => $permissions,
+            'modules'     => $modules,
             'activeTab'   => 'users',
         ]);
     }
@@ -135,7 +135,7 @@ class UserManagementController extends Controller
         return response()->json([
             'success'     => true,
             'role'        => $role,
-            'permissions' => $role->permissions()->orderBy('group')->orderBy('name')->get(),
+            'permissions' => $role->permissions()->get(),
         ]);
     }
 
@@ -144,7 +144,7 @@ class UserManagementController extends Controller
      */
     public function updateRolePermissions(Request $request, Role $role): JsonResponse
     {
-        if ($role->is_superadmin) {
+        if ($role->name === 'Administrator') {
             return response()->json([
                 'success' => false,
                 'message' => 'Cannot modify permissions for superadmin role.',
@@ -160,7 +160,7 @@ class UserManagementController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => "Permissions for role '{$role->display_name}' updated successfully.",
+            'message' => "Permissions for role '{$role->name}' updated successfully.",
             'count'   => count($validated['permission_ids']),
         ]);
     }
@@ -172,7 +172,7 @@ class UserManagementController extends Controller
     {
         $validated = $request->validate([
             'name'         => 'required|string|max:50|unique:roles,name|regex:/^[a-z][a-z0-9_]*$/',
-            'display_name' => 'required|string|max:100',
+            'name' => 'required|string|max:100',
             'description'  => 'nullable|string|max:255',
         ]);
 
@@ -180,7 +180,7 @@ class UserManagementController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => "Role '{$role->display_name}' created successfully.",
+            'message' => "Role '{$role->name}' created successfully.",
             'role'    => $role,
         ]);
     }
@@ -190,7 +190,7 @@ class UserManagementController extends Controller
      */
     public function destroyRole(Role $role): JsonResponse
     {
-        if ($role->is_superadmin) {
+        if ($role->name === 'Administrator') {
             return response()->json([
                 'success' => false,
                 'message' => 'Cannot delete the superadmin role.',
@@ -200,11 +200,11 @@ class UserManagementController extends Controller
         if ($role->users()->count() > 0) {
             return response()->json([
                 'success' => false,
-                'message' => "Cannot delete role '{$role->display_name}' — it still has assigned users.",
+                'message' => "Cannot delete role '{$role->name}' – it still has assigned users.",
             ], 422);
         }
 
-        $name = $role->display_name;
+        $name = $role->name;
         $role->permissions()->detach();
         $role->delete();
 
@@ -219,11 +219,11 @@ class UserManagementController extends Controller
      */
     public function permissions(): JsonResponse
     {
-        $permissions = Permission::orderBy('group')->orderBy('name')->get()->groupBy('group');
+        $modules = \App\Models\Module::with(['resources.permissions.action'])->orderBy('sort_order')->get();
 
         return response()->json([
             'success'     => true,
-            'permissions' => $permissions,
+            'modules'     => $modules,
         ]);
     }
 }

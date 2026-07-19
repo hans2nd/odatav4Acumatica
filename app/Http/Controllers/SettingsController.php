@@ -103,6 +103,36 @@ class SettingsController extends Controller
         $credentials = $request->input('credentials', []);
         $key = $request->input('key');
 
+        if ($key === 'acumatica_default') {
+            $type = 'odata';
+            $credentials = [
+                'url'      => config('acumatica.url'),
+                'tenant'   => config('acumatica.tenant'),
+                'username' => config('acumatica.username'),
+                'password' => config('acumatica.password'),
+            ];
+        } elseif ($key === 'database_default') {
+            $type = config('database.default');
+            try {
+                $start = microtime(true);
+                DB::connection()->getPdo();
+                $elapsed = round((microtime(true) - $start) * 1000);
+                if ($conn = \App\Models\Connection::where('key', $key)->first()) {
+                    $conn->update(['is_connected' => true]);
+                }
+                return response()->json([
+                    'success' => true,
+                    'message' => "Connected successfully ({$elapsed}ms)",
+                    'ping_ms' => $elapsed,
+                ]);
+            } catch (\Throwable $e) {
+                if ($conn = \App\Models\Connection::where('key', $key)->first()) {
+                    $conn->update(['is_connected' => false]);
+                }
+                return response()->json(['success' => false, 'message' => 'Connection failed: ' . $e->getMessage()], 422);
+            }
+        }
+
         if (in_array($type, ['mysql', 'sqlsrv'])) {
             try {
                 $connectionName = 'test_connection_' . time();
@@ -212,18 +242,27 @@ class SettingsController extends Controller
                 $result = $odataService->testODataConnection();
 
                 if ($result['connected']) {
+                    if ($key && $conn = \App\Models\Connection::where('key', $key)->first()) {
+                        $conn->update(['is_connected' => true]);
+                    }
                     return response()->json([
                         'success' => true,
                         'message' => "OData connected successfully ({$result['ping_ms']}ms)",
                         'ping_ms' => $result['ping_ms'],
                     ]);
                 } else {
+                    if ($key && $conn = \App\Models\Connection::where('key', $key)->first()) {
+                        $conn->update(['is_connected' => false]);
+                    }
                     return response()->json([
                         'success' => false,
                         'message' => 'OData connection failed: ' . $result['message'],
                     ], 422);
                 }
             } catch (\Throwable $e) {
+                if ($key && $conn = \App\Models\Connection::where('key', $key)->first()) {
+                    $conn->update(['is_connected' => false]);
+                }
                 return response()->json([
                     'success' => false,
                     'message' => 'Connection failed: ' . $e->getMessage(),
@@ -232,6 +271,21 @@ class SettingsController extends Controller
         }
 
         return response()->json(['success' => false, 'message' => 'Unsupported connection type or test failed.'], 400);
+    }
+
+    public function disconnectConnection(string $key): JsonResponse
+    {
+        $conn = \App\Models\Connection::where('key', $key)->first();
+        if ($conn) {
+            $conn->update(['is_connected' => false]);
+            return response()->json(['success' => true, 'message' => 'Disconnected successfully.']);
+        }
+        
+        if (in_array($key, ['acumatica_default', 'database_default'])) {
+            return response()->json(['success' => true, 'message' => 'Disconnected successfully.']);
+        }
+        
+        return response()->json(['success' => false, 'message' => 'Connection not found in database.'], 404);
     }
 
     public function fetchDatabases(Request $request): JsonResponse

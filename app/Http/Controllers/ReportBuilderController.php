@@ -28,8 +28,8 @@ class ReportBuilderController extends Controller
         $allTables = [];
 
         foreach ($all as $key => $conn) {
-            // Only include active database-type connections
-            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv']) && ($conn['is_active'] ?? true)) {
+            // Only include active and connected database-type connections
+            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
                 $dbConnections[] = [
                     'key'  => $key,
                     'name' => $conn['name'] ?? $key,
@@ -78,8 +78,8 @@ class ReportBuilderController extends Controller
         $dbConnections = [];
 
         foreach ($all as $key => $conn) {
-            // Only include database-type connections that are active
-            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv']) && ($conn['is_active'] ?? true)) {
+            // Only include active and connected database-type connections
+            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
                 try {
                     // Resolve and test the connection
                     $connName = $this->resolveConnection($key);

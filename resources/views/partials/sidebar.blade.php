@@ -21,203 +21,144 @@
     <div class="flex flex-col py-3 flex-grow">
         @php
             $user = auth()->user();
-
-            $hasMasterDataView = collect(config('acumatica.entities', []))->contains(function ($e, $key) use ($user) {
-                return $e['type'] === 'master' && $user && $user->hasPermission("{$key}.view");
-            });
-            $hasTransactionsView = collect(config('acumatica.entities', []))->contains(function ($e, $key) use ($user) {
-                return $e['type'] === 'transaction' && $user && $user->hasPermission("{$key}.view");
-            });
-
-            // Build dynamic report sub-menus from synced transaction entities
-            $reportSubmenus = [
-                ['route' => 'report.builder', 'label' => 'Report Builder', 'key' => 'report.builder', 'permission' => 'report_builder.manage'],
-                ['route' => 'endpoint.api.index', 'label' => 'Endpoint API', 'key' => 'endpoint.api', 'permission' => 'endpoint_api.manage'],
-                // ['route' => 'report.sales-order', 'label' => 'Sales Order', 'key' => 'report.sales-order'],
-            ];
-            $syncedTransactions = \App\Http\Controllers\DynamicReportController::getSyncedTransactionEntities();
-            foreach ($syncedTransactions as $eKey => $eConfig) {
-                $reportSubmenus[] = [
-                    'route' => 'report.dynamic.show',
-                    'route_param' => $eKey,
-                    'label' => $eConfig['description'],
-                    'key' => 'report.' . $eKey,
-                ];
-            }
-
-            $menus = [
-                [
-                    'route' => 'dashboard',
-                    'icon' => 'dashboard',
-                    'label' => 'Overview',
-                    'key' => 'overview',
-                ],
-                [
-                    'label' => 'Report',
-                    'icon' => 'analytics',
-                    'key' => 'report',
-                    'permission' => 'reports.view',
-                    'submenus' => $reportSubmenus,
-                ],
-                [
-                    'label' => 'ODataV4 Sync',
-                    'icon' => 'sync_alt',
-                    'key' => 'odata',
-                    'submenus' => array_filter([
-                        $hasMasterDataView ? ['route' => 'master-data.index', 'label' => 'Master Data', 'key' => 'master-data'] : null,
-                        $hasTransactionsView ? ['route' => 'transactions.index', 'label' => 'Transactions', 'key' => 'transactions'] : null,
-                        ['route' => 'logs.index', 'label' => 'Logs', 'key' => 'logs', 'permission' => 'logs.view'],
-                        [
-                            'route' => 'settings.index',
-                            'label' => 'Settings',
-                            'key' => 'settings',
-                            'permission' => 'settings.manage',
-                        ],
-                    ]),
-                ],
-                [
-                    'route' => 'users.index',
-                    'icon' => 'manage_accounts',
-                    'label' => 'User Management',
-                    'key' => 'users',
-                    'permission' => 'users.manage',
-                ],
-            ];
-            $currentTab = $activeTab ?? '';
+            $menuService = new \App\Services\MenuService();
+            $menus = $menuService->getUserMenus($user);
         @endphp
 
-        {{-- Section label --}}
-        <div class="px-6 pt-3 pb-2">
-            <span class="text-[10px] font-semibold text-slate-500 uppercase tracking-[0.08em]">Navigation</span>
-        </div>
-
-        @foreach ($menus as $menu)
-            {{-- Check top-level permission --}}
-            @if (isset($menu['permission']) && $user && !$user->hasPermission($menu['permission']))
-                @continue
-            @endif
-
-            @if (isset($menu['submenus']))
-                @php
-                    $visibleSubmenus = collect($menu['submenus'])
-                        ->filter(function ($sub) use ($user) {
-                            if (!isset($sub['permission'])) {
-                                return true;
+        <ul class="flex flex-col px-3 space-y-1 mt-2">
+            @foreach ($menus as $menu)
+                @if (isset($menu['submenus']))
+                    @php
+                        $hasActiveSubmenu = false;
+                        foreach ($menu['submenus'] as $submenu) {
+                            if (isset($submenu['submenus'])) {
+                                foreach ($submenu['submenus'] as $nested) {
+                                    $routeUrl = isset($nested['route_param']) ? route($nested['route'], $nested['route_param']) : route($nested['route']);
+                                    if (request()->url() === $routeUrl) { $hasActiveSubmenu = true; break 2; }
+                                }
+                            } else {
+                                $routeUrl = isset($submenu['route_param']) ? route($submenu['route'], $submenu['route_param']) : route($submenu['route']);
+                                if (request()->url() === $routeUrl) { $hasActiveSubmenu = true; break; }
                             }
-                            return $user && $user->hasPermission($sub['permission']);
-                        })
-                        ->values()
-                        ->all();
-
-                    $isActiveGroup = collect($visibleSubmenus)->contains('key', $currentTab);
-                @endphp
-
-                @if (count($visibleSubmenus) > 0)
-                    <div class="flex flex-col">
-                        <button onclick="toggleSubmenu('submenu-{{ $menu['key'] }}', this)"
-                            class="{{ $isActiveGroup ? 'text-white' : 'text-slate-400 hover:text-slate-200' }} hover:bg-white/[0.04] px-6 py-2.5 flex items-center justify-between transition-all duration-200 w-full text-left group">
+                        }
+                    @endphp
+                    <li class="nav-group" x-data="{ expanded: {{ $hasActiveSubmenu ? 'true' : 'false' }} }">
+                        <button @click="expanded = !expanded"
+                            class="w-full flex items-center justify-between px-3 py-2.5 rounded-lg transition-all group focus:outline-none {{ $hasActiveSubmenu ? 'text-white' : 'text-slate-300 hover:text-white hover:bg-white/[0.04]' }}">
                             <div class="flex items-center gap-3">
-                                <span
-                                    class="material-symbols-outlined text-[20px] {{ $isActiveGroup ? 'text-brand-400' : 'text-slate-500 group-hover:text-slate-400' }}"
-                                    @if ($isActiveGroup) style="font-variation-settings: 'FILL' 1;" @endif>{{ $menu['icon'] }}</span>
-                                <span class="text-body-sm font-medium">{{ $menu['label'] }}</span>
+                                <span class="material-symbols-outlined text-[20px] {{ $hasActiveSubmenu ? 'text-brand-400' : 'text-slate-400 group-hover:text-brand-400' }} transition-colors"
+                                    style="font-variation-settings: 'FILL' 1;">{{ $menu['icon'] }}</span>
+                                <span class="text-[14px] font-medium tracking-wide">{{ $menu['label'] }}</span>
                             </div>
-                            <span
-                                class="material-symbols-outlined text-[16px] transition-transform duration-200 text-slate-500 {{ $isActiveGroup ? 'rotate-180' : '' }}">expand_more</span>
+                            <span class="material-symbols-outlined text-[18px] transition-transform duration-300"
+                                :class="expanded ? 'rotate-90 text-brand-400' : 'text-slate-500'">chevron_right</span>
                         </button>
-                        <div id="submenu-{{ $menu['key'] }}"
-                            class="overflow-hidden transition-all duration-300 {{ $isActiveGroup ? 'max-h-[600px]' : 'max-h-0' }}">
-                            <div class="flex flex-col py-1">
-                                @foreach ($visibleSubmenus as $sub)
+                        
+                        <ul x-show="expanded" x-collapse x-cloak class="pl-[42px] pr-3 py-1 space-y-1 overflow-hidden">
+                            @foreach ($menu['submenus'] as $submenu)
+                                @if(isset($submenu['submenus']))
+                                    {{-- Nested Menu --}}
                                     @php
-                                        $isActive = $currentTab === $sub['key'];
-                                        $href = isset($sub['route_param'])
-                                            ? route($sub['route'], $sub['route_param'])
-                                            : route($sub['route']);
+                                        $hasActiveNested = false;
+                                        foreach ($submenu['submenus'] as $nested) {
+                                            $routeUrl = isset($nested['route_param']) 
+                                                        ? route($nested['route'], $nested['route_param']) 
+                                                        : route($nested['route']);
+                                            if (request()->url() === $routeUrl) {
+                                                $hasActiveNested = true;
+                                                break;
+                                            }
+                                        }
                                     @endphp
-                                    <a href="{{ $href }}"
-                                        class="{{ $isActive
-                                            ? 'text-white bg-white/[0.08] border-r-2 border-brand-400'
-                                            : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]' }}
-                                        pl-[52px] pr-6 py-2 flex items-center gap-2.5 transition-all duration-200 text-body-sm relative">
-                                        @if ($isActive)
-                                            <div
-                                                class="absolute left-[40px] top-1/2 -translate-y-1/2 w-1 h-1 rounded-full bg-brand-400">
+                                    <li class="nav-group" x-data="{ nestedExpanded: {{ $hasActiveNested ? 'true' : 'false' }} }">
+                                        <button @click="nestedExpanded = !nestedExpanded"
+                                            class="w-full flex items-center justify-between px-1 py-1.5 mt-1 rounded-lg transition-all focus:outline-none {{ $hasActiveNested ? 'text-white font-medium' : 'text-slate-400 hover:text-white hover:bg-white/[0.04]' }}">
+                                            <div class="flex items-center gap-2">
+                                                @if(isset($submenu['icon']))
+                                                <span class="material-symbols-outlined text-[16px]">{{ $submenu['icon'] }}</span>
+                                                @endif
+                                                <span class="text-[13px] tracking-wide">{{ $submenu['label'] }}</span>
                                             </div>
-                                        @endif
-                                        {{ $sub['label'] }}
-                                    </a>
-                                @endforeach
-                            </div>
-                        </div>
-                    </div>
+                                            <span class="material-symbols-outlined text-[16px] transition-transform duration-300"
+                                                :class="nestedExpanded ? 'rotate-90 text-brand-400' : 'text-slate-500'">chevron_right</span>
+                                        </button>
+                                        <ul x-show="nestedExpanded" x-collapse x-cloak class="pl-[24px] pr-2 py-1 space-y-1 overflow-hidden border-l border-white/[0.05] ml-2 mt-1 mb-2">
+                                            @foreach ($submenu['submenus'] as $nested)
+                                                @php
+                                                    $routeUrl = isset($nested['route_param']) 
+                                                                ? route($nested['route'], $nested['route_param']) 
+                                                                : route($nested['route']);
+                                                    $isActive = request()->url() === $routeUrl;
+                                                @endphp
+                                                <li>
+                                                    <a href="{{ $routeUrl }}"
+                                                        class="flex items-center gap-2 px-2 py-1.5 rounded-lg text-[12.5px] transition-all {{ $isActive ? 'text-white bg-brand-500/10 font-semibold' : 'text-slate-500 hover:text-white hover:bg-white/[0.04]' }}">
+                                                        @if($isActive)
+                                                            <div class="w-1 h-1 rounded-full bg-brand-400 absolute left-[30px]"></div>
+                                                        @endif
+                                                        <span class="tracking-wide">{{ $nested['label'] }}</span>
+                                                    </a>
+                                                </li>
+                                            @endforeach
+                                        </ul>
+                                    </li>
+                                @else
+                                    {{-- Standard Submenu --}}
+                                    @php
+                                        $routeUrl = isset($submenu['route_param']) 
+                                                    ? route($submenu['route'], $submenu['route_param']) 
+                                                    : route($submenu['route']);
+                                        $isActive = request()->url() === $routeUrl;
+                                    @endphp
+                                    <li>
+                                        <a href="{{ $routeUrl }}"
+                                            class="flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] transition-all {{ $isActive ? 'text-white bg-brand-500/10 font-semibold shadow-inner' : 'text-slate-400 hover:text-white hover:bg-white/[0.04]' }}">
+                                            @if($isActive)
+                                                <div class="w-1.5 h-1.5 rounded-full bg-brand-400 absolute left-[30px]"></div>
+                                            @endif
+                                            <span class="tracking-wide">{{ $submenu['label'] }}</span>
+                                        </a>
+                                    </li>
+                                @endif
+                            @endforeach
+                        </ul>
+                    </li>
+                @else
+                    @php
+                        $routeUrl = route($menu['route']);
+                        $routePath = parse_url($routeUrl, PHP_URL_PATH);
+                        $isActive = request()->url() === $routeUrl || (strlen($routePath) > 1 && request()->is(ltrim($routePath, '/') . '*'));
+                    @endphp
+                    <li>
+                        <a href="{{ $routeUrl }}"
+                            class="flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all {{ $isActive ? 'text-white bg-gradient-to-r from-brand-600/20 to-transparent font-semibold border-l-2 border-brand-500' : 'text-slate-300 hover:text-white hover:bg-white/[0.04]' }}">
+                            <span class="material-symbols-outlined text-[20px] {{ $isActive ? 'text-brand-400' : 'text-slate-400 group-hover:text-brand-400' }} transition-colors"
+                                style="font-variation-settings: 'FILL' 1;">{{ $menu['icon'] }}</span>
+                            <span class="text-[14px] font-medium tracking-wide">{{ $menu['label'] }}</span>
+                        </a>
+                    </li>
                 @endif
-            @else
-                @php $isActive = $currentTab === $menu['key']; @endphp
-                <a href="{{ route($menu['route']) }}"
-                    class="{{ $isActive
-                        ? 'bg-white/[0.08] text-white border-r-2 border-brand-400'
-                        : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]' }}
-                       px-6 py-2.5 flex items-center gap-3 transition-all duration-200 active:scale-[0.98] group">
-                    <span
-                        class="material-symbols-outlined text-[20px] {{ $isActive ? 'text-brand-400' : 'text-slate-500 group-hover:text-slate-400' }}"
-                        @if ($isActive) style="font-variation-settings: 'FILL' 1;" @endif>{{ $menu['icon'] }}</span>
-                    <span class="text-body-sm font-medium">{{ $menu['label'] }}</span>
-                </a>
-            @endif
-        @endforeach
+            @endforeach
+        </ul>
     </div>
 
-    {{-- Sync All Button --}}
-    @if(auth()->check() && auth()->user()->hasPermission('sync.manage'))
-    <div class="px-5 py-3">
-        <button onclick="syncAll(this)"
-            class="w-full bg-gradient-to-r from-brand-600 to-brand-500 text-white text-label-md py-2.5 px-4 rounded-xl hover:from-brand-500 hover:to-brand-400 transition-all duration-200 active:scale-[0.97] flex items-center justify-center gap-2 shadow-lg shadow-brand-500/20">
-            <span class="material-symbols-outlined text-[16px]">sync</span>
-            Force Sync All
-        </button>
+    {{-- User Profile Area --}}
+    <div class="p-4 mt-auto border-t border-white/[0.06] bg-slate-900/50">
+        <form method="POST" action="{{ route('logout') }}" id="logout-form" onsubmit="localStorage.clear(); sessionStorage.clear();">
+            @csrf
+            <button type="submit"
+                class="w-full flex items-center justify-between px-4 py-3 rounded-xl bg-slate-800/50 border border-white/[0.05] hover:bg-slate-800 hover:border-white/[0.1] transition-all group">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-full bg-brand-600/20 flex items-center justify-center border border-brand-500/30">
+                        <span class="material-symbols-outlined text-[16px] text-brand-400">person</span>
+                    </div>
+                    <div class="text-left flex flex-col justify-center">
+                        <span class="text-[13px] font-semibold text-white leading-tight block w-24 truncate">{{ auth()->user()->name }}</span>
+                        <span class="text-[11px] text-brand-400 mt-0.5">{{ auth()->user()->primary_role }}</span>
+                    </div>
+                </div>
+                <span class="material-symbols-outlined text-[18px] text-slate-500 group-hover:text-red-400 transition-colors">logout</span>
+            </button>
+        </form>
     </div>
-    @endif
-
-    {{-- User Info & Logout --}}
-    @auth
-        <div class="p-4 border-t border-white/[0.06] mx-3 mb-2">
-            <div class="flex items-center gap-3">
-                <div
-                    class="w-9 h-9 rounded-full bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white font-bold text-sm shrink-0 shadow-sm">
-                    {{ strtoupper(substr(auth()->user()->name, 0, 1)) }}
-                </div>
-                <div class="flex-1 min-w-0">
-                    <p class="text-sm font-medium text-slate-200 truncate">{{ auth()->user()->name }}</p>
-                    <p class="text-[10px] text-slate-500 truncate uppercase tracking-wider font-medium">
-                        {{ auth()->user()->primary_role }}</p>
-                </div>
-                <form method="POST" action="{{ route('logout') }}" class="shrink-0">
-                    @csrf
-                    <button type="submit"
-                        class="p-1.5 rounded-lg hover:bg-white/[0.06] text-slate-500 hover:text-slate-300 transition-all duration-200"
-                        title="Logout">
-                        <span class="material-symbols-outlined text-[18px]">logout</span>
-                    </button>
-                </form>
-            </div>
-        </div>
-    @endauth
 </nav>
-
-<script>
-    function toggleSubmenu(id, btn) {
-        const el = document.getElementById(id);
-        const icon = btn.querySelector('.material-symbols-outlined:last-child');
-
-        if (el.classList.contains('max-h-0')) {
-            el.classList.remove('max-h-0');
-            el.classList.add('max-h-[600px]');
-            icon.classList.add('rotate-180');
-        } else {
-            el.classList.add('max-h-0');
-            el.classList.remove('max-h-[600px]');
-            icon.classList.remove('rotate-180');
-        }
-    }
-</script>

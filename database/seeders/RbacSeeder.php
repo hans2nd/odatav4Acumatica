@@ -2,61 +2,70 @@
 
 namespace Database\Seeders;
 
+use App\Models\Action;
+use App\Models\Module;
 use App\Models\Role;
 use App\Models\User;
-use App\Services\PermissionSyncService;
+use App\Services\PermissionGeneratorService;
 use Illuminate\Database\Seeder;
 
 class RbacSeeder extends Seeder
 {
     public function run(): void
     {
-        // 1. Create roles
-        $admin = Role::firstOrCreate(
-            ['name' => 'admin'],
-            ['display_name' => 'Admin', 'description' => 'Full system access', 'is_superadmin' => true]
-        );
+        // 1. Modules
+        $modules = [
+            ['code' => 'dashboard', 'name' => 'Dashboard', 'icon' => 'dashboard', 'sort_order' => 10],
+            ['code' => 'master-data', 'name' => 'Master Data', 'icon' => 'folder', 'sort_order' => 20],
+            ['code' => 'transaction', 'name' => 'Transaction', 'icon' => 'receipt', 'sort_order' => 30],
+            ['code' => 'sync', 'name' => 'Synchronization', 'icon' => 'sync', 'sort_order' => 40],
+            ['code' => 'report', 'name' => 'Report', 'icon' => 'analytics', 'sort_order' => 50],
+            ['code' => 'settings', 'name' => 'Settings', 'icon' => 'settings', 'sort_order' => 60],
+            ['code' => 'system', 'name' => 'System', 'icon' => 'memory', 'sort_order' => 70],
+        ];
 
-        $operator = Role::firstOrCreate(
-            ['name' => 'operator'],
-            ['display_name' => 'Operator', 'description' => 'Can view, sync, and export data']
-        );
+        foreach ($modules as $module) {
+            Module::updateOrCreate(['code' => $module['code']], $module);
+        }
 
-        $viewer = Role::firstOrCreate(
-            ['name' => 'viewer'],
-            ['display_name' => 'Viewer', 'description' => 'Read-only access to data']
-        );
+        // 2. Actions
+        $actions = [
+            ['code' => 'view', 'name' => 'View', 'sort_order' => 10],
+            ['code' => 'create', 'name' => 'Create', 'sort_order' => 20],
+            ['code' => 'update', 'name' => 'Update', 'sort_order' => 30],
+            ['code' => 'delete', 'name' => 'Delete', 'sort_order' => 40],
+            ['code' => 'export', 'name' => 'Export', 'sort_order' => 50],
+            ['code' => 'import', 'name' => 'Import', 'sort_order' => 60],
+            ['code' => 'sync', 'name' => 'Sync', 'sort_order' => 70],
+            ['code' => 'execute', 'name' => 'Execute', 'sort_order' => 80],
+            ['code' => 'manage', 'name' => 'Manage', 'sort_order' => 90], // Generic action for settings, etc.
+        ];
 
-        // 2. Sync all permissions (static + dynamic from entities)
-        $permService = app(PermissionSyncService::class);
-        $permService->fullSync();
+        foreach ($actions as $action) {
+            Action::updateOrCreate(['code' => $action['code']], $action);
+        }
 
-        // 3. Assign static permissions to operator & viewer
-        $staticPermsOperator = \App\Models\Permission::whereIn('name', PermissionSyncService::ROLE_DEFAULTS['operator']['static'])->pluck('id');
-        $operator->permissions()->syncWithoutDetaching($staticPermsOperator);
+        // 3. Roles
+        $adminRole = Role::updateOrCreate(['name' => 'Administrator'], [
+            'description' => 'System Administrator with full access'
+        ]);
 
-        $staticPermsViewer = \App\Models\Permission::whereIn('name', PermissionSyncService::ROLE_DEFAULTS['viewer']['static'])->pluck('id');
-        $viewer->permissions()->syncWithoutDetaching($staticPermsViewer);
+        Role::updateOrCreate(['name' => 'Operator'], [
+            'description' => 'Standard system operator'
+        ]);
 
-        // 4. Create sample users
-        $adminUser = User::firstOrCreate(
-            ['email' => 'admin@plsync.com'],
-            ['name' => 'Administrator', 'password' => 'password']
-        );
-        $adminUser->roles()->syncWithoutDetaching([$admin->id]);
+        Role::updateOrCreate(['name' => 'Viewer'], [
+            'description' => 'Read-only access'
+        ]);
 
-        $operatorUser = User::firstOrCreate(
-            ['email' => 'operator@plsync.com'],
-            ['name' => 'Operator User', 'password' => 'password']
-        );
-        $operatorUser->roles()->syncWithoutDetaching([$operator->id]);
+        // Assgin Admin role to all existing users for now
+        $users = User::all();
+        foreach ($users as $user) {
+            $user->roles()->syncWithoutDetaching([$adminRole->id]);
+        }
 
-        $viewerUser = User::firstOrCreate(
-            ['email' => 'viewer@plsync.com'],
-            ['name' => 'Viewer User', 'password' => 'password']
-        );
-        $viewerUser->roles()->syncWithoutDetaching([$viewer->id]);
-
-        $this->command->info('RBAC seeded: 3 roles, ' . \App\Models\Permission::count() . ' permissions, 3 users.');
+        // 4. Generate Permissions
+        $generator = new PermissionGeneratorService();
+        $generator->generate();
     }
 }

@@ -62,7 +62,7 @@ class TransactionController extends Controller
             $firstRow = DB::connection($connName)->table($tableName)->first();
             $columns = $firstRow ? array_keys((array)$firstRow) : DB::connection($connName)->getSchemaBuilder()->getColumnListing($tableName);
             
-            $query = DB::table($tableName)->orderByDesc('_sync_id');
+            $query = DB::connection($connName)->table($tableName)->orderByDesc('_sync_id');
 
             if (!empty($search)) {
                 $query->where(function ($q) use ($columns, $search) {

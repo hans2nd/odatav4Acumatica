@@ -11,6 +11,7 @@ use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\SyncController;
 use App\Http\Controllers\TransactionController;
 use App\Http\Controllers\UserManagementController;
+use App\Http\Controllers\QueryBuilderController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -49,7 +50,7 @@ Route::middleware(['auth'])->group(function () {
     |--------------------------------------------------------------------------
     */
 
-    Route::middleware(['permission:sync.manage'])->group(function () {
+    Route::middleware(['permission:sync_engine.manage'])->group(function () {
         Route::post('/sync/all', [SyncController::class, 'syncAll'])->name('sync.all');
         Route::post('/sync/stop/{id}', [SyncController::class, 'stopQueue'])->name('sync.stop');
         Route::post('/sync/{entity}', [SyncController::class, 'syncEntity'])->name('sync.entity');
@@ -85,7 +86,7 @@ Route::middleware(['auth'])->group(function () {
     |--------------------------------------------------------------------------
     */
 
-    Route::middleware(['permission:entities.manage'])->group(function () {
+    Route::middleware(['permission:sync_engine.manage'])->group(function () {
         Route::get('/api/entities', [EntityController::class, 'index'])->name('api.entities.index');
         Route::get('/api/entities/{key}', [EntityController::class, 'show'])->name('api.entities.show');
         Route::post('/api/entities', [EntityController::class, 'store'])->name('api.entities.store');
@@ -103,7 +104,7 @@ Route::middleware(['auth'])->group(function () {
     |--------------------------------------------------------------------------
     */
 
-    Route::middleware(['permission:reports.view'])->group(function () {
+    Route::middleware(['auth'])->group(function () {
         Route::get('/report/sales-order', [ReportController::class, 'salesOrder'])->name('report.sales-order');
         Route::get('/report/{entityKey}', [DynamicReportController::class, 'show'])->name('report.dynamic.show');
         Route::get('/report/{entityKey}/export', [DynamicReportController::class, 'export'])->name('report.dynamic.export');
@@ -116,6 +117,15 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/api/report-builder/columns', [ReportBuilderController::class, 'columns']);
         Route::post('/api/report-builder/prepare', [ReportBuilderController::class, 'prepare']);
         Route::get('/api/report-builder/download/{token}', [ReportBuilderController::class, 'download'])->name('report.builder.download');
+    });
+
+    Route::middleware(['permission:query_builder.manage'])->group(function () {
+        Route::get('/query-builder', [QueryBuilderController::class, 'index'])->name('query.builder');
+        Route::get('/api/query-builder/tables', [QueryBuilderController::class, 'tables']);
+        Route::get('/api/query-builder/columns', [QueryBuilderController::class, 'columns']);
+        Route::post('/api/query-builder/execute', [QueryBuilderController::class, 'execute']);
+        Route::post('/api/query-builder/export', [QueryBuilderController::class, 'export']);
+        Route::get('/api/query-builder/download/{token}', [QueryBuilderController::class, 'download'])->name('query.builder.download');
     });
 
     Route::middleware(['permission:endpoint_api.manage'])->group(function () {
@@ -148,6 +158,7 @@ Route::middleware(['auth'])->group(function () {
         Route::put('/api/connections/{key}', [SettingsController::class, 'updateConnection'])->name('api.connections.update');
         Route::delete('/api/connections/{key}', [SettingsController::class, 'destroyConnection'])->name('api.connections.destroy');
         Route::post('/api/connections/test', [SettingsController::class, 'testConnection'])->name('api.connections.test');
+        Route::post('/api/connections/{key}/disconnect', [SettingsController::class, 'disconnectConnection'])->name('api.connections.disconnect');
         Route::post('/api/connections/databases', [SettingsController::class, 'fetchDatabases'])->name('api.connections.databases');
         Route::get('/api/connections/{key}/objects', [SettingsController::class, 'getConnectionObjects'])->name('api.connections.objects');
     });

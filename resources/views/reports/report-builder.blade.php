@@ -31,42 +31,52 @@
                         1</div>
                     <h3 class="text-h3 text-surface-800">Select Source</h3>
                 </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <label class="text-label-md text-surface-700 mb-1.5 block">Database Connection</label>
-                        <div class="flex gap-2">
-                            <select id="rbConnection" onchange="onConnectionDropdownChange()"
-                                class="flex-1 bg-white border border-surface-300 rounded-xl px-4 py-2.5 text-body-md text-surface-900 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-all cursor-pointer">
-                                <option value="">-- Pilih Connection --</option>
-                                @foreach ($connections as $conn)
-                                    <option value="{{ $conn['key'] }}">{{ $conn['name'] }} ({{ $conn['type'] }})</option>
-                                @endforeach
-                            </select>
-                            <button type="button" onclick="onConnectionChange()"
-                                class="px-4 py-2.5 bg-brand-50 text-brand-700 font-medium rounded-xl border border-brand-200 hover:bg-brand-100 transition-colors whitespace-nowrap">
-                                Connect
-                            </button>
+                @if(empty($connections))
+                    <div class="mb-4 p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 flex items-start gap-3">
+                        <span class="material-symbols-outlined shrink-0">warning</span>
+                        <div>
+                            <p class="font-medium text-label-md">No connected database available.</p>
+                            <p class="text-body-sm mt-1">You need to connect to at least one database in <a href="{{ route('settings.index') }}" class="underline font-semibold text-amber-800 hover:text-amber-900">Settings &gt; Connection Management</a> before building a report.</p>
                         </div>
                     </div>
-                    <div>
-                        <label class="text-label-md text-surface-700 mb-1.5 block">Table</label>
-                        <div class="relative">
-                            <input type="text" id="rbTableSearch" placeholder="Search or select table..."
-                                autocomplete="off" disabled
-                                onfocus="document.getElementById('rbTableDropdown').classList.remove('hidden')"
-                                onblur="setTimeout(() => { document.getElementById('rbTableDropdown').classList.add('hidden'); }, 200)"
-                                oninput="filterTableList(this)"
-                                class="w-full bg-white border border-surface-300 rounded-xl px-4 py-2.5 text-body-md text-surface-900 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-all cursor-text">
+                @else
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="text-label-md text-surface-700 mb-1.5 block">Database Connection</label>
+                            <div class="flex gap-2">
+                                <select id="rbConnection" onchange="onConnectionDropdownChange()"
+                                    class="flex-1 bg-white border border-surface-300 rounded-xl px-4 py-2.5 text-body-md text-surface-900 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-all cursor-pointer">
+                                    <option value="">-- Pilih Connection --</option>
+                                    @foreach ($connections as $conn)
+                                        <option value="{{ $conn['key'] }}">{{ $conn['name'] }} ({{ $conn['type'] }})</option>
+                                    @endforeach
+                                </select>
+                                <button type="button" onclick="onConnectionChange()"
+                                    class="px-4 py-2.5 bg-brand-50 text-brand-700 font-medium rounded-xl border border-brand-200 hover:bg-brand-100 transition-colors whitespace-nowrap">
+                                    Connect
+                                </button>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="text-label-md text-surface-700 mb-1.5 block">Table</label>
+                            <div class="relative">
+                                <input type="text" id="rbTableSearch" placeholder="Search or select table..."
+                                    autocomplete="off" disabled
+                                    onfocus="document.getElementById('rbTableDropdown').classList.remove('hidden')"
+                                    onblur="setTimeout(() => { document.getElementById('rbTableDropdown').classList.add('hidden'); }, 200)"
+                                    oninput="filterTableList(this)"
+                                    class="w-full bg-white border border-surface-300 rounded-xl px-4 py-2.5 text-body-md text-surface-900 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-all cursor-text disabled:bg-surface-50 disabled:text-surface-400">
 
-                            <div id="rbTableDropdown"
-                                class="absolute z-20 w-full mt-1 bg-white border border-surface-200 rounded-xl shadow-lg max-h-60 overflow-y-auto hidden">
-                                <ul id="rbTableList" class="py-1">
-                                    <li class="px-4 py-2 text-sm text-surface-400 italic">-- Select Connection First --</li>
-                                </ul>
+                                <div id="rbTableDropdown"
+                                    class="absolute z-20 w-full mt-1 bg-white border border-surface-200 rounded-xl shadow-lg max-h-60 overflow-y-auto hidden">
+                                    <ul id="rbTableList" class="py-1">
+                                        <li class="px-4 py-2 text-sm text-surface-400 italic">-- Select Connection First --</li>
+                                    </ul>
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
+                @endif
             </div>
 
             {{-- Step 2: Column Selection --}}

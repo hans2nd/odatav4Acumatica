@@ -53,7 +53,7 @@ class User extends Authenticatable
      */
     public function roles(): BelongsToMany
     {
-        return $this->belongsToMany(Role::class, 'role_user');
+        return $this->belongsToMany(Role::class, 'user_roles');
     }
 
     /**
@@ -69,7 +69,7 @@ class User extends Authenticatable
      */
     public function isSuperAdmin(): bool
     {
-        return $this->roles()->where('is_superadmin', true)->exists();
+        return $this->roles()->where('name', 'Administrator')->exists();
     }
 
     /**
@@ -84,7 +84,7 @@ class User extends Authenticatable
 
         return $this->roles()
             ->whereHas('permissions', function ($q) use ($permission) {
-                $q->where('name', $permission);
+                $q->where('permission_key', $permission);
             })
             ->exists();
     }
@@ -100,7 +100,7 @@ class User extends Authenticatable
 
         return $this->roles()
             ->whereHas('permissions', function ($q) use ($permissions) {
-                $q->whereIn('name', $permissions);
+                $q->whereIn('permission_key', $permissions);
             })
             ->exists();
     }
@@ -127,7 +127,7 @@ class User extends Authenticatable
     public function getPrimaryRoleAttribute(): string
     {
         $role = $this->roles()->first();
-        return $role ? $role->display_name : 'No Role';
+        return $role ? $role->name : 'No Role';
     }
 
     /**

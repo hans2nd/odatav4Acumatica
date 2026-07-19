@@ -10,6 +10,7 @@
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
     <style>
         body {
             font-family: 'Inter', system-ui, sans-serif;
@@ -80,7 +81,7 @@
                             <p class="text-label-sm text-surface-500 mt-0.5">{{ auth()->user()->email }}</p>
                             <span class="inline-block mt-1.5 text-[10px] px-2 py-0.5 rounded-full bg-brand-50 text-brand-700 font-semibold tracking-wide uppercase">{{ auth()->user()->primary_role }}</span>
                         </div>
-                        <form method="POST" action="{{ route('logout') }}">
+                        <form method="POST" action="{{ route('logout') }}" onsubmit="localStorage.clear(); sessionStorage.clear();">
                             @csrf
                             <button type="submit" class="w-full flex items-center gap-2.5 px-4 py-2.5 text-body-md text-surface-600 hover:bg-surface-50 hover:text-red-600 transition-colors">
                                 <span class="material-symbols-outlined text-[18px]">logout</span>

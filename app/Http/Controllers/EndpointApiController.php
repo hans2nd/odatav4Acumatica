@@ -46,7 +46,7 @@ class EndpointApiController extends Controller
         }
 
         ApiEndpoint::create($data);
-        app(\App\Services\PermissionSyncService::class)->syncApiEndpoints();
+        app(\App\Services\PermissionGeneratorService::class)->generateApiEndpoints();
 
         return redirect()->route('endpoint.api.index')->with('success', 'Endpoint API created successfully.');
     }
@@ -80,15 +80,16 @@ class EndpointApiController extends Controller
         }
 
         $endpoint->update($data);
-        app(\App\Services\PermissionSyncService::class)->syncApiEndpoints();
+        app(\App\Services\PermissionGeneratorService::class)->generateApiEndpoints();
 
         return redirect()->route('endpoint.api.index')->with('success', 'Endpoint API updated successfully.');
     }
 
     public function destroy($id)
     {
-        ApiEndpoint::findOrFail($id)->delete();
-        app(\App\Services\PermissionSyncService::class)->syncApiEndpoints();
+        $endpoint = ApiEndpoint::findOrFail($id);
+        $endpoint->delete();
+        app(\App\Services\PermissionGeneratorService::class)->generateApiEndpoints();
         return redirect()->route('endpoint.api.index')->with('success', 'Endpoint API deleted successfully.');
     }
 
@@ -107,7 +108,7 @@ class EndpointApiController extends Controller
         $allTables = [];
 
         foreach ($all as $key => $conn) {
-            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv']) && ($conn['is_active'] ?? true)) {
+            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
                 $dbConnections[] = [
                     'key'  => $key,
                     'name' => $conn['name'] ?? $key,

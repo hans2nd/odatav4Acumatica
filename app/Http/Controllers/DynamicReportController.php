@@ -16,6 +16,10 @@ class DynamicReportController extends Controller
      */
     public function show(Request $request, SchemaManager $schemaManager, string $entityKey)
     {
+        if (!$request->user()->hasPermission("{$entityKey}.view")) {
+            abort(403, "You do not have permission to view {$entityKey}.");
+        }
+
         $config = config("acumatica.entities.{$entityKey}");
 
         if (!$config || $config['type'] !== 'transaction') {
@@ -91,6 +95,10 @@ class DynamicReportController extends Controller
      */
     public function export(Request $request, SchemaManager $schemaManager, string $entityKey)
     {
+        if (!$request->user()->hasPermission("{$entityKey}.export")) {
+            abort(403, "You do not have permission to export {$entityKey}.");
+        }
+
         $format = $request->input('format', 'csv');
         $config = config("acumatica.entities.{$entityKey}");
 

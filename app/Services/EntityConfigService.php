@@ -2,8 +2,8 @@
 
 namespace App\Services;
 
-use App\Services\PermissionSyncService;
 use Illuminate\Support\Facades\File;
+use App\Services\PermissionGeneratorService;
 
 class EntityConfigService
 {
@@ -141,7 +141,7 @@ class EntityConfigService
     protected function syncPermissions(): void
     {
         try {
-            app(PermissionSyncService::class)->syncFromEntities();
+            app(PermissionGeneratorService::class)->generate();
         } catch (\Throwable $e) {
             // Silently fail — permissions table may not exist yet (pre-migration)
             \Illuminate\Support\Facades\Log::warning('Permission sync skipped: ' . $e->getMessage());

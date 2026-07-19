@@ -2,44 +2,24 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Permission extends Model
 {
-    protected $fillable = [
-        'name',
-        'display_name',
-        'group',
-        'is_dynamic',
-    ];
+    protected $fillable = ['resource_id', 'action_id', 'permission_key', 'description'];
 
-    protected $casts = [
-        'is_dynamic' => 'boolean',
-    ];
-
-    /**
-     * Roles that have this permission.
-     */
-    public function roles(): BelongsToMany
+    public function resource()
     {
-        return $this->belongsToMany(Role::class, 'role_permission');
+        return $this->belongsTo(Resource::class);
     }
 
-    /**
-     * Scope: only dynamic (auto-generated from entities) permissions.
-     */
-    public function scopeDynamic(Builder $query): Builder
+    public function action()
     {
-        return $query->where('is_dynamic', true);
+        return $this->belongsTo(Action::class);
     }
 
-    /**
-     * Scope: only static (manually defined) permissions.
-     */
-    public function scopeStatic(Builder $query): Builder
+    public function roles()
     {
-        return $query->where('is_dynamic', false);
+        return $this->belongsToMany(Role::class, 'role_permissions');
     }
 }

@@ -1,0 +1,1 @@
+<?php $h=file_get_contents("resources/views/settings/index.blade.php"); preg_match_all("/<script[^>]*>(.*?)<\/script>/s", $h, $m); $j=end($m[1]); $j=preg_replace("/@json\([^)]+\)/", "{}", $j); $j=preg_replace("/\{\{.*?\}\}/", "\"token\"", $j); file_put_contents("test.js", $j); exec("node -c test.js 2>&1", $o, $r); echo implode("\n", $o); exit($r);
