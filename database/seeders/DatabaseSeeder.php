@@ -16,5 +16,7 @@ class DatabaseSeeder extends Seeder
         $this->call([
             RbacSeeder::class,
         ]);
+
+        app(\App\Services\ConnectionService::class)->ensureDefaults();
     }
 }

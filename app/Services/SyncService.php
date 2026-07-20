@@ -45,7 +45,7 @@ class SyncService
             $sourceConnection = ['type' => 'odata'];
         }
 
-        $destConnection = $destConnKey !== 'database_default' ? $destConnKey : null; // null uses laravel default DB connection
+        $destConnection = $destConnKey; // Use explicitly so it uses the dynamic connection
 
         // Create a log record
         $log = SyncLog::create([
@@ -500,7 +500,7 @@ class SyncService
 
         foreach ($entities as $key => $entity) {
             $destConnKey = $entity['destination_connection'] ?? 'database_default';
-            $destConnection = $destConnKey !== 'database_default' ? $destConnKey : null;
+            $destConnection = $destConnKey;
 
             $count = $this->schemaManager->getRowCount($destConnection, $entity['table']);
             $totalRecords += $count;
