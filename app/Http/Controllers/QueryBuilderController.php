@@ -55,26 +55,7 @@ class QueryBuilderController extends Controller
 
         try {
             $connName = $this->resolveConnection($connKey);
-            $driver = DB::connection($connName)->getDriverName();
-
-            $tables = [];
-            if ($driver === 'mysql') {
-                $results = DB::connection($connName)->select("SHOW TABLES");
-                foreach ($results as $row) {
-                    $tables[] = array_values((array) $row)[0];
-                }
-            } elseif ($driver === 'sqlsrv') {
-                $results = DB::connection($connName)->select("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE IN ('BASE TABLE', 'VIEW')");
-                foreach ($results as $row) {
-                    $rowArr = (array) $row;
-                    $tables[] = $rowArr['TABLE_NAME'] ?? $rowArr['table_name'] ?? current($rowArr);
-                }
-            } elseif ($driver === 'firebird') {
-                $results = DB::connection($connName)->select("SELECT RDB\$RELATION_NAME FROM RDB\$RELATIONS WHERE RDB\$VIEW_BLR IS NULL AND (RDB\$SYSTEM_FLAG IS NULL OR RDB\$SYSTEM_FLAG = 0)");
-                foreach ($results as $row) {
-                    $tables[] = trim(array_values((array) $row)[0]);
-                }
-            }
+            $tables = app(\App\Services\ConnectionService::class)->getTables($connName);
 
             sort($tables);
 

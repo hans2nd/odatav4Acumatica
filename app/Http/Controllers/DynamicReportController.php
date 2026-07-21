@@ -316,7 +316,7 @@ class DynamicReportController extends Controller
     private function getVisibleColumns(string $connName, string $tableName): array
     {
         $firstRow = DB::connection($connName)->table($tableName)->first();
-        $allColumns = $firstRow ? array_keys((array)$firstRow) : DB::connection($connName)->getSchemaBuilder()->getColumnListing($tableName);
+        $allColumns = $firstRow ? array_keys((array)$firstRow) : app(\App\Services\ConnectionService::class)->getTableColumns($connName, $tableName);
         return array_values(array_filter($allColumns, function ($col) {
             return !in_array($col, ['_sync_id', '_synced_at', '_row_hash']);
         }));

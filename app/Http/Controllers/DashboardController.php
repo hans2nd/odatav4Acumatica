@@ -10,85 +10,69 @@ use Illuminate\Support\Facades\DB;
 
 class DashboardController extends Controller
 {
-    public function index(SyncService $syncService)
+    public function index()
     {
-        $dbConnected = true;
-        try {
-            DB::connection()->getPdo();
-        } catch (\Exception $e) {
-            $dbConnected = false;
-        }
+        $activeConnections = \App\Models\Connection::where('is_connected', true)
+            ->get()
+            ->keyBy('key')
+            ->toArray();
 
-        if (!$dbConnected) {
-            $stats = [
-                'total_records'       => 0,
-                'total_entities'      => count(config('acumatica.entities', [])),
-                'master_entities'     => 0,
-                'transaction_entities' => 0,
-                'running_jobs'        => 0,
-                'success_count'       => 0,
-                'failed_count'        => 0,
-                'entity_stats'        => [],
-            ];
-            $recentLogs = collect();
-        } else {
-            $stats = $syncService->getDashboardStats();
-
-            $hasLogsTable = \Illuminate\Support\Facades\Schema::hasTable('sync_logs');
-            $recentLogs = $hasLogsTable ? SyncLog::orderByDesc('id')
-                ->limit(15)
-                ->get() : collect();
-        }
-
-        $masterRecords = collect($stats['entity_stats'])
-            ->where('type', 'master')
-            ->sum('records');
-
-        $transactionRecords = collect($stats['entity_stats'])
-            ->where('type', 'transaction')
-            ->sum('records');
+        $hasLogsTable = \Illuminate\Support\Facades\Schema::hasTable('sync_logs');
+        $recentLogs = $hasLogsTable ? SyncLog::orderByDesc('id')
+            ->limit(10)
+            ->get() : collect();
 
         return view('dashboard', [
-            'stats'              => $stats,
+            'activeConnections'  => $activeConnections,
             'recentLogs'         => $recentLogs,
-            'masterRecords'      => $masterRecords,
-            'transactionRecords' => $transactionRecords,
             'activeTab'          => 'overview',
         ]);
     }
 
-    public function connectionStatus(AcumaticaODataService $odataService): JsonResponse
+    public function connectionStatus(): JsonResponse
     {
-        // Test Database
-        $defaultDb = config('database.default', 'sqlsrv');
-        $dbNameLabel = $defaultDb === 'mysql' ? 'MySQL' : 'SQL Server';
+        $all = \App\Models\Connection::where('is_connected', true)->get();
+        $statuses = [];
 
-        $dbStatus = ['connected' => false, 'ping_ms' => 0, 'message' => 'Not tested', 'type' => $dbNameLabel];
-        try {
+        foreach ($all as $connModel) {
+            $key = $connModel->key;
+            $conn = $connModel->toArray();
+
+            $status = [
+                'connected' => false, 
+                'ping_ms' => 0, 
+                'message' => 'Not tested', 
+                'type' => $conn['type'], 
+                'name' => $conn['name'] ?? $key
+            ];
+            
             $start = microtime(true);
-            DB::connection($defaultDb)->getPdo();
-            $elapsed = round((microtime(true) - $start) * 1000);
-            $dbStatus = [
-                'connected' => true,
-                'ping_ms'   => $elapsed,
-                'message'   => 'Connected',
-                'type'      => $dbNameLabel,
-            ];
-        } catch (\Exception $e) {
-            $dbStatus = [
-                'connected' => false,
-                'ping_ms'   => 0,
-                'message'   => $e->getMessage(),
-                'type'      => $dbNameLabel,
-            ];
+            try {
+                if (in_array($conn['type'], ['mysql', 'sqlsrv', 'firebird'])) {
+                    if (config()->has("database.connections.{$key}")) {
+                        DB::connection($key)->getPdo();
+                        $elapsed = round((microtime(true) - $start) * 1000);
+                        $status['connected'] = true;
+                        $status['ping_ms'] = $elapsed;
+                        $status['message'] = 'Connected';
+                    } else {
+                        $status['message'] = 'Driver not configured by provider';
+                    }
+                } elseif ($conn['type'] === 'odata' || $conn['type'] === 'rest_api') {
+                    $odataService = app(\App\Services\AcumaticaODataService::class);
+                    $odataService->setConnectionConfig($conn);
+                    $testResult = $odataService->testConnection();
+                    $status['connected'] = $testResult['connected'] ?? false;
+                    $status['ping_ms'] = $testResult['ping_ms'] ?? 0;
+                    $status['message'] = $testResult['message'] ?? 'Tested';
+                }
+            } catch (\Exception $e) {
+                $status['message'] = $e->getMessage();
+            }
+            
+            $statuses[$key] = $status;
         }
 
-        // Test Acumatica
-        $acumaticaStatus = $odataService->testConnection();
-
-        return response()->json([
-            'database'   => $dbStatus,
-            'acumatica'  => $acumaticaStatus,
-        ]);
+        return response()->json($statuses);
     }
 }

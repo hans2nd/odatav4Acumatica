@@ -170,45 +170,49 @@
         populateFilterDataList();
         
         searchInput.placeholder = 'Search table...';
-        
-        renderApiTableDropdown(allTablesData[conn] || []);
+        const ul = document.getElementById('apiTableDropdown');
         
         if (forceFocus) {
-            document.getElementById('apiTableDropdown').classList.remove('hidden');
+            ul.classList.remove('hidden');
             searchInput.focus();
         }
+
+        renderApiTableDropdown(allTablesData[conn] || []);
     }
+
+    // Expose select table globally for inline onclick
+    window.selectApiTable = function(table) {
+        const ul = document.getElementById('apiTableDropdown');
+        document.getElementById('apiTableSearch').value = table;
+        document.getElementById('apiTableInput').value = table;
+        ul.classList.add('hidden');
+        
+        // Fetch columns
+        fetchColumns(document.getElementById('apiConnection').value, table);
+        
+        // Trigger auto name generation if name is empty
+        const apiNameInput = document.getElementById('apiName');
+        if(!apiNameInput.value) {
+            apiNameInput.value = table;
+            generateSlug();
+        }
+    };
 
     function renderApiTableDropdown(tables) {
         const ul = document.getElementById('apiTableDropdown');
-        ul.innerHTML = '';
         
         if (tables.length === 0) {
             ul.innerHTML = '<li class="px-3 py-2 text-surface-500 text-body-sm text-center">No tables available for this connection</li>';
             return;
         }
 
+        let html = '';
         tables.forEach(table => {
-            const li = document.createElement('li');
-            li.className = 'px-4 py-3 hover:bg-surface-50 cursor-pointer text-body-sm font-medium text-surface-700 transition-colors border-b border-surface-50 last:border-0';
-            li.textContent = table;
-            li.onclick = () => {
-                document.getElementById('apiTableSearch').value = table;
-                document.getElementById('apiTableInput').value = table;
-                ul.classList.add('hidden');
-                
-                // Fetch columns
-                fetchColumns(document.getElementById('apiConnection').value, table);
-                
-                // Trigger auto name generation if name is empty
-                const apiNameInput = document.getElementById('apiName');
-                if(!apiNameInput.value) {
-                    apiNameInput.value = table;
-                    generateSlug();
-                }
-            };
-            ul.appendChild(li);
+            // Escape quotes in table name
+            const escapedTable = table.replace(/'/g, "\\'");
+            html += `<li onclick="window.selectApiTable('${escapedTable}')" class="px-4 py-3 hover:bg-surface-50 cursor-pointer text-body-sm font-medium text-surface-700 transition-colors border-b border-surface-50 last:border-0">${table}</li>`;
         });
+        ul.innerHTML = html;
     }
 
     function filterApiTableList(query) {

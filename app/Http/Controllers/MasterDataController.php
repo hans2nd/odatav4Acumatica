@@ -61,7 +61,7 @@ class MasterDataController extends Controller
 
         if ($tableExists) {
             $firstRow = DB::connection($connName)->table($tableName)->first();
-            $columns = $firstRow ? array_keys((array)$firstRow) : DB::connection($connName)->getSchemaBuilder()->getColumnListing($tableName);
+            $columns = $firstRow ? array_keys((array)$firstRow) : app(\App\Services\ConnectionService::class)->getTableColumns($connName, $tableName);
             
             $query = DB::connection($connName)->table($tableName)->orderByDesc('_sync_id');
 

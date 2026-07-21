@@ -114,30 +114,9 @@ class EndpointApiController extends Controller
                     'name' => $conn['name'] ?? $key,
                     'type' => $conn['type'],
                 ];
-                
                 try {
                     $connName = $this->resolveConnection($key);
-                    $driver = DB::connection($connName)->getDriverName();
-                    
-                    $tables = [];
-                    if ($driver === 'mysql') {
-                        $results = DB::connection($connName)->select("SHOW TABLES");
-                        foreach ($results as $row) {
-                            $tables[] = array_values((array) $row)[0];
-                        }
-                    } elseif ($driver === 'sqlsrv') {
-                        $results = DB::connection($connName)->select("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'");
-                        foreach ($results as $row) {
-                            $tables[] = $row->TABLE_NAME;
-                        }
-                    } elseif ($driver === 'firebird') {
-                        $results = DB::connection($connName)->select("SELECT RDB\$RELATION_NAME FROM RDB\$RELATIONS WHERE RDB\$VIEW_BLR IS NULL AND (RDB\$SYSTEM_FLAG IS NULL OR RDB\$SYSTEM_FLAG = 0)");
-                        foreach ($results as $row) {
-                            $tables[] = trim(array_values((array) $row)[0]);
-                        }
-                    }
-                    sort($tables);
-                    $allTables[$key] = $tables;
+                    $allTables[$key] = app(\App\Services\ConnectionService::class)->getTables($connName);
                 } catch (\Exception $e) {
                     $allTables[$key] = [];
                 }

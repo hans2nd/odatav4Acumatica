@@ -120,21 +120,7 @@ class ReportBuilderController extends Controller
             $pdo = DB::connection($connName)->getPdo();
             $driver = DB::connection($connName)->getDriverName();
 
-            $tables = [];
-            if ($driver === 'mysql') {
-                $results = DB::connection($connName)->select("SHOW TABLES");
-                foreach ($results as $row) {
-                    $tables[] = array_values((array) $row)[0];
-                }
-            } elseif ($driver === 'sqlsrv') {
-                $results = DB::connection($connName)->select("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE IN ('BASE TABLE', 'VIEW')");
-                foreach ($results as $row) {
-                    $rowArr = (array) $row;
-                    $tables[] = $rowArr['TABLE_NAME'] ?? $rowArr['table_name'] ?? current($rowArr);
-                }
-            }
-
-            sort($tables);
+            $tables = app(\App\Services\ConnectionService::class)->getTables($connName);
 
             return response()->json(['success' => true, 'tables' => $tables]);
         } catch (\Throwable $e) {
@@ -156,7 +142,7 @@ class ReportBuilderController extends Controller
 
         try {
             $connName = $this->resolveConnection($connKey);
-            $columns = DB::connection($connName)->getSchemaBuilder()->getColumnListing($table);
+            $columns = app(\App\Services\ConnectionService::class)->getTableColumns($connName, $table);
 
             return response()->json(['success' => true, 'columns' => $columns]);
         } catch (\Throwable $e) {
@@ -187,7 +173,7 @@ class ReportBuilderController extends Controller
             $connName = $this->resolveConnection($connKey);
 
             // Validate columns exist
-            $availableColumns = DB::connection($connName)->getSchemaBuilder()->getColumnListing($table);
+            $availableColumns = app(\App\Services\ConnectionService::class)->getTableColumns($connName, $table);
             $validColumns = array_intersect($columns, $availableColumns);
 
             if (empty($validColumns)) {

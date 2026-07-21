@@ -305,7 +305,7 @@ class SyncController extends Controller
             $dbColumns = [];
             try {
                 $firstRow = \Illuminate\Support\Facades\DB::connection($connName)->table($tableName)->first();
-                $columns = $firstRow ? array_keys((array)$firstRow) : \Illuminate\Support\Facades\DB::connection($connName)->getSchemaBuilder()->getColumnListing($tableName);
+                $columns = $firstRow ? array_keys((array)$firstRow) : app(\App\Services\ConnectionService::class)->getTableColumns($connName, $tableName);
                 
                 if (!empty($columns)) {
                     $dbColumns = array_values(array_filter($columns, fn($col) => !in_array(strtolower($col), ['_sync_id', '_synced_at', '_row_hash'])));

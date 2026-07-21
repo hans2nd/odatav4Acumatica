@@ -81,20 +81,20 @@ class AppServiceProvider extends ServiceProvider
                                 // 'trust_server_certificate' => env('DB_TRUST_SERVER_CERTIFICATE', 'false'),
                             ]
                         ]);
+                    } elseif ($conn['type'] === 'firebird') {
+                        config([
+                            "database.connections.{$key}" => [
+                                'driver' => 'firebird',
+                                'host' => $creds['host'] ?? '127.0.0.1',
+                                'port' => $creds['port'] ?? '3051',
+                                'database' => $creds['database'] ?? '',
+                                'username' => $creds['username'] ?? '',
+                                'password' => $creds['password'] ?? '',
+                                'charset' => 'utf8',
+                                'prefix' => '',
+                            ]
+                        ]);
                     }
-                } elseif ($conn['type'] === 'firebird') {
-                    config([
-                        "database.connections.{$key}" => [
-                            'driver' => 'firebird',
-                            'host' => $creds['host'] ?? '127.0.0.1',
-                            'port' => $creds['port'] ?? '3051',
-                            'database' => $creds['database'] ?? '',
-                            'username' => $creds['username'] ?? '',
-                            'password' => $creds['password'] ?? '',
-                            'charset' => 'utf8',
-                            'prefix' => '',
-                        ]
-                    ]);
                 }
             }
         } catch (\Exception $e) {
