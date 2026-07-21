@@ -28,7 +28,7 @@ class QueryBuilderController extends Controller
         $dbConnections = [];
 
         foreach ($all as $key => $conn) {
-            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv', 'firebird']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
+            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv', 'firebird', 'local_env']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
                 $dbConnections[] = [
                     'key'  => $key,
                     'name' => $conn['name'] ?? $key,
@@ -54,7 +54,7 @@ class QueryBuilderController extends Controller
         }
 
         try {
-            $connName = $this->resolveConnection($connKey);
+            $connName = $this->connectionService->resolveConnectionName($connKey);
             $tables = app(\App\Services\ConnectionService::class)->getTables($connName);
 
             sort($tables);
@@ -78,7 +78,7 @@ class QueryBuilderController extends Controller
         }
 
         try {
-            $connName = $this->resolveConnection($connKey);
+            $connName = $this->connectionService->resolveConnectionName($connKey);
             $driver = DB::connection($connName)->getDriverName();
 
             $columns = [];
@@ -162,7 +162,7 @@ class QueryBuilderController extends Controller
         $limit    = $request->input('limit', 500);
 
         try {
-            $connName = $this->resolveConnection($connKey);
+            $connName = $this->connectionService->resolveConnectionName($connKey);
             $driver = DB::connection($connName)->getDriverName();
             
             if (!empty($rawSql)) {
@@ -338,7 +338,7 @@ class QueryBuilderController extends Controller
         $format  = $request->input('format');
 
         try {
-            $connName = $this->resolveConnection($connKey);
+            $connName = $this->connectionService->resolveConnectionName($connKey);
 
             if (!preg_match('/^\s*SELECT\s/i', $sql)) {
                 return response()->json(['success' => false, 'message' => 'Only SELECT queries are allowed.'], 400);
@@ -399,39 +399,6 @@ class QueryBuilderController extends Controller
 
     // --- Private Helpers ---
 
-    private function resolveConnection(string $connKey): string
-    {
-        $conn = $this->connectionService->get($connKey);
-        if (!$conn) {
-            throw new \RuntimeException("Connection '{$connKey}' not found.");
-        }
-
-        $type = $conn['type'];
-        $creds = $conn['credentials'] ?? [];
-
-        $connName = 'query_builder_' . $connKey;
-
-        $mergedConfig = array_merge(
-            is_array(config("database.connections.{$type}")) ? config("database.connections.{$type}") : [],
-            [
-                'driver'   => $type,
-                'host'     => $creds['host'] ?? '',
-                'port'     => $creds['port'] ?? '',
-                'database' => $creds['database'] ?? '',
-                'username' => $creds['username'] ?? '',
-                'password' => $creds['password'] ?? '',
-            ]
-        );
-
-        if ($type === 'sqlsrv') {
-            $mergedConfig['encrypt'] = $mergedConfig['encrypt'] ?? 'no';
-            $mergedConfig['trust_server_certificate'] = $mergedConfig['trust_server_certificate'] ?? 'true';
-        }
-
-        config(["database.connections.{$connName}" => $mergedConfig]);
-
-        return $connName;
-    }
 
     private function generateCsv(array $rows, array $columns, string $filePath): void
     {

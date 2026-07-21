@@ -42,7 +42,7 @@
                                 <td class="py-3 px-5 font-medium text-surface-800">{{ $c['name'] }}</td>
                                 <td class="py-3 px-5">
                                     <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-label-sm font-semibold
-                                        {{ in_array($c['type'], ['mysql', 'sqlsrv', 'firebird']) ? 'bg-violet-50 text-violet-700' : 'bg-sky-50 text-sky-700' }}">
+                                        {{ in_array($c['type'], ['mysql', 'sqlsrv', 'firebird', 'local_env']) ? 'bg-violet-50 text-violet-700' : 'bg-sky-50 text-sky-700' }}">
                                         {{ strtoupper($c['type']) }}
                                     </span>
                                 </td>
@@ -210,6 +210,7 @@
                             <option value="mysql">MySQL</option>
                             <option value="sqlsrv">SQL Server</option>
                             <option value="firebird">Firebird</option>
+                            <option value="local_env">Local DB (from .env)</option>
                         </select>
                     </div>
 

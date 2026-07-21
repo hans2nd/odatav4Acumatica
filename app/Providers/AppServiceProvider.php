@@ -39,10 +39,13 @@ class AppServiceProvider extends ServiceProvider
             $connections = $connectionService->getAll();
 
             foreach ($connections as $key => $conn) {
-                if ($conn['type'] === 'mysql' || $conn['type'] === 'sqlsrv' || $conn['type'] === 'firebird') {
+                if (in_array($conn['type'], ['mysql', 'sqlsrv', 'firebird', 'local_env'])) {
                     $creds = $conn['credentials'] ?? [];
 
-                    if ($conn['type'] === 'mysql') {
+                    if ($conn['type'] === 'local_env') {
+                        $defaultConn = config('database.default');
+                        config(["database.connections.{$key}" => config("database.connections.{$defaultConn}")]);
+                    } elseif ($conn['type'] === 'mysql') {
                         config([
                             "database.connections.{$key}" => [
                                 'driver' => 'mysql',

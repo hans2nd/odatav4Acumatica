@@ -37,7 +37,7 @@ class DataEndpointController extends Controller
         }
 
         try {
-            $connName = $this->resolveConnection($endpoint->connection_key);
+            $connName = $this->connectionService->resolveConnectionName($endpoint->connection_key);
             
             // Allow dynamic per_page from query, default to 1000
             $perPage = $request->query('per_page', 1000);
@@ -90,38 +90,5 @@ class DataEndpointController extends Controller
         }
     }
 
-    protected function resolveConnection($connectionKey)
-    {
-        $conn = $this->connectionService->get($connectionKey);
-        if (!$conn) {
-            throw new \Exception("Connection not found: {$connectionKey}");
-        }
 
-        $type = $conn['type'];
-        $creds = $conn['credentials'] ?? [];
-        $laravelConnName = 'dyn_' . $connectionKey;
-        
-        if (!config()->has("database.connections.{$laravelConnName}")) {
-            $mergedConfig = array_merge(
-                is_array(config("database.connections.{$type}")) ? config("database.connections.{$type}") : [],
-                [
-                    'driver'   => $type,
-                    'host'     => $creds['host'] ?? '',
-                    'port'     => $creds['port'] ?? '',
-                    'database' => $creds['database'] ?? '',
-                    'username' => $creds['username'] ?? '',
-                    'password' => $creds['password'] ?? '',
-                ]
-            );
-
-            if ($type === 'sqlsrv') {
-                $mergedConfig['encrypt'] = $mergedConfig['encrypt'] ?? 'no';
-                $mergedConfig['trust_server_certificate'] = $mergedConfig['trust_server_certificate'] ?? 'true';
-            }
-
-            config(["database.connections.{$laravelConnName}" => $mergedConfig]);
-        }
-
-        return $laravelConnName;
-    }
 }

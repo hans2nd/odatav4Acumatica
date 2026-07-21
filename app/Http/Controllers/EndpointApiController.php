@@ -108,14 +108,14 @@ class EndpointApiController extends Controller
         $allTables = [];
 
         foreach ($all as $key => $conn) {
-            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv', 'firebird']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
+            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv', 'firebird', 'local_env']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
                 $dbConnections[] = [
                     'key'  => $key,
                     'name' => $conn['name'] ?? $key,
                     'type' => $conn['type'],
                 ];
                 try {
-                    $connName = $this->resolveConnection($key);
+                    $connName = $this->connectionService->resolveConnectionName($key);
                     $allTables[$key] = app(\App\Services\ConnectionService::class)->getTables($connName);
                 } catch (\Exception $e) {
                     $allTables[$key] = [];
@@ -126,38 +126,5 @@ class EndpointApiController extends Controller
         return ['dbConnections' => $dbConnections, 'allTables' => $allTables];
     }
 
-    protected function resolveConnection($connectionKey)
-    {
-        $conn = $this->connectionService->get($connectionKey);
-        if (!$conn) {
-            throw new \Exception("Connection not found: {$connectionKey}");
-        }
 
-        $type = $conn['type'];
-        $creds = $conn['credentials'] ?? [];
-        $laravelConnName = 'dyn_' . $connectionKey;
-        
-        if (!config()->has("database.connections.{$laravelConnName}")) {
-            $mergedConfig = array_merge(
-                is_array(config("database.connections.{$type}")) ? config("database.connections.{$type}") : [],
-                [
-                    'driver'   => $type,
-                    'host'     => $creds['host'] ?? '',
-                    'port'     => $creds['port'] ?? '',
-                    'database' => $creds['database'] ?? '',
-                    'username' => $creds['username'] ?? '',
-                    'password' => $creds['password'] ?? '',
-                ]
-            );
-
-            if ($type === 'sqlsrv') {
-                $mergedConfig['encrypt'] = $mergedConfig['encrypt'] ?? 'no';
-                $mergedConfig['trust_server_certificate'] = $mergedConfig['trust_server_certificate'] ?? 'true';
-            }
-
-            config(["database.connections.{$laravelConnName}" => $mergedConfig]);
-        }
-
-        return $laravelConnName;
-    }
 }

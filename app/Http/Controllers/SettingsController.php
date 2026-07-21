@@ -42,12 +42,16 @@ class SettingsController extends Controller
         $validated = $request->validate([
             'key'         => 'required|string|max:100|regex:/^[A-Za-z0-9_]*$/',
             'name'        => 'required|string|max:255',
-            'type'        => 'required|in:odata,rest_api,mysql,sqlsrv,firebird',
-            'credentials' => 'required|array',
+            'type'        => 'required|in:odata,rest_api,mysql,sqlsrv,firebird,local_env',
+            'credentials' => 'nullable|array',
         ]);
 
         if ($this->connectionService->exists($validated['key'])) {
             return response()->json(['success' => false, 'message' => 'Connection key already exists.'], 422);
+        }
+
+        if ($validated['type'] === 'local_env') {
+            $validated['is_connected'] = true;
         }
 
         $this->connectionService->save($validated['key'], $validated);
@@ -68,13 +72,17 @@ class SettingsController extends Controller
         $validated = $request->validate([
             'key'         => 'required|string|max:100|regex:/^[A-Za-z0-9_]*$/',
             'name'        => 'required|string|max:255',
-            'type'        => 'required|in:odata,rest_api,mysql,sqlsrv,firebird',
-            'credentials' => 'required|array',
+            'type'        => 'required|in:odata,rest_api,mysql,sqlsrv,firebird,local_env',
+            'credentials' => 'nullable|array',
         ]);
 
         $newKey = $validated['key'];
         if ($newKey !== $key && $this->connectionService->exists($newKey)) {
             return response()->json(['success' => false, 'message' => 'Connection key already exists.'], 422);
+        }
+
+        if ($validated['type'] === 'local_env') {
+            $validated['is_connected'] = true;
         }
 
         $this->connectionService->update($key, $newKey, $validated);
@@ -109,7 +117,7 @@ class SettingsController extends Controller
             $credentials = $conn['credentials'] ?? [];
         }
 
-        if (in_array($type, ['mysql', 'sqlsrv', 'firebird'])) {
+        if (in_array($type, ['mysql', 'sqlsrv', 'firebird', 'local_env'])) {
             try {
                 $start = microtime(true);
 
@@ -118,21 +126,27 @@ class SettingsController extends Controller
                     $pdo = new \PDO($dsn, $credentials['username'] ?? '', $credentials['password'] ?? '');
                 } else {
                     $connectionName = 'test_connection_' . time();
-                    $mergedConfig = array_merge(
-                        is_array(config("database.connections.{$type}")) ? config("database.connections.{$type}") : [],
-                        [
-                            'driver'   => $type,
-                            'host'     => $credentials['host'] ?? '',
-                            'port'     => $credentials['port'] ?? '',
-                            'database' => $credentials['database'] ?? '',
-                            'username' => $credentials['username'] ?? '',
-                            'password' => $credentials['password'] ?? '',
-                        ]
-                    );
                     
-                    if ($type === 'sqlsrv') {
-                        $mergedConfig['encrypt'] = $mergedConfig['encrypt'] ?? 'no';
-                        $mergedConfig['trust_server_certificate'] = $mergedConfig['trust_server_certificate'] ?? 'true';
+                    if ($type === 'local_env') {
+                        $defaultConn = config('database.default');
+                        $mergedConfig = config("database.connections.{$defaultConn}");
+                    } else {
+                        $mergedConfig = array_merge(
+                            is_array(config("database.connections.{$type}")) ? config("database.connections.{$type}") : [],
+                            [
+                                'driver'   => $type,
+                                'host'     => $credentials['host'] ?? '',
+                                'port'     => $credentials['port'] ?? '',
+                                'database' => $credentials['database'] ?? '',
+                                'username' => $credentials['username'] ?? '',
+                                'password' => $credentials['password'] ?? '',
+                            ]
+                        );
+                        
+                        if ($type === 'sqlsrv') {
+                            $mergedConfig['encrypt'] = $mergedConfig['encrypt'] ?? 'no';
+                            $mergedConfig['trust_server_certificate'] = $mergedConfig['trust_server_certificate'] ?? 'true';
+                        }
                     }
                     
                     \Illuminate\Support\Facades\Log::info("Testing DB Connection", ['config' => $mergedConfig]);
@@ -341,47 +355,12 @@ class SettingsController extends Controller
             if ($type === 'odata') {
                 $odataService->setConnectionConfig(['credentials' => $credentials]);
                 $objects = $odataService->getODataEndpoints();
-            } elseif (in_array($type, ['mysql', 'sqlsrv', 'firebird'])) {
-                if ($type === 'firebird') {
-                    $dsn = "firebird:dbname={$credentials['host']}/{$credentials['port']}:{$credentials['database']}";
-                    $pdo = new \PDO($dsn, $credentials['username'] ?? '', $credentials['password'] ?? '');
-                    
-                    $stmt = $pdo->query("SELECT RDB\$RELATION_NAME FROM RDB\$RELATIONS WHERE RDB\$VIEW_BLR IS NULL AND (RDB\$SYSTEM_FLAG IS NULL OR RDB\$SYSTEM_FLAG = 0)");
-                    while ($row = $stmt->fetch(\PDO::FETCH_NUM)) {
-                        $objects[] = trim($row[0]);
-                    }
-                } else {
-                    // If it's a dynamic connection, we configure it
-                    $connName = 'temp_objects_' . time();
-                    $mergedConfig = array_merge(
-                        is_array(config("database.connections.{$type}")) ? config("database.connections.{$type}") : [],
-                        [
-                            'driver'   => $type,
-                            'host'     => $credentials['host'] ?? '',
-                            'port'     => $credentials['port'] ?? '',
-                            'database' => $credentials['database'] ?? '',
-                            'username' => $credentials['username'] ?? '',
-                            'password' => $credentials['password'] ?? '',
-                        ]
-                    );
-                    if ($type === 'sqlsrv') {
-                        $mergedConfig['encrypt'] = $mergedConfig['encrypt'] ?? 'no';
-                        $mergedConfig['trust_server_certificate'] = $mergedConfig['trust_server_certificate'] ?? 'true';
-                    }
-                    config(["database.connections.{$connName}" => $mergedConfig]);
-
-                    $pdo = \Illuminate\Support\Facades\DB::connection($connName)->getPdo();
-                    if ($type === 'mysql') {
-                        $stmt = $pdo->query("SHOW TABLES");
-                        while ($row = $stmt->fetch(\PDO::FETCH_NUM)) {
-                            $objects[] = $row[0];
-                        }
-                    } elseif ($type === 'sqlsrv') {
-                        $stmt = $pdo->query("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' OR TABLE_TYPE = 'VIEW'");
-                        while ($row = $stmt->fetch(\PDO::FETCH_NUM)) {
-                            $objects[] = $row[0];
-                        }
-                    }
+            } elseif (in_array($type, ['mysql', 'sqlsrv', 'firebird', 'local_env'])) {
+                try {
+                    $connName = $this->connectionService->resolveConnectionName($key);
+                    $objects = $this->connectionService->getTables($connName);
+                } catch (\Exception $e) {
+                    $objects = [];
                 }
             }
 

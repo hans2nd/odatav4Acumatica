@@ -48,7 +48,7 @@ class DashboardController extends Controller
             
             $start = microtime(true);
             try {
-                if (in_array($conn['type'], ['mysql', 'sqlsrv', 'firebird'])) {
+                if (in_array($conn['type'], ['mysql', 'sqlsrv', 'firebird', 'local_env'])) {
                     if (config()->has("database.connections.{$key}")) {
                         DB::connection($key)->getPdo();
                         $elapsed = round((microtime(true) - $start) * 1000);

@@ -175,6 +175,49 @@ class ConnectionService
     }
 
     /**
+     * Resolve a connection key to a Laravel DB connection name.
+     */
+    public function resolveConnectionName(string $connKey): string
+    {
+        $conn = $this->get($connKey);
+        if (!$conn) {
+            throw new \Exception("Connection not found: {$connKey}");
+        }
+
+        $type = $conn['type'];
+        $laravelConnName = 'dyn_' . $connKey;
+
+        if (!config()->has("database.connections.{$laravelConnName}")) {
+            if ($type === 'local_env') {
+                $defaultConn = config('database.default');
+                $mergedConfig = config("database.connections.{$defaultConn}");
+            } else {
+                $creds = $conn['credentials'] ?? [];
+                $mergedConfig = array_merge(
+                    is_array(config("database.connections.{$type}")) ? config("database.connections.{$type}") : [],
+                    [
+                        'driver'   => $type,
+                        'host'     => $creds['host'] ?? '',
+                        'port'     => $creds['port'] ?? '',
+                        'database' => $creds['database'] ?? '',
+                        'username' => $creds['username'] ?? '',
+                        'password' => $creds['password'] ?? '',
+                    ]
+                );
+
+                if ($type === 'sqlsrv') {
+                    $mergedConfig['encrypt'] = $mergedConfig['encrypt'] ?? 'no';
+                    $mergedConfig['trust_server_certificate'] = $mergedConfig['trust_server_certificate'] ?? 'true';
+                }
+            }
+
+            config(["database.connections.{$laravelConnName}" => $mergedConfig]);
+        }
+
+        return $laravelConnName;
+    }
+
+    /**
      * Get tables safely for any driver.
      */
     public function getTables(string $connName): array

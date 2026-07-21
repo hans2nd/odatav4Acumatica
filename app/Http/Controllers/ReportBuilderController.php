@@ -29,7 +29,7 @@ class ReportBuilderController extends Controller
 
         foreach ($all as $key => $conn) {
             // Only include active and connected database-type connections
-            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv', 'firebird']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
+            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv', 'firebird', 'local_env']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
                 $dbConnections[] = [
                     'key'  => $key,
                     'name' => $conn['name'] ?? $key,
@@ -38,7 +38,7 @@ class ReportBuilderController extends Controller
                 
                 // Preload tables for this connection
                 try {
-                    $connName = $this->resolveConnection($key);
+                    $connName = $this->connectionService->resolveConnectionName($key);
                     $driver = \Illuminate\Support\Facades\DB::connection($connName)->getDriverName();
                     
                     $tables = [];
@@ -84,10 +84,9 @@ class ReportBuilderController extends Controller
 
         foreach ($all as $key => $conn) {
             // Only include active and connected database-type connections
-            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv', 'firebird']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
+            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv', 'firebird', 'local_env']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
                 try {
-                    // Resolve and test the connection
-                    $connName = $this->resolveConnection($key);
+                    $connName = $this->connectionService->resolveConnectionName($key);
                     \Illuminate\Support\Facades\DB::connection($connName)->getPdo();
 
                     $dbConnections[] = [
@@ -116,7 +115,7 @@ class ReportBuilderController extends Controller
         }
 
         try {
-            $connName = $this->resolveConnection($connKey);
+            $connName = $this->connectionService->resolveConnectionName($connKey);
             $pdo = DB::connection($connName)->getPdo();
             $driver = DB::connection($connName)->getDriverName();
 
@@ -141,7 +140,7 @@ class ReportBuilderController extends Controller
         }
 
         try {
-            $connName = $this->resolveConnection($connKey);
+            $connName = $this->connectionService->resolveConnectionName($connKey);
             $columns = app(\App\Services\ConnectionService::class)->getTableColumns($connName, $table);
 
             return response()->json(['success' => true, 'columns' => $columns]);
@@ -170,7 +169,7 @@ class ReportBuilderController extends Controller
         $filters = $request->input('filters', []);
 
         try {
-            $connName = $this->resolveConnection($connKey);
+            $connName = $this->connectionService->resolveConnectionName($connKey);
 
             // Validate columns exist
             $availableColumns = app(\App\Services\ConnectionService::class)->getTableColumns($connName, $table);
@@ -278,42 +277,7 @@ class ReportBuilderController extends Controller
 
     // ─── Private Helpers ─────────────────────────────────────────────────
 
-    /**
-     * Resolve a connection key to a Laravel DB connection name.
-     */
-    private function resolveConnection(string $connKey): string
-    {
-        $conn = $this->connectionService->get($connKey);
-        if (!$conn) {
-            throw new \RuntimeException("Connection '{$connKey}' not found.");
-        }
 
-        $type = $conn['type'];
-        $creds = $conn['credentials'] ?? [];
-
-        $connName = 'report_builder_' . $connKey;
-
-        $mergedConfig = array_merge(
-            is_array(config("database.connections.{$type}")) ? config("database.connections.{$type}") : [],
-            [
-                'driver'   => $type,
-                'host'     => $creds['host'] ?? '',
-                'port'     => $creds['port'] ?? '',
-                'database' => $creds['database'] ?? '',
-                'username' => $creds['username'] ?? '',
-                'password' => $creds['password'] ?? '',
-            ]
-        );
-
-        if ($type === 'sqlsrv') {
-            $mergedConfig['encrypt'] = $mergedConfig['encrypt'] ?? 'no';
-            $mergedConfig['trust_server_certificate'] = $mergedConfig['trust_server_certificate'] ?? 'true';
-        }
-
-        config(["database.connections.{$connName}" => $mergedConfig]);
-
-        return $connName;
-    }
 
     /**
      * Generate a CSV file from the query.
