@@ -65,12 +65,23 @@
                                 <span class="material-symbols-outlined text-[14px]">visibility</span> View
                             </a>
                         @endif
-                        <button
-                            onclick="openScheduleModal('{{ $key }}', '{{ $info['config']['description'] }}', {{ $info['config']['schedule_minutes'] ?? 0 }})"
-                            class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg {{ !empty($info['config']['schedule_minutes']) ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 border border-amber-300' : 'bg-surface-100 text-surface-600 hover:bg-surface-200' }} text-label-md transition-all duration-200"
+                        <button onclick="openScheduleModal('{{ $key }}', '{{ $info['config']['description'] }}', '{{ $info['schedule']->frequency ?? '' }}', '{{ $info['schedule']->interval ?? '' }}', '{{ $info['schedule']->time ?? '' }}', '{{ $info['schedule']->day_of_week ?? '' }}', '{{ $info['schedule']->day_of_month ?? '' }}')"
+                            class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg {{ !empty($info['schedule']->frequency) ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 border border-amber-300' : 'bg-surface-100 text-surface-600 hover:bg-surface-200' }} text-label-md transition-all duration-200"
                             title="Auto Sync Schedule">
                             <span class="material-symbols-outlined text-[14px]">schedule</span>
-                            {{ !empty($info['config']['schedule_minutes']) ? $info['config']['schedule_minutes'] . 'm' : 'Off' }}
+                            @php
+                                $freqText = 'Off';
+                                if (!empty($info['schedule']->frequency)) {
+                                    if ($info['schedule']->frequency === 'minute') {
+                                        $freqText = 'Every ' . ($info['schedule']->interval ?? 1) . 'm';
+                                    } elseif ($info['schedule']->frequency === 'hour') {
+                                        $freqText = 'Every ' . ($info['schedule']->interval ?? 1) . 'h';
+                                    } else {
+                                        $freqText = ucfirst($info['schedule']->frequency) . ($info['schedule']->time ? ' ' . \Carbon\Carbon::parse($info['schedule']->time)->format('H:i') : '');
+                                    }
+                                }
+                            @endphp
+                            {{ $freqText }}
                         </button>
                         <button
                             onclick="openSyncModal('{{ $key }}', '{{ $info['config']['description'] }}', {{ json_encode($info['custom_filters']) }})"
@@ -201,19 +212,46 @@
                     </button>
                 </div>
 
-                <div class="space-y-4">
-                    <select id="scheduleInterval"
-                        class="w-full px-4 py-2.5 bg-surface-50 border border-surface-200 rounded-xl text-surface-900 focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 outline-none transition-all">
-                        <option value="0">Disabled (Manual Only)</option>
-                        <option value="1">Every 1 Minute</option>
-                        <option value="2">Every 2 Minutes</option>
-                        <option value="3">Every 3 Minutes</option>
-                        <option value="5">Every 5 Minutes</option>
-                        <option value="15">Every 15 Minutes</option>
-                        <option value="30">Every 30 Minutes</option>
-                        <option value="60">Hourly</option>
-                        <option value="1440">Daily</option>
-                    </select>
+                <div class="space-y-4 text-left">
+                    <div>
+                        <label class="block text-sm font-medium text-surface-700 mb-1">Frequency</label>
+                        <select id="scheduleFrequency" onchange="toggleScheduleFields()" class="w-full px-4 py-2.5 bg-surface-50 border border-surface-200 rounded-xl text-surface-900 focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 outline-none transition-all">
+                            <option value="">Disabled (Manual Only)</option>
+                            <option value="minute">Minutes</option>
+                            <option value="hour">Hours</option>
+                            <option value="daily">Daily</option>
+                            <option value="weekly">Weekly</option>
+                            <option value="monthly">Monthly</option>
+                        </select>
+                    </div>
+                    
+                    <div id="scheduleIntervalGroup" class="hidden">
+                        <label class="block text-sm font-medium text-surface-700 mb-1">Interval (e.g. Every X)</label>
+                        <input type="number" id="scheduleInterval" min="1" class="w-full px-4 py-2.5 bg-surface-50 border border-surface-200 rounded-xl text-surface-900 focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 outline-none transition-all" placeholder="1">
+                    </div>
+                    
+                    <div id="scheduleTimeGroup" class="hidden">
+                        <label class="block text-sm font-medium text-surface-700 mb-1">Time</label>
+                        <input type="time" id="scheduleTime" class="w-full px-4 py-2.5 bg-surface-50 border border-surface-200 rounded-xl text-surface-900 focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 outline-none transition-all">
+                    </div>
+                    
+                    <div id="scheduleDayOfWeekGroup" class="hidden">
+                        <label class="block text-sm font-medium text-surface-700 mb-1">Day of Week</label>
+                        <select id="scheduleDayOfWeek" class="w-full px-4 py-2.5 bg-surface-50 border border-surface-200 rounded-xl text-surface-900 focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 outline-none transition-all">
+                            <option value="1">Monday</option>
+                            <option value="2">Tuesday</option>
+                            <option value="3">Wednesday</option>
+                            <option value="4">Thursday</option>
+                            <option value="5">Friday</option>
+                            <option value="6">Saturday</option>
+                            <option value="7">Sunday</option>
+                        </select>
+                    </div>
+                    
+                    <div id="scheduleDayOfMonthGroup" class="hidden">
+                        <label class="block text-sm font-medium text-surface-700 mb-1">Date of Month</label>
+                        <input type="number" id="scheduleDayOfMonth" min="1" max="31" class="w-full px-4 py-2.5 bg-surface-50 border border-surface-200 rounded-xl text-surface-900 focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 outline-none transition-all" placeholder="e.g. 15">
+                    </div>
                 </div>
 
                 <div class="flex gap-3 mt-8">
@@ -620,17 +658,53 @@
         /* Schedule Modal Logic */
         let currentScheduleEntity = '';
 
-        function openScheduleModal(key, name, currentMinutes) {
+        function toggleScheduleFields() {
+            const freq = document.getElementById('scheduleFrequency').value;
+            const intervalGroup = document.getElementById('scheduleIntervalGroup');
+            const timeGroup = document.getElementById('scheduleTimeGroup');
+            const dowGroup = document.getElementById('scheduleDayOfWeekGroup');
+            const domGroup = document.getElementById('scheduleDayOfMonthGroup');
+            
+            intervalGroup.classList.add('hidden');
+            timeGroup.classList.add('hidden');
+            dowGroup.classList.add('hidden');
+            domGroup.classList.add('hidden');
+            
+            if (freq === 'minute' || freq === 'hour') {
+                intervalGroup.classList.remove('hidden');
+            } else if (freq) {
+                timeGroup.classList.remove('hidden');
+                if (freq === 'weekly') {
+                    dowGroup.classList.remove('hidden');
+                } else if (freq === 'monthly') {
+                    domGroup.classList.remove('hidden');
+                }
+            }
+        }
+
+        function openScheduleModal(key, name, frequency, interval, time, dayOfWeek, dayOfMonth) {
             currentScheduleEntity = key;
             document.getElementById('scheduleEntityName').innerText = name;
-            document.getElementById('scheduleInterval').value = currentMinutes || "0";
-
+            
+            document.getElementById('scheduleFrequency').value = frequency || '';
+            document.getElementById('scheduleInterval').value = interval || '1';
+            if (time) {
+                // Remove seconds if present (HH:mm:ss -> HH:mm)
+                document.getElementById('scheduleTime').value = time.substring(0, 5);
+            } else {
+                document.getElementById('scheduleTime').value = '00:00';
+            }
+            document.getElementById('scheduleDayOfWeek').value = dayOfWeek || '1';
+            document.getElementById('scheduleDayOfMonth').value = dayOfMonth || '1';
+            
+            toggleScheduleFields();
+            
             const modal = document.getElementById('scheduleModal');
             const backdrop = document.getElementById('scheduleModalBackdrop');
             const panel = document.getElementById('scheduleModalPanel');
-
+            
             modal.classList.remove('hidden');
-
+            
             requestAnimationFrame(() => {
                 backdrop.classList.remove('opacity-0');
                 backdrop.classList.add('opacity-100');
@@ -643,12 +717,12 @@
             const modal = document.getElementById('scheduleModal');
             const backdrop = document.getElementById('scheduleModalBackdrop');
             const panel = document.getElementById('scheduleModalPanel');
-
+            
             backdrop.classList.remove('opacity-100');
             backdrop.classList.add('opacity-0');
             panel.classList.remove('opacity-100', 'scale-100');
             panel.classList.add('opacity-0', 'scale-95');
-
+            
             setTimeout(() => {
                 modal.classList.add('hidden');
             }, 300);
@@ -657,27 +731,30 @@
         async function saveSchedule() {
             const btn = document.getElementById('btnSaveSchedule');
             const originalText = btn.innerHTML;
-            btn.innerHTML =
-                `<svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Saving...`;
+            btn.innerHTML = `<svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Saving...`;
             btn.disabled = true;
 
-            const minutes = document.getElementById('scheduleInterval').value;
+            const payload = {
+                frequency: document.getElementById('scheduleFrequency').value || null,
+                interval: document.getElementById('scheduleInterval').value || null,
+                time: document.getElementById('scheduleTime').value || null,
+                day_of_week: document.getElementById('scheduleDayOfWeek').value || null,
+                day_of_month: document.getElementById('scheduleDayOfMonth').value || null
+            };
 
             try {
                 const res = await fetch(`/api/entities/${currentScheduleEntity}/schedule`, {
                     method: 'POST',
-                    headers: {
-                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                    headers: { 
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content, 
                         'Accept': 'application/json',
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({
-                        schedule_minutes: parseInt(minutes)
-                    })
+                    body: JSON.stringify(payload)
                 });
-
+                
                 const data = await res.json();
-
+                
                 if (res.ok && data.success) {
                     showToast(`Schedule saved for ${currentScheduleEntity}`, 'success');
                     closeScheduleModal();

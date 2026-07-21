@@ -108,7 +108,7 @@ class EndpointApiController extends Controller
         $allTables = [];
 
         foreach ($all as $key => $conn) {
-            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
+            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv', 'firebird']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
                 $dbConnections[] = [
                     'key'  => $key,
                     'name' => $conn['name'] ?? $key,
@@ -129,6 +129,11 @@ class EndpointApiController extends Controller
                         $results = DB::connection($connName)->select("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'");
                         foreach ($results as $row) {
                             $tables[] = $row->TABLE_NAME;
+                        }
+                    } elseif ($driver === 'firebird') {
+                        $results = DB::connection($connName)->select("SELECT RDB\$RELATION_NAME FROM RDB\$RELATIONS WHERE RDB\$VIEW_BLR IS NULL AND (RDB\$SYSTEM_FLAG IS NULL OR RDB\$SYSTEM_FLAG = 0)");
+                        foreach ($results as $row) {
+                            $tables[] = trim(array_values((array) $row)[0]);
                         }
                     }
                     sort($tables);

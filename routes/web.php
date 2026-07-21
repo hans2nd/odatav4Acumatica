@@ -12,6 +12,7 @@ use App\Http\Controllers\SyncController;
 use App\Http\Controllers\TransactionController;
 use App\Http\Controllers\UserManagementController;
 use App\Http\Controllers\QueryBuilderController;
+use App\Http\Controllers\SystemUtilityController;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Artisan;
 
@@ -20,52 +21,9 @@ use Illuminate\Support\Facades\Artisan;
 | System Utilities (VPS Deployment)
 |--------------------------------------------------------------------------
 */
-Route::get('/sys-migrate', function (\Illuminate\Http\Request $request) {
-    // Basic security token to prevent unauthorized execution
-    $token = $request->query('token');
-    if ($token !== 'deploy123') {
-        return response('Unauthorized', 401);
-    }
-
-    try {
-        Artisan::call('migrate', ['--force' => true]);
-        $output = Artisan::output();
-        return "<pre>Migrations executed successfully:\n" . $output . "</pre>";
-    } catch (\Exception $e) {
-        return "<pre>Error running migrations:\n" . $e->getMessage() . "</pre>";
-    }
-});
-
-Route::get('/sys-migrate-fresh', function (\Illuminate\Http\Request $request) {
-    // Basic security token to prevent unauthorized execution
-    $token = $request->query('token');
-    if ($token !== 'deploy123') {
-        return response('Unauthorized', 401);
-    }
-
-    try {
-        Artisan::call('migrate:fresh', ['--force' => true, '--seed' => true]);
-        $output = Artisan::output();
-        return "<pre>Migrate Fresh executed successfully:\n" . $output . "</pre>";
-    } catch (\Exception $e) {
-        return "<pre>Error running migrate:fresh:\n" . $e->getMessage() . "</pre>";
-    }
-});
-
-Route::get('/sys-optimize', function (\Illuminate\Http\Request $request) {
-    $token = $request->query('token');
-    if ($token !== 'deploy123') {
-        return response('Unauthorized', 401);
-    }
-
-    try {
-        Artisan::call('optimize:clear');
-        $output = Artisan::output();
-        return "<pre>Optimize Clear executed successfully:\n" . $output . "</pre>";
-    } catch (\Exception $e) {
-        return "<pre>Error running optimize:clear:\n" . $e->getMessage() . "</pre>";
-    }
-});
+Route::get('/sys-migrate', [SystemUtilityController::class, 'migrate']);
+Route::get('/sys-migrate-fresh', [SystemUtilityController::class, 'migrateFresh']);
+Route::get('/sys-optimize', [SystemUtilityController::class, 'optimize']);
 
 /*
 |--------------------------------------------------------------------------
@@ -117,10 +75,8 @@ Route::middleware(['auth'])->group(function () {
     |--------------------------------------------------------------------------
     */
 
-    Route::middleware(['auth'])->group(function () {
-        Route::get('/master-data', [MasterDataController::class, 'index'])->name('master-data.index');
-        Route::get('/master-data/{entity}', [MasterDataController::class, 'show'])->name('master-data.show');
-    });
+    Route::get('/master-data', [MasterDataController::class, 'index'])->name('master-data.index');
+    Route::get('/master-data/{entity}', [MasterDataController::class, 'show'])->name('master-data.show');
 
     /*
     |--------------------------------------------------------------------------
@@ -128,10 +84,8 @@ Route::middleware(['auth'])->group(function () {
     |--------------------------------------------------------------------------
     */
 
-    Route::middleware(['auth'])->group(function () {
-        Route::get('/transactions', [TransactionController::class, 'index'])->name('transactions.index');
-        Route::get('/transactions/{entity}', [TransactionController::class, 'show'])->name('transactions.show');
-    });
+    Route::get('/transactions', [TransactionController::class, 'index'])->name('transactions.index');
+    Route::get('/transactions/{entity}', [TransactionController::class, 'show'])->name('transactions.show');
 
     /*
     |--------------------------------------------------------------------------
@@ -204,7 +158,7 @@ Route::middleware(['auth'])->group(function () {
 
     Route::middleware(['permission:settings.manage'])->group(function () {
         Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
-        
+
         // Connections CRUD
         Route::get('/api/connections', [SettingsController::class, 'getConnections'])->name('api.connections.index');
         Route::post('/api/connections', [SettingsController::class, 'storeConnection'])->name('api.connections.store');

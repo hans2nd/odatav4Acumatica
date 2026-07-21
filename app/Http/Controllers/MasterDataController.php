@@ -26,6 +26,7 @@ class MasterDataController extends Controller
             $schedule = \App\Models\SyncSchedule::where('entity_key', $key)->first();
             $entityData[$key] = [
                 'config'       => $entity,
+                'schedule'     => $schedule,
                 'table_exists' => $schemaManager->tableExists($connName, $entity['table']),
                 'records'      => $schemaManager->getRowCount($connName, $entity['table']),
                 'custom_filters' => $schedule ? $schedule->custom_filters : [],

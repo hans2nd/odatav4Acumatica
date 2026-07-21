@@ -29,7 +29,7 @@ class ReportBuilderController extends Controller
 
         foreach ($all as $key => $conn) {
             // Only include active and connected database-type connections
-            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
+            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv', 'firebird']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
                 $dbConnections[] = [
                     'key'  => $key,
                     'name' => $conn['name'] ?? $key,
@@ -52,6 +52,11 @@ class ReportBuilderController extends Controller
                         foreach ($results as $row) {
                             $rowArr = (array) $row;
                             $tables[] = $rowArr['TABLE_NAME'] ?? $rowArr['table_name'] ?? current($rowArr);
+                        }
+                    } elseif ($driver === 'firebird') {
+                        $results = \Illuminate\Support\Facades\DB::connection($connName)->select("SELECT RDB\$RELATION_NAME FROM RDB\$RELATIONS WHERE RDB\$VIEW_BLR IS NULL AND (RDB\$SYSTEM_FLAG IS NULL OR RDB\$SYSTEM_FLAG = 0)");
+                        foreach ($results as $row) {
+                            $tables[] = trim(array_values((array) $row)[0]);
                         }
                     }
                     sort($tables);
@@ -79,7 +84,7 @@ class ReportBuilderController extends Controller
 
         foreach ($all as $key => $conn) {
             // Only include active and connected database-type connections
-            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
+            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv', 'firebird']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
                 try {
                     // Resolve and test the connection
                     $connName = $this->resolveConnection($key);

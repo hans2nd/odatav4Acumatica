@@ -48,7 +48,7 @@
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 animate-fade-up" style="animation-delay: 0.1s;">
 
         {{-- Tables List --}}
-        <div class="bg-white rounded-2xl border border-surface-200/80 shadow-sm flex flex-col" style="height: calc(100vh - 220px); min-height: 400px;">
+        <div class="bg-white rounded-2xl border border-surface-200/80 shadow-sm flex flex-col" style="height: 380px;">
             <div class="px-4 py-3 border-b border-surface-100 bg-surface-50/50 rounded-t-2xl">
                 <h3 class="text-label-md font-semibold text-surface-700 flex items-center gap-2">
                     <span class="material-symbols-outlined text-[16px] text-violet-500">table_chart</span>
@@ -67,7 +67,7 @@
         </div>
 
         {{-- Fields List --}}
-        <div class="bg-white rounded-2xl border border-surface-200/80 shadow-sm flex flex-col" style="height: calc(100vh - 220px); min-height: 400px;">
+        <div class="bg-white rounded-2xl border border-surface-200/80 shadow-sm flex flex-col" style="height: 380px;">
             <div class="px-4 py-3 border-b border-surface-100 bg-surface-50/50 rounded-t-2xl flex items-center justify-between">
                 <h3 class="text-label-md font-semibold text-surface-700 flex items-center gap-2 truncate">
                     <span class="material-symbols-outlined text-[16px] text-blue-500">view_list</span>
@@ -82,7 +82,7 @@
         </div>
 
         {{-- SELECT area --}}
-        <div class="bg-white rounded-2xl border border-surface-200/80 shadow-sm flex flex-col" style="height: calc(100vh - 220px); min-height: 400px;">
+        <div class="bg-white rounded-2xl border border-surface-200/80 shadow-sm flex flex-col" style="height: 380px;">
             <div class="px-4 py-3 border-b border-surface-100 bg-surface-50/50 rounded-t-2xl flex items-center justify-between">
                 <h3 class="text-label-md font-semibold text-surface-700 flex items-center gap-2">
                     <span class="material-symbols-outlined text-[16px] text-blue-500">view_column</span>
@@ -188,7 +188,7 @@
                     </button>
                 </div>
                 <div class="p-4">
-                    <pre id="qbSqlPreview" class="bg-slate-900 text-slate-100 rounded-xl p-4 text-body-sm font-mono overflow-x-auto whitespace-pre-wrap break-all min-h-[60px]">-- Your query will appear here</pre>
+                    <textarea id="qbSqlPreview" oninput="markSqlManuallyEdited()" spellcheck="false" class="w-full bg-slate-900 text-slate-100 rounded-xl p-4 text-body-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500 min-h-[320px] resize-y">-- Your query will appear here</textarea>
                 </div>
             </div>
 
@@ -289,6 +289,7 @@
     }
 
     function resetQueryState() {
+        isSqlManuallyEdited = false;
         qbSelectedColumns = [];
         qbJoins = [];
         qbUsedTables = new Set();
@@ -519,6 +520,7 @@
     }
 
     function clearAllSelected() {
+        isSqlManuallyEdited = false;
         const tables = [...new Set(qbSelectedColumns.map(c => c.table))];
         qbSelectedColumns = [];
         syncUsedTables();
@@ -804,12 +806,21 @@
         }
     }
 
+    let isSqlManuallyEdited = false;
+
+    function markSqlManuallyEdited() {
+        isSqlManuallyEdited = true;
+        updateButtons();
+    }
+
     // ─── SQL Preview ──────────────────────────────────────────
     function updateSqlPreview() {
+        if (isSqlManuallyEdited) return; // Don't overwrite if user edited it
+        
         const previewEl = document.getElementById('qbSqlPreview');
 
         if (qbSelectedColumns.length === 0) {
-            previewEl.textContent = '-- Your query will appear here';
+            previewEl.value = '-- Your query will appear here';
             return;
         }
 
@@ -886,18 +897,18 @@
 
         sql += '\nLIMIT ' + limit;
 
-        previewEl.textContent = sql;
+        previewEl.value = sql;
     }
 
     function copySql() {
-        const text = document.getElementById('qbSqlPreview').textContent;
+        const text = document.getElementById('qbSqlPreview').value;
         navigator.clipboard.writeText(text).then(() => showToast('SQL copied!'));
     }
 
     function updateButtons() {
-        const hasColumns = qbSelectedColumns.length > 0;
+        const hasSql = document.getElementById('qbSqlPreview').value.trim() !== '' && document.getElementById('qbSqlPreview').value.trim() !== '-- Your query will appear here';
         const hasConnection = !!document.getElementById('qbConnection').value;
-        const enabled = hasColumns && hasConnection;
+        const enabled = hasSql && hasConnection;
 
         document.getElementById('btnExecute').disabled = !enabled;
         document.getElementById('btnExportXlsx').disabled = !enabled;
@@ -907,7 +918,8 @@
     // ─── Execute ──────────────────────────────────────────────
     async function executeQuery() {
         const connKey = document.getElementById('qbConnection').value;
-        if (!connKey || qbSelectedColumns.length === 0) return;
+        const rawSql = document.getElementById('qbSqlPreview').value.trim();
+        if (!connKey || !rawSql || rawSql === '-- Your query will appear here') return;
 
         const btn = document.getElementById('btnExecute');
         btn.disabled = true;
@@ -939,6 +951,7 @@
 
         const payload = {
             connection: connKey,
+            raw_sql: isSqlManuallyEdited ? rawSql : '', // Send raw SQL if edited manually
             tables: [...qbUsedTables],
             columns: qbSelectedColumns.map(c => ({ table: c.table, field: c.field, alias: c.alias, aggregate: c.aggregate })),
             joins: qbJoins.filter(j => j.on_left.includes('.') && j.on_right.includes('.')).map(j => ({

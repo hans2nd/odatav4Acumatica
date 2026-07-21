@@ -28,7 +28,7 @@ class QueryBuilderController extends Controller
         $dbConnections = [];
 
         foreach ($all as $key => $conn) {
-            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
+            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv', 'firebird']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
                 $dbConnections[] = [
                     'key'  => $key,
                     'name' => $conn['name'] ?? $key,
@@ -68,6 +68,11 @@ class QueryBuilderController extends Controller
                 foreach ($results as $row) {
                     $rowArr = (array) $row;
                     $tables[] = $rowArr['TABLE_NAME'] ?? $rowArr['table_name'] ?? current($rowArr);
+                }
+            } elseif ($driver === 'firebird') {
+                $results = DB::connection($connName)->select("SELECT RDB\$RELATION_NAME FROM RDB\$RELATIONS WHERE RDB\$VIEW_BLR IS NULL AND (RDB\$SYSTEM_FLAG IS NULL OR RDB\$SYSTEM_FLAG = 0)");
+                foreach ($results as $row) {
+                    $tables[] = trim(array_values((array) $row)[0]);
                 }
             }
 
@@ -125,6 +130,21 @@ class QueryBuilderController extends Controller
                         'key'  => $r['KEY'] ?? '',
                     ];
                 }
+            } elseif ($driver === 'firebird') {
+                $results = DB::connection($connName)->select("
+                    SELECT r.RDB\$FIELD_NAME AS FIELD_NAME
+                    FROM RDB\$RELATION_FIELDS r
+                    WHERE TRIM(r.RDB\$RELATION_NAME) = ?
+                    ORDER BY r.RDB\$FIELD_POSITION
+                ", [trim($table)]);
+                foreach ($results as $row) {
+                    $r = (array) $row;
+                    $columns[] = [
+                        'name' => trim($r['FIELD_NAME'] ?? current($r)),
+                        'type' => 'varchar',
+                        'key'  => '',
+                    ];
+                }
             }
 
             return response()->json(['success' => true, 'columns' => $columns]);
@@ -140,8 +160,9 @@ class QueryBuilderController extends Controller
     {
         $request->validate([
             'connection'   => 'required|string',
-            'tables'       => 'required|array|min:1',
-            'columns'      => 'required|array|min:1',
+            'raw_sql'      => 'nullable|string',
+            'tables'       => 'nullable|array',
+            'columns'      => 'nullable|array',
             'joins'        => 'nullable|array',
             'filters'      => 'nullable|array',
             'orderBy'      => 'nullable|array',
@@ -150,8 +171,9 @@ class QueryBuilderController extends Controller
         ]);
 
         $connKey  = $request->input('connection');
-        $tables   = $request->input('tables');
-        $columns  = $request->input('columns');
+        $rawSql   = $request->input('raw_sql');
+        $tables   = $request->input('tables', []);
+        $columns  = $request->input('columns', []);
         $joins    = $request->input('joins', []);
         $filters  = $request->input('filters', []);
         $orderBy  = $request->input('orderBy', []);
@@ -161,10 +183,19 @@ class QueryBuilderController extends Controller
         try {
             $connName = $this->resolveConnection($connKey);
             $driver = DB::connection($connName)->getDriverName();
-            $q = $driver === 'mysql' ? '`' : '[';
-            $qe = $driver === 'mysql' ? '`' : ']';
+            
+            if (!empty($rawSql)) {
+                $sql = $rawSql;
+                $bindings = [];
+            } else {
+                if (empty($tables) || empty($columns)) {
+                    throw new \Exception("Tables and columns are required when not using raw SQL.");
+                }
+                
+                $q = $driver === 'mysql' ? '`' : ($driver === 'firebird' ? '' : '[');
+                $qe = $driver === 'mysql' ? '`' : ($driver === 'firebird' ? '' : ']');
 
-            // Build the SELECT clause
+                // Build the SELECT clause
             $selectParts = [];
             foreach ($columns as $col) {
                 $table = $col['table'] ?? $tables[0];
@@ -282,9 +313,12 @@ class QueryBuilderController extends Controller
                     $orderByClause = " ORDER BY (SELECT NULL)";
                 }
                 $limitClause = " OFFSET 0 ROWS FETCH NEXT {$limit} ROWS ONLY";
+            } elseif ($driver === 'firebird') {
+                $limitClause = " ROWS 1 TO {$limit}";
             }
 
             $sql = "SELECT {$selectClause} FROM {$fromClause}{$joinClause}{$whereClause}{$groupByClause}{$orderByClause}{$limitClause}";
+            } // end else for rawSql
 
             $startTime = microtime(true);
             $results = DB::connection($connName)->select($sql, $bindings);

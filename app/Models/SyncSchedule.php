@@ -8,7 +8,11 @@ class SyncSchedule extends Model
 {
     protected $fillable = [
         'entity_key',
-        'interval_minutes',
+        'frequency',
+        'interval',
+        'time',
+        'day_of_week',
+        'day_of_month',
         'is_active',
         'last_run_at',
         'next_run_at',

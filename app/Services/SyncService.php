@@ -502,7 +502,11 @@ class SyncService
             $destConnKey = $entity['destination_connection'] ?? 'database_default';
             $destConnection = $destConnKey;
 
-            $count = $this->schemaManager->getRowCount($destConnection, $entity['table']);
+            $count = \Illuminate\Support\Facades\Cache::remember(
+                "row_count_{$destConnection}_{$entity['table']}",
+                60,
+                fn () => $this->schemaManager->getRowCount($destConnection, $entity['table'])
+            );
             $totalRecords += $count;
 
             $lastSync = null;

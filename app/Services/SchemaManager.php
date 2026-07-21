@@ -322,7 +322,12 @@ class SchemaManager
     {
         $cacheKey = ($connectionName ?? 'default') . '.' . $tableName;
         if (!array_key_exists($cacheKey, $this->tableExistsCache)) {
-            $this->tableExistsCache[$cacheKey] = Schema::connection($connectionName)->hasTable($tableName);
+            try {
+                $this->tableExistsCache[$cacheKey] = Schema::connection($connectionName)->hasTable($tableName);
+            } catch (\Exception $e) {
+                $this->tableExistsCache[$cacheKey] = false;
+                Log::warning("SchemaManager: Connection [{$connectionName}] failed or not configured.", ['error' => $e->getMessage()]);
+            }
         }
         return $this->tableExistsCache[$cacheKey];
     }

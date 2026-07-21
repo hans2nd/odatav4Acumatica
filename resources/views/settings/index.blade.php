@@ -42,7 +42,7 @@
                                 <td class="py-3 px-5 font-medium text-surface-800">{{ $c['name'] }}</td>
                                 <td class="py-3 px-5">
                                     <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-label-sm font-semibold
-                                        {{ in_array($c['type'], ['mysql', 'sqlsrv']) ? 'bg-violet-50 text-violet-700' : 'bg-sky-50 text-sky-700' }}">
+                                        {{ in_array($c['type'], ['mysql', 'sqlsrv', 'firebird']) ? 'bg-violet-50 text-violet-700' : 'bg-sky-50 text-sky-700' }}">
                                         {{ strtoupper($c['type']) }}
                                     </span>
                                 </td>
@@ -209,6 +209,7 @@
                             <option value="rest_api">REST API</option>
                             <option value="mysql">MySQL</option>
                             <option value="sqlsrv">SQL Server</option>
+                            <option value="firebird">Firebird</option>
                         </select>
                     </div>
 
@@ -398,7 +399,7 @@
                                 <select id="form-dest-conn" required class="w-full bg-white border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
                                     <option value="" disabled selected>Select Destination Connection</option>
                                     @foreach($connections as $k => $c)
-                                        @if(in_array($c['type'], ['mysql', 'sqlsrv', 'sqlite']) && isset($c['is_connected']) && $c['is_connected'])
+                                        @if(in_array($c['type'], ['mysql', 'sqlsrv', 'sqlite', 'firebird']) && isset($c['is_connected']) && $c['is_connected'])
                                             <option value="{{ $k }}">{{ $c['name'] }} ({{ strtoupper($c['type']) }})</option>
                                         @endif
                                     @endforeach
@@ -653,12 +654,21 @@
     // ── Connection Modal ───────────────────────────────────────────────────
     function toggleConnectionFields() {
         const type = document.getElementById('conn-type').value;
+        const portInput = document.getElementById('conn-db-port');
+        
         document.getElementById('conn-fields-db').classList.add('hidden');
         document.getElementById('conn-fields-odata').classList.add('hidden');
         document.getElementById('conn-fields-rest').classList.add('hidden');
         
-        if (type === 'mysql' || type === 'sqlsrv') {
+        if (type === 'mysql' || type === 'sqlsrv' || type === 'firebird') {
             document.getElementById('conn-fields-db').classList.remove('hidden');
+            
+            // Auto-fill port if it's empty or currently set to the default of another DB
+            if (!portInput.value || portInput.value === '3306' || portInput.value === '1433' || portInput.value === '3051') {
+                if (type === 'mysql') portInput.value = '3306';
+                else if (type === 'sqlsrv') portInput.value = '1433';
+                else if (type === 'firebird') portInput.value = '3051';
+            }
         } else if (type === 'odata') {
             document.getElementById('conn-fields-odata').classList.remove('hidden');
         } else if (type === 'rest_api') {
@@ -719,7 +729,7 @@
         const type = document.getElementById('conn-type').value;
         let credentials = {};
 
-        if (type === 'mysql' || type === 'sqlsrv') {
+        if (type === 'mysql' || type === 'sqlsrv' || type === 'firebird') {
             credentials = {
                 host: document.getElementById('conn-db-host').value,
                 port: document.getElementById('conn-db-port').value,
@@ -779,7 +789,7 @@
         const type = document.getElementById('conn-type').value;
         let credentials = {};
 
-        if (type === 'mysql' || type === 'sqlsrv') {
+        if (type === 'mysql' || type === 'sqlsrv' || type === 'firebird') {
             credentials = {
                 host: document.getElementById('conn-db-host').value,
                 port: document.getElementById('conn-db-port').value,
@@ -820,6 +830,50 @@
             else { showToast(data.message || 'Operation failed', 'error'); }
         } catch (e) { showToast('Error: ' + e.message, 'error'); }
         finally { btn.disabled = false; }
+    }
+
+    function updateEntityModalConnectionDropdowns() {
+        const sourceSelect = document.getElementById('form-source-conn');
+        const destSelect = document.getElementById('form-dest-conn');
+        if (!sourceSelect || !destSelect) return;
+        
+        const currentSource = sourceSelect.value;
+        const currentDest = destSelect.value;
+        
+        sourceSelect.innerHTML = '<option value="" disabled selected>Select Source Connection</option>';
+        destSelect.innerHTML = '<option value="" disabled selected>Select Destination Connection</option>';
+        
+        for (const [k, c] of Object.entries(connectionData)) {
+            if (c.is_connected) {
+                const optionText = `${c.name} (${c.type.toUpperCase()})`;
+                
+                // Add to Source Connection
+                const optSource = document.createElement('option');
+                optSource.value = k;
+                optSource.textContent = optionText;
+                sourceSelect.appendChild(optSource);
+                
+                // Add to Destination Connection if supported
+                if (['mysql', 'sqlsrv', 'sqlite', 'firebird'].includes(c.type)) {
+                    const optDest = document.createElement('option');
+                    optDest.value = k;
+                    optDest.textContent = optionText;
+                    destSelect.appendChild(optDest);
+                }
+            }
+        }
+        
+        if (currentSource && sourceSelect.querySelector(`option[value="${currentSource}"]`)) {
+            sourceSelect.value = currentSource;
+        } else {
+            sourceSelect.value = "";
+        }
+        
+        if (currentDest && destSelect.querySelector(`option[value="${currentDest}"]`)) {
+            destSelect.value = currentDest;
+        } else {
+            destSelect.value = "";
+        }
     }
 
     let lastDbFetchKey = '';
@@ -914,6 +968,9 @@
                 btn.className = "px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-600 transition-all duration-200 text-label-sm font-semibold flex items-center gap-1";
                 btn.setAttribute('onclick', `disconnectConnection('${key}')`);
                 
+                connectionData[key].is_connected = true;
+                updateEntityModalConnectionDropdowns();
+                
                 if(!silent) showToast(data.message, 'success');
             } else {
                 throw new Error(data.message || 'Connection failed');
@@ -959,6 +1016,10 @@
                 btn.className = "px-2.5 py-1.5 rounded-lg bg-surface-50 hover:bg-surface-100 text-surface-600 transition-all duration-200 text-label-sm font-semibold flex items-center gap-1";
                 btn.setAttribute('onclick', `testConnection('${key}', true)`);
                 btn.disabled = false;
+                
+                connectionData[key].is_connected = false;
+                updateEntityModalConnectionDropdowns();
+                
                 showToast('Disconnected successfully', 'success');
             } else {
                 throw new Error(data.message || 'Failed to disconnect');

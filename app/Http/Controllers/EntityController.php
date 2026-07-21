@@ -125,7 +125,11 @@ class EntityController extends Controller
     public function updateSchedule(Request $request, string $key): JsonResponse
     {
         $validated = $request->validate([
-            'schedule_minutes' => 'nullable|integer|min:0',
+            'frequency'    => 'nullable|in:minute,hour,daily,weekly,monthly',
+            'interval'     => 'nullable|integer|min:1',
+            'time'         => 'nullable|date_format:H:i',
+            'day_of_week'  => 'nullable|integer|between:1,7',
+            'day_of_month' => 'nullable|integer|between:1,31',
         ]);
 
         if (!$this->entityConfig->exists($key)) {
@@ -136,20 +140,52 @@ class EntityController extends Controller
         }
 
         $entity = $this->entityConfig->get($key);
-        $entity['schedule_minutes'] = $validated['schedule_minutes'];
-        
-        $this->entityConfig->update($key, $key, $entity);
 
-        $isActive = !empty($validated['schedule_minutes']) && $validated['schedule_minutes'] > 0;
-        $interval = $isActive ? $validated['schedule_minutes'] : 0;
+        $isActive = !empty($validated['frequency']);
+        
+        $nextRun = null;
+        if ($isActive) {
+            $freq = $validated['frequency'];
+            $interval = (int) ($validated['interval'] ?? 1);
+            
+            if ($freq === 'minute') {
+                $nextRun = now()->addMinutes($interval);
+            } elseif ($freq === 'hour') {
+                $nextRun = now()->addHours($interval);
+            } elseif (!empty($validated['time'])) {
+                $nextRun = \Carbon\Carbon::parse($validated['time']);
+                
+                if ($freq === 'daily') {
+                    if ($nextRun->isPast()) {
+                        $nextRun->addDay();
+                    }
+                } elseif ($freq === 'weekly') {
+                    $dayOfWeek = (int) ($validated['day_of_week'] ?? 1);
+                    if ($nextRun->dayOfWeekIso !== $dayOfWeek || $nextRun->isPast()) {
+                        $nextRun->next($dayOfWeek);
+                    }
+                } elseif ($freq === 'monthly') {
+                    $dayOfMonth = (int) ($validated['day_of_month'] ?? 1);
+                    $nextRun->setDate($nextRun->year, $nextRun->month, min($dayOfMonth, $nextRun->daysInMonth));
+                    if ($nextRun->isPast()) {
+                        $nextRun->addMonth();
+                        $nextRun->day = min($dayOfMonth, $nextRun->daysInMonth);
+                    }
+                }
+            }
+        }
 
         // Update or Create the DB record
         $schedule = \App\Models\SyncSchedule::updateOrCreate(
             ['entity_key' => $key],
             [
-                'interval_minutes' => $interval,
+                'frequency' => $validated['frequency'] ?? null,
+                'interval' => $validated['interval'] ?? null,
+                'time' => $validated['time'] ?? null,
+                'day_of_week' => $validated['day_of_week'] ?? null,
+                'day_of_month' => $validated['day_of_month'] ?? null,
                 'is_active' => $isActive,
-                'next_run_at' => $isActive ? now() : null, // run immediately
+                'next_run_at' => $nextRun,
             ]
         );
 
@@ -167,7 +203,7 @@ class EntityController extends Controller
             'records_fetched' => 0,
             'records_inserted' => 0,
             'duration_seconds' => 0,
-            'error_message' => $isActive ? "Schedule Activated ({$interval} mins)" : "Schedule Deactivated",
+            'error_message' => $isActive ? "Schedule Activated ({$validated['frequency']} at {$validated['time']})" : "Schedule Deactivated",
             'started_at' => now(),
             'completed_at' => now(),
         ]);
@@ -186,7 +222,7 @@ class EntityController extends Controller
         return response()->json([
             'success' => true,
             'message' => $message,
-            'entity'  => $entity,
+            'schedule' => $schedule,
         ]);
     }
 

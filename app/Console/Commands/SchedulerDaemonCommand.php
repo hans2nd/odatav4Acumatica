@@ -59,7 +59,34 @@ class SchedulerDaemonCommand extends Command
 
                 // Update schedule timings
                 $schedule->last_run_at = $now;
-                $schedule->next_run_at = $now->copy()->addMinutes($schedule->interval_minutes);
+                
+                $nextRun = null;
+                if ($schedule->frequency) {
+                    if ($schedule->frequency === 'minute') {
+                        $nextRun = now()->addMinutes($schedule->interval ?? 1);
+                    } elseif ($schedule->frequency === 'hour') {
+                        $nextRun = now()->addHours($schedule->interval ?? 1);
+                    } elseif ($schedule->time) {
+                        $nextRun = \Carbon\Carbon::parse($schedule->time);
+                        if ($schedule->frequency === 'daily') {
+                            if ($nextRun->isPast()) $nextRun->addDay();
+                        } elseif ($schedule->frequency === 'weekly') {
+                            $dayOfWeek = (int) ($schedule->day_of_week ?? 1);
+                            if ($nextRun->dayOfWeekIso !== $dayOfWeek || $nextRun->isPast()) {
+                                $nextRun->next($dayOfWeek);
+                            }
+                        } elseif ($schedule->frequency === 'monthly') {
+                            $dayOfMonth = (int) ($schedule->day_of_month ?? 1);
+                            $nextRun->setDate($nextRun->year, $nextRun->month, min($dayOfMonth, $nextRun->daysInMonth));
+                            if ($nextRun->isPast()) {
+                                $nextRun->addMonth();
+                                $nextRun->day = min($dayOfMonth, $nextRun->daysInMonth);
+                            }
+                        }
+                    }
+                }
+                
+                $schedule->next_run_at = $nextRun;
                 $schedule->save();
                 
                 // Also trigger the detached queue worker to ensure it processes the job
