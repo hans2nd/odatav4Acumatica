@@ -9,8 +9,8 @@
     @foreach($activeConnections as $key => $conn)
     <div class="bg-white rounded-2xl border border-surface-200/60 p-5 flex items-center justify-between shadow-card hover:shadow-card-hover transition-all duration-300">
         <div class="flex items-center gap-4">
-            <div class="p-3 bg-gradient-to-br {{ in_array($conn['type'], ['mysql', 'sqlsrv', 'firebird']) ? 'from-violet-50 to-purple-100 text-violet-600' : 'from-sky-50 to-blue-100 text-sky-600' }} rounded-xl">
-                <span class="material-symbols-outlined text-[22px]">{{ in_array($conn['type'], ['mysql', 'sqlsrv', 'firebird']) ? 'database' : 'cloud_done' }}</span>
+            <div class="p-3 bg-gradient-to-br {{ in_array($conn['type'], ['mysql', 'sqlsrv', 'firebird', 'local_env']) ? 'from-violet-50 to-purple-100 text-violet-600' : 'from-sky-50 to-blue-100 text-sky-600' }} rounded-xl">
+                <span class="material-symbols-outlined text-[22px]">{{ in_array($conn['type'], ['mysql', 'sqlsrv', 'firebird', 'local_env']) ? 'database' : 'cloud_done' }}</span>
             </div>
             <div>
                 <h3 class="text-label-md text-surface-500 uppercase tracking-wider">{{ $conn['name'] ?? $key }}</h3>

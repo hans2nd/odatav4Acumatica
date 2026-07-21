@@ -400,7 +400,7 @@
                                 <select id="form-dest-conn" required class="w-full bg-white border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
                                     <option value="" disabled selected>Select Destination Connection</option>
                                     @foreach($connections as $k => $c)
-                                        @if(in_array($c['type'], ['mysql', 'sqlsrv', 'sqlite', 'firebird']) && isset($c['is_connected']) && $c['is_connected'])
+                                        @if(in_array($c['type'], ['mysql', 'sqlsrv', 'sqlite', 'firebird', 'local_env']) && isset($c['is_connected']) && $c['is_connected'])
                                             <option value="{{ $k }}">{{ $c['name'] }} ({{ strtoupper($c['type']) }})</option>
                                         @endif
                                     @endforeach
@@ -855,7 +855,7 @@
                 sourceSelect.appendChild(optSource);
                 
                 // Add to Destination Connection if supported
-                if (['mysql', 'sqlsrv', 'sqlite', 'firebird'].includes(c.type)) {
+                if (['mysql', 'sqlsrv', 'sqlite', 'firebird', 'local_env'].includes(c.type)) {
                     const optDest = document.createElement('option');
                     optDest.value = k;
                     optDest.textContent = optionText;
