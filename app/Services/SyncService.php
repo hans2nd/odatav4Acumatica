@@ -185,7 +185,7 @@ class SyncService
                 if ($isIncremental) {
                     $inserted = $this->upsertTableData($destConnection, $tableName, $cleanData, $customFilters, $progressKey, $isFirstChunk, $insertedCount, $totalRecordsCount);
                 } else {
-                    $inserted = $this->replaceTableData($destConnection, $tableName, $cleanData, $progressKey, $isFirstChunk, $insertedCount, $totalRecordsCount);
+                    $inserted = $this->replaceTableData($destConnection, $tableName, $cleanData, $customFilters, $progressKey, $isFirstChunk, $insertedCount, $totalRecordsCount);
                 }
                 
                 $insertedCount += $inserted;
@@ -330,12 +330,17 @@ class SyncService
         return $results;
     }
 
-    private function replaceTableData(?string $destConnection, string $tableName, array $cleanData, ?string $progressKey = null, bool $isFirstChunk = false, int $baseInserted = 0, ?int $totalRecordsCount = null): int
+    private function replaceTableData(?string $destConnection, string $tableName, array $cleanData, array $customFilters = [], ?string $progressKey = null, bool $isFirstChunk = false, int $baseInserted = 0, ?int $totalRecordsCount = null): int
     {
         $inserted = 0;
-        DB::connection($destConnection)->transaction(function () use ($destConnection, $tableName, $cleanData, &$inserted, $progressKey, $isFirstChunk, $baseInserted, $totalRecordsCount) {
+        DB::connection($destConnection)->transaction(function () use ($destConnection, $tableName, $cleanData, &$inserted, $customFilters, $progressKey, $isFirstChunk, $baseInserted, $totalRecordsCount) {
             if ($isFirstChunk) {
-                DB::connection($destConnection)->table($tableName)->delete();
+                if (!empty($customFilters)) {
+                    $deletedCount = $this->deleteByFilterScope($destConnection, $tableName, $customFilters);
+                    Log::info("Sync: Deleted {$deletedCount} existing rows from [{$tableName}] within filter scope before re-insert.");
+                } else {
+                    DB::connection($destConnection)->table($tableName)->delete();
+                }
             }
 
             $driver = DB::connection($destConnection)->getDriverName();
@@ -398,31 +403,24 @@ class SyncService
                     }
                 }
             } else {
-                if (!empty($customFilters)) {
-                    if ($isFirstChunk) {
-                        $deletedCount = $this->deleteByFilterScope($destConnection, $tableName, $customFilters);
-                        Log::info("Sync: Deleted {$deletedCount} existing rows from [{$tableName}] within filter scope before re-insert.");
+                $noteIds = [];
+                if (isset($cleanData[0]['NoteID'])) {
+                    $noteIds = array_filter(array_column($cleanData, 'NoteID'));
+                    $noteIdCol = 'NoteID';
+                } elseif (isset($cleanData[0]['noteid'])) {
+                    $noteIds = array_filter(array_column($cleanData, 'noteid'));
+                    $noteIdCol = 'noteid';
+                }
+
+                if (!empty($noteIds)) {
+                    foreach (array_chunk(array_unique($noteIds), 500) as $chunk) {
+                        DB::connection($destConnection)->table($tableName)->whereIn($noteIdCol, $chunk)->delete();
                     }
                 } else {
-                    $noteIds = [];
-                    if (isset($cleanData[0]['NoteID'])) {
-                        $noteIds = array_filter(array_column($cleanData, 'NoteID'));
-                        $noteIdCol = 'NoteID';
-                    } elseif (isset($cleanData[0]['noteid'])) {
-                        $noteIds = array_filter(array_column($cleanData, 'noteid'));
-                        $noteIdCol = 'noteid';
-                    }
-
-                    if (!empty($noteIds)) {
-                        foreach (array_chunk(array_unique($noteIds), 500) as $chunk) {
-                            DB::connection($destConnection)->table($tableName)->whereIn($noteIdCol, $chunk)->delete();
-                        }
-                    } else {
-                        $hashes = array_filter(array_column($cleanData, '_row_hash'));
-                        if (!empty($hashes)) {
-                            foreach (array_chunk($hashes, 500) as $hashChunk) {
-                                DB::connection($destConnection)->table($tableName)->whereIn('_row_hash', $hashChunk)->delete();
-                            }
+                    $hashes = array_filter(array_column($cleanData, '_row_hash'));
+                    if (!empty($hashes)) {
+                        foreach (array_chunk($hashes, 500) as $hashChunk) {
+                            DB::connection($destConnection)->table($tableName)->whereIn('_row_hash', $hashChunk)->delete();
                         }
                     }
                 }
