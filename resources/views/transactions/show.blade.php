@@ -101,17 +101,17 @@
         </div>
         
         <div class="p-6 overflow-y-auto max-h-[60vh]">
-            <div id="showSyncLoading" class="hidden flex flex-col items-center justify-center py-12">
-                <span class="material-symbols-outlined text-4xl text-brand-500 spin mb-4">sync</span>
-                <p class="text-body-md text-surface-500">Fetching available fields...</p>
-            </div>
-            
-            <div id="showSyncContent" class="hidden space-y-4">
+            <div id="showSyncContent" class="space-y-4">
                 <div class="flex justify-between items-end">
                     <label class="text-label-lg text-surface-700">Custom Filters (Optional)</label>
                     <button onclick="addShowFilterRow()" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-100 text-surface-700 text-label-sm hover:bg-surface-200 transition-all duration-200">
                         <span class="material-symbols-outlined text-[14px]">add</span> Add Filter
                     </button>
+                </div>
+                
+                <div id="showSyncLoading" class="hidden flex items-center justify-center py-4 bg-surface-50 rounded-xl border border-surface-100">
+                    <span class="material-symbols-outlined text-[20px] text-brand-500 spin mr-2">sync</span>
+                    <p class="text-label-sm text-surface-500">Fetching available fields from server...</p>
                 </div>
                 
                 <div id="showFiltersContainer" class="space-y-2"></div>
@@ -182,8 +182,6 @@
         const btnSync = document.getElementById('btnShowStartSync');
         
         loadingEl.classList.remove('hidden');
-        contentEl.classList.add('hidden');
-        btnSync.disabled = true;
         
         document.getElementById('showFiltersContainer').innerHTML = '';
         checkShowEmptyFilters();
@@ -203,8 +201,6 @@
             showToast('Error loading fields for filtering.', 'error');
         } finally {
             loadingEl.classList.add('hidden');
-            contentEl.classList.remove('hidden');
-            btnSync.disabled = false;
         }
     }
     

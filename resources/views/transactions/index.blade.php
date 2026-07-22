@@ -104,12 +104,7 @@
         </div>
         
         <div class="p-6 overflow-y-auto max-h-[60vh]">
-            <div id="syncModalLoading" class="hidden flex flex-col items-center justify-center py-12">
-                <span class="material-symbols-outlined text-4xl text-brand-500 spin mb-4">sync</span>
-                <p class="text-body-md text-surface-500">Fetching available fields...</p>
-            </div>
-            
-            <div id="syncModalContent" class="hidden space-y-4">
+            <div id="syncModalContent" class="space-y-4">
                 <div class="flex justify-between items-end">
                     <label class="text-label-lg text-surface-700">Custom Filters (Optional)</label>
                     <div class="flex gap-2">
@@ -122,6 +117,11 @@
                     </div>
                 </div>
                 
+                <div id="syncModalLoading" class="hidden flex items-center justify-center py-4 bg-surface-50 rounded-xl border border-surface-100">
+                    <span class="material-symbols-outlined text-[20px] text-brand-500 spin mr-2">sync</span>
+                    <p class="text-label-sm text-surface-500">Fetching available fields from server...</p>
+                </div>
+
                 <div id="filtersContainer" class="space-y-2">
                     <!-- Filter rows will be inserted here -->
                 </div>
@@ -278,12 +278,7 @@
     
     async function loadEntityFields(entityKey, defaultFilters = [], refresh = false) {
         const loadingEl = document.getElementById('syncModalLoading');
-        const contentEl = document.getElementById('syncModalContent');
-        const btnSync = document.getElementById('btnStartSync');
-        
         loadingEl.classList.remove('hidden');
-        contentEl.classList.add('hidden');
-        btnSync.disabled = true;
         
         // Preserve current filters if refreshing
         let currentFiltersToRestore = defaultFilters;
@@ -335,8 +330,6 @@
             showToast('Error loading fields for filtering.', 'error');
         } finally {
             loadingEl.classList.add('hidden');
-            contentEl.classList.remove('hidden');
-            btnSync.disabled = false;
         }
     }
     

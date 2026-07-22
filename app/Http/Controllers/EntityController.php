@@ -203,7 +203,7 @@ class EntityController extends Controller
             'records_fetched' => 0,
             'records_inserted' => 0,
             'duration_seconds' => 0,
-            'error_message' => $isActive ? "Schedule Activated ({$validated['frequency']} at {$validated['time']})" : "Schedule Deactivated",
+            'error_message' => $isActive ? "Schedule Activated (" . ($validated['frequency'] ?? 'unknown') . " at " . ($validated['time'] ?? 'N/A') . ")" : "Schedule Deactivated",
             'started_at' => now(),
             'completed_at' => now(),
         ]);

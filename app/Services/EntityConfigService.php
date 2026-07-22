@@ -64,6 +64,8 @@ class EntityConfigService
     public function save(string $key, array $data): void
     {
         $entities = $this->getAll();
+        $existingFields = $entities[$key]['available_fields'] ?? [];
+        
         $entities[$key] = [
             'odata_entity'           => $data['odata_entity'],
             'table'                  => $data['table'],
@@ -74,6 +76,11 @@ class EntityConfigService
             'destination_connection' => $data['destination_connection'] ?? 'database_default',
             'schedule_minutes'       => $data['schedule_minutes'] ?? null,
         ];
+        
+        if (!empty($existingFields)) {
+            $entities[$key]['available_fields'] = $existingFields;
+        }
+        
         $this->writeFile($entities);
         $this->syncPermissions();
     }
@@ -84,6 +91,7 @@ class EntityConfigService
     public function update(string $oldKey, string $newKey, array $data): void
     {
         $entities = $this->getAll();
+        $existingFields = $entities[$oldKey]['available_fields'] ?? [];
 
         // Remove old key if renamed
         if ($oldKey !== $newKey && isset($entities[$oldKey])) {
@@ -100,8 +108,25 @@ class EntityConfigService
             'destination_connection' => $data['destination_connection'] ?? 'database_default',
             'schedule_minutes'       => $data['schedule_minutes'] ?? null,
         ];
+        
+        if (!empty($existingFields)) {
+            $entities[$newKey]['available_fields'] = $existingFields;
+        }
+        
         $this->writeFile($entities);
         $this->syncPermissions();
+    }
+    
+    /**
+     * Cache available fields for an entity to speed up sync filter modal loading.
+     */
+    public function updateAvailableFields(string $key, array $fields): void
+    {
+        $entities = $this->getAll();
+        if (isset($entities[$key])) {
+            $entities[$key]['available_fields'] = $fields;
+            $this->writeFile($entities);
+        }
     }
 
     /**

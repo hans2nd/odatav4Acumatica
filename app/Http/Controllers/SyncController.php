@@ -294,14 +294,19 @@ class SyncController extends Controller
         $connName = $config['destination_connection'] ?? 'database_default';
         $odataEntity = $config['odata_entity'];
         
-        $cacheKey = "entity_fields_{$entity}";
-        
         $isRefresh = $request->boolean('refresh');
+        
+        // If not forcing refresh and fields are already saved in config, return them instantly!
+        if (!$isRefresh && !empty($config['available_fields'])) {
+            return response()->json(['success' => true, 'fields' => $config['available_fields']]);
+        }
+        
+        $cacheKey = "entity_fields_{$entity}";
         if ($isRefresh) {
             \Illuminate\Support\Facades\Cache::forget($cacheKey);
         }
 
-        $fields = \Illuminate\Support\Facades\Cache::remember($cacheKey, now()->addDays(1), function () use ($tableName, $connName, $odataEntity, $odataService, $isRefresh) {
+        $fields = \Illuminate\Support\Facades\Cache::remember($cacheKey, now()->addDays(1), function () use ($entity, $tableName, $connName, $odataEntity, $odataService, $isRefresh) {
             $dbColumns = [];
             try {
                 $firstRow = \Illuminate\Support\Facades\DB::connection($connName)->table($tableName)->first();
@@ -316,18 +321,27 @@ class SyncController extends Controller
 
             // If not forcing refresh and DB has columns, return them fast
             if (!$isRefresh && !empty($dbColumns)) {
+                // Save the DB columns back to the config so it's even faster next time (bypasses DB query)
+                app(\App\Services\EntityConfigService::class)->updateAvailableFields($entity, $dbColumns);
                 return $dbColumns;
             }
 
             // Fetch from Acumatica
             $odataColumns = [];
             try {
+                $sourceConnName = $config['source_connection'] ?? 'acumatica_odata';
+                $sourceConnection = app(\App\Services\ConnectionService::class)->get($sourceConnName);
+                if ($sourceConnection) {
+                    $odataService->setConnectionConfig($sourceConnection);
+                }
+
                 if ($odataService->usesSessionAuth()) {
                     $odataService->login();
                 }
                 
                 // Just get top 1 using fetchPage to avoid downloading all records
-                $result = $odataService->fetchPage($odataEntity, 1, 0, '');
+                // Pass false for $includeCount to avoid expensive COUNT(*) on large views
+                $result = $odataService->fetchPage($odataEntity, 1, 0, '', false);
                 $records = $result['value'] ?? [];
                 
                 if ($odataService->usesSessionAuth()) {
@@ -349,17 +363,20 @@ class SyncController extends Controller
             $finalFields = array_values(array_unique(array_merge($dbColumns, $odataColumns)));
             
             // Explicitly include CompanyID as it is often a valid OData filter but might not be returned in the result set
-            if (!empty($finalFields) && !in_array('CompanyID', $finalFields) && !in_array('companyid', array_map('strtolower', $finalFields))) {
+            // Even if we couldn't fetch anything, providing CompanyID at least allows basic filtering
+            if (!in_array('CompanyID', $finalFields) && !in_array('companyid', array_map('strtolower', $finalFields))) {
                 $finalFields[] = 'CompanyID';
+            }
+
+            // Save the fetched fields back to the entity config so it is instantly available next time
+            if (!empty($finalFields)) {
+                app(\App\Services\EntityConfigService::class)->updateAvailableFields($entity, $finalFields);
             }
 
             return $finalFields;
         });
 
-        if (empty($fields)) {
-            return response()->json(['success' => false, 'message' => 'No fields could be loaded. Ensure the entity has data.'], 404);
-        }
-
+        // We return success even if only CompanyID is present, so the UI doesn't break
         return response()->json(['success' => true, 'fields' => $fields]);
     }
 

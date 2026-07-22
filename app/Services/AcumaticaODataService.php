@@ -132,7 +132,7 @@ class AcumaticaODataService
     /**
      * Fetch a single page of data from an OData entity.
      */
-    public function fetchPage(string $odataEntity, int $top = 500, int $skip = 0, string $filter = ''): array
+    public function fetchPage(string $odataEntity, int $top = 500, int $skip = 0, string $filter = '', bool $includeCount = true): array
     {
         if ($this->usesSessionAuth()) {
             $this->ensureAuthenticated();
@@ -149,8 +149,11 @@ class AcumaticaODataService
 
         $pathParts[] = $odataEntity;
         
-        $isV4 = config('acumatica.odata_path', 'odatav4') === 'odatav4';
-        $queryCount = $isV4 ? '&$count=true' : '&$inlinecount=allpages&$format=json';
+        $queryCount = '';
+        if ($includeCount) {
+            $isV4 = config('acumatica.odata_path', 'odatav4') === 'odatav4';
+            $queryCount = $isV4 ? '&$count=true' : '&$inlinecount=allpages&$format=json';
+        }
         
         $url = implode('/', $pathParts) . sprintf('?$top=%d&$skip=%d%s', $top, $skip, $queryCount);
         
