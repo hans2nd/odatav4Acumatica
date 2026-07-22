@@ -21,9 +21,11 @@ use Illuminate\Support\Facades\Artisan;
 | System Utilities (VPS Deployment)
 |--------------------------------------------------------------------------
 */
-Route::get('/sys-migrate', [SystemUtilityController::class, 'migrate']);
-Route::get('/sys-migrate-fresh', [SystemUtilityController::class, 'migrateFresh']);
-Route::get('/sys-optimize', [SystemUtilityController::class, 'optimize']);
+Route::get('/sys-cron', [SystemUtilityController::class, 'runWebCron'])->name('sys.cron');
+Route::get('/sys-migrate', [SystemUtilityController::class, 'migrate'])->name('sys.migrate');
+Route::get('/sys-migrate-fresh', [SystemUtilityController::class, 'migrateFresh'])->name('sys.migrate-fresh');
+Route::get('/sys-optimize', [SystemUtilityController::class, 'optimize'])->name('sys.optimize');
+Route::get('/sys-artisan/{command}', [SystemUtilityController::class, 'runArtisan'])->name('sys.artisan');
 
 /*
 |--------------------------------------------------------------------------
@@ -113,8 +115,6 @@ Route::middleware(['auth'])->group(function () {
 
     Route::middleware(['auth'])->group(function () {
         Route::get('/report/sales-order', [ReportController::class, 'salesOrder'])->name('report.sales-order');
-        Route::get('/report/{entityKey}', [DynamicReportController::class, 'show'])->name('report.dynamic.show');
-        Route::get('/report/{entityKey}/export', [DynamicReportController::class, 'export'])->name('report.dynamic.export');
     });
 
     Route::middleware(['permission:report_builder.manage'])->group(function () {
@@ -158,6 +158,7 @@ Route::middleware(['auth'])->group(function () {
 
     Route::middleware(['permission:settings.manage'])->group(function () {
         Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
+        Route::get('/settings/system-utilities', [SettingsController::class, 'systemUtilities'])->name('settings.system-utilities');
 
         // Connections CRUD
         Route::get('/api/connections', [SettingsController::class, 'getConnections'])->name('api.connections.index');

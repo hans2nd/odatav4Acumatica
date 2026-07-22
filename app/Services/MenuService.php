@@ -48,19 +48,6 @@ class MenuService
                     if ($userPermissionKeys->contains('*') || $userPermissionKeys->contains('query_builder.view') || $userPermissionKeys->contains('query_builder.manage')) {
                         $submenus[] = ['route' => 'query.builder', 'label' => 'Query Builder', 'key' => 'query.builder'];
                     }
-                    
-                    // Additional dynamic reports
-                    $syncedTransactions = \App\Http\Controllers\DynamicReportController::getSyncedTransactionEntities();
-                    foreach ($syncedTransactions as $eKey => $eConfig) {
-                        if ($userPermissionKeys->contains('*') || $userPermissionKeys->contains("{$eKey}.view")) {
-                            $submenus[] = [
-                                'route' => 'report.dynamic.show',
-                                'route_param' => $eKey,
-                                'label' => $eConfig['description'] ?? $eKey,
-                                'key' => 'report.' . $eKey,
-                            ];
-                        }
-                    }
                 }
 
                 if ($module->code === 'sync') {
@@ -105,6 +92,9 @@ class MenuService
                     }
                     if ($userPermissionKeys->contains('*') || $userPermissionKeys->contains('users.view') || $userPermissionKeys->contains('users.manage')) {
                         $submenus[] = ['route' => 'users.index', 'label' => 'Users & Roles', 'key' => 'users'];
+                    }
+                    if ($user->isSuperAdmin()) {
+                        $submenus[] = ['route' => 'settings.system-utilities', 'label' => 'System Utilities', 'key' => 'system-utilities'];
                     }
                 }
 

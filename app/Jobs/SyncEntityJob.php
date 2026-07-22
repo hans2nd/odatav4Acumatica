@@ -64,6 +64,20 @@ class SyncEntityJob implements ShouldQueue
             'message' => $exception?->getMessage(),
         ]);
 
+        // Find the running log and mark it as failed
+        $runningLog = \App\Models\SyncLog::where('entity_key', $this->entityKey)
+            ->where('status', 'running')
+            ->orderBy('id', 'desc')
+            ->first();
+
+        if ($runningLog) {
+            $runningLog->update([
+                'status' => 'failed',
+                'error_message' => 'Job failed catastrophically: ' . mb_substr($exception?->getMessage() ?? 'Unknown error', 0, 15000),
+                'completed_at' => now(),
+            ]);
+        }
+
         // Ensure progress cache is cleared on failure
         \Illuminate\Support\Facades\Cache::forget("sync_progress_{$this->entityKey}");
     }

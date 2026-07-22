@@ -143,35 +143,31 @@ class EntityController extends Controller
 
         $isActive = !empty($validated['frequency']);
         
-        $nextRun = null;
+        $cronExpression = null;
         if ($isActive) {
             $freq = $validated['frequency'];
             $interval = (int) ($validated['interval'] ?? 1);
             
             if ($freq === 'minute') {
-                $nextRun = now()->addMinutes($interval);
+                $cronExpression = $interval > 1 ? "*/{$interval} * * * *" : "* * * * *";
             } elseif ($freq === 'hour') {
-                $nextRun = now()->addHours($interval);
+                $cronExpression = $interval > 1 ? "0 */{$interval} * * *" : "0 * * * *";
             } elseif (!empty($validated['time'])) {
-                $nextRun = \Carbon\Carbon::parse($validated['time']);
+                $timeParts = explode(':', $validated['time']);
+                $hour = (int)$timeParts[0];
+                $minute = (int)$timeParts[1];
                 
                 if ($freq === 'daily') {
-                    if ($nextRun->isPast()) {
-                        $nextRun->addDay();
-                    }
+                    $cronExpression = "{$minute} {$hour} * * *";
                 } elseif ($freq === 'weekly') {
                     $dayOfWeek = (int) ($validated['day_of_week'] ?? 1);
-                    if ($nextRun->dayOfWeekIso !== $dayOfWeek || $nextRun->isPast()) {
-                        $nextRun->next($dayOfWeek);
-                    }
+                    $cronExpression = "{$minute} {$hour} * * {$dayOfWeek}";
                 } elseif ($freq === 'monthly') {
                     $dayOfMonth = (int) ($validated['day_of_month'] ?? 1);
-                    $nextRun->setDate($nextRun->year, $nextRun->month, min($dayOfMonth, $nextRun->daysInMonth));
-                    if ($nextRun->isPast()) {
-                        $nextRun->addMonth();
-                        $nextRun->day = min($dayOfMonth, $nextRun->daysInMonth);
-                    }
+                    $cronExpression = "{$minute} {$hour} {$dayOfMonth} * *";
                 }
+            } else {
+                $cronExpression = "0 0 * * *";
             }
         }
 
@@ -179,13 +175,8 @@ class EntityController extends Controller
         $schedule = \App\Models\SyncSchedule::updateOrCreate(
             ['entity_key' => $key],
             [
-                'frequency' => $validated['frequency'] ?? null,
-                'interval' => $validated['interval'] ?? null,
-                'time' => $validated['time'] ?? null,
-                'day_of_week' => $validated['day_of_week'] ?? null,
-                'day_of_month' => $validated['day_of_month'] ?? null,
+                'cron_expression' => $cronExpression ?? '* * * * *',
                 'is_active' => $isActive,
-                'next_run_at' => $nextRun,
             ]
         );
 

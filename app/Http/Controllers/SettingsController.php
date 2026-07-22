@@ -29,6 +29,15 @@ class SettingsController extends Controller
         ]);
     }
 
+    public function systemUtilities(Request $request)
+    {
+        if (!$request->user()->isSuperAdmin()) {
+            abort(403, 'Unauthorized. Superadmin only.');
+        }
+
+        return view('settings.system-utilities');
+    }
+
     public function getConnections(): JsonResponse
     {
         return response()->json([

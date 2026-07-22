@@ -35,16 +35,8 @@ class SyncService
 
         $odataEntity = $entity['odata_entity'];
         $tableName   = $entity['table'];
-        $sourceConnKey = $entity['source_connection'] ?? 'acumatica_default';
-        $destConnKey   = $entity['destination_connection'] ?? 'database_default';
-
-        $sourceConnection = $this->connectionService->get($sourceConnKey);
-        
-        // Ensure default connections fallback if missing
-        if (!$sourceConnection && $sourceConnKey === 'acumatica_default') {
-            $sourceConnection = ['type' => 'odata'];
-        }
-
+        $sourceConnKey = !empty($entity['source_connection']) ? $entity['source_connection'] : 'acumatica_default';
+        $destConnKey   = !empty($entity['destination_connection']) ? $entity['destination_connection'] : 'database_default';
         $destConnection = $destConnKey; // Use explicitly so it uses the dynamic connection
 
         // Create a log record
@@ -63,6 +55,13 @@ class SyncService
 
         try {
             Log::info("Sync [{$entityKey}]: Starting…");
+            
+            $sourceConnection = $this->connectionService->get($sourceConnKey);
+            
+            // If the selected connection was deleted or invalid, throw an Exception
+            if (!$sourceConnection) {
+                throw new \Exception("Koneksi tidak ditemukan! Data koneksi ({$sourceConnKey}) mungkin telah dihapus atau belum dikonfigurasi. Harap periksa menu Connection Management.");
+            }
             
             // --- BEGIN INCREMENTAL LOGIC ---
             $filter = '';

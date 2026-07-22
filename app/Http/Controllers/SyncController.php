@@ -33,6 +33,27 @@ class SyncController extends Controller
      */
     public function syncAll(): JsonResponse
     {
+        // Validate all connections before dispatching
+        $entities = config('acumatica.entities', []);
+        $connectionService = app(\App\Services\ConnectionService::class);
+        $invalidEntities = [];
+        
+        foreach ($entities as $key => $config) {
+            $sourceConnKey = !empty($config['source_connection']) ? $config['source_connection'] : 'acumatica_default';
+            if (!$connectionService->get($sourceConnKey)) {
+                $invalidEntities[] = $key;
+            }
+        }
+        
+        if (!empty($invalidEntities)) {
+            $list = implode(', ', $invalidEntities);
+            return response()->json([
+                'success' => false,
+                'message' => "Koneksi tidak ditemukan untuk entitas berikut: {$list}. Harap periksa menu Connection Management.",
+                'error_type' => 'connection_missing'
+            ], 400);
+        }
+
         if ($this->queueWorker->isAsyncQueue()) {
             SyncAllJob::dispatch();
             $this->queueWorker->startBackgroundWorker();
@@ -142,6 +163,18 @@ class SyncController extends Controller
                 ['entity_key' => $entity],
                 ['custom_filters' => empty($customFilters) ? null : $customFilters]
             );
+        }
+
+        // Validate Connection before dispatching
+        $sourceConnKey = !empty($config['source_connection']) ? $config['source_connection'] : 'acumatica_default';
+        $sourceConnection = app(\App\Services\ConnectionService::class)->get($sourceConnKey);
+        
+        if (!$sourceConnection) {
+            return response()->json([
+                'success' => false,
+                'message' => "Koneksi tidak ditemukan! Data koneksi ({$sourceConnKey}) mungkin telah dihapus atau belum dikonfigurasi. Harap periksa menu Connection Management.",
+                'error_type' => 'connection_missing'
+            ], 400);
         }
 
         // Dispatch to queue for async processing

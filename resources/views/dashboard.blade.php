@@ -40,6 +40,7 @@
                 <thead>
                     <tr class="border-b border-surface-100">
                         <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">Entity</th>
+                        <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">Source</th>
                         <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">Status</th>
                         <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">Records</th>
                         <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">Duration</th>
@@ -50,6 +51,12 @@
                     @forelse($recentLogs as $log)
                     <tr class="hover:bg-surface-50/50 transition-colors">
                         <td class="py-3 px-5 font-medium text-surface-800">{{ $log->entity_description ?? $log->entity_key }}</td>
+                        <td class="py-3 px-5">
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold uppercase tracking-wide
+                                {{ $log->source === 'schedule' ? 'bg-indigo-50 text-indigo-700' : 'bg-surface-100 text-surface-600' }}">
+                                {{ $log->source ?? 'manual' }}
+                            </span>
+                        </td>
                         <td class="py-3 px-5">
                             @if($log->status === 'success')
                                 <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 text-label-sm font-semibold">
@@ -75,7 +82,7 @@
                     </tr>
                     @empty
                     <tr>
-                        <td colspan="5" class="py-12 px-5 text-center text-surface-400">
+                        <td colspan="6" class="py-12 px-5 text-center text-surface-400">
                             <span class="material-symbols-outlined text-4xl mb-3 block">sync_disabled</span>
                             <p class="text-body-md">No sync activity yet. Click <strong class="text-surface-600">Force Sync All</strong> to start.</p>
                         </td>

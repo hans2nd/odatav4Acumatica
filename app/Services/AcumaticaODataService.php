@@ -72,6 +72,7 @@ class AcumaticaODataService
                 'cookies' => $this->cookieJar,
                 'verify'  => $this->verifySsl,
                 'timeout' => $this->timeout,
+                'curl'    => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
             ])->post($this->baseUrl . '/entity/auth/login', [
                 'name'     => $this->username,
                 'password' => $this->password,
@@ -394,6 +395,7 @@ class AcumaticaODataService
             $request = Http::retry(3, 5000)->withOptions([
                 'verify'  => $this->verifySsl,
                 'timeout' => 30,
+                'curl'    => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
             ])->acceptJson();
 
             if ($this->usesSessionAuth()) {
@@ -460,6 +462,7 @@ class AcumaticaODataService
             'verify'  => $this->verifySsl,
             'timeout' => $this->timeout,
             'handler' => $this->handlerStack,
+            'curl'    => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
         ])->acceptJson();
 
         if ($this->usesSessionAuth()) {

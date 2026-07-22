@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
+use App\Services\ScheduleWorkerService;
 
 class SystemUtilityController extends Controller
 {
@@ -66,6 +67,63 @@ class SystemUtilityController extends Controller
         }
     }
 
+    /**
+     * Run an arbitrary artisan command.
+     * Note: Colons (:) in URLs can sometimes cause issues, so you can pass dashes (-) which will be converted to colons if the command exists.
+     */
+    public function runArtisan(Request $request, $command)
+    {
+        $token = $request->query('token');
+        if ($token !== 'deploy123') {
+            return $this->promptToken();
+        }
+
+        // Allow passing 'storage-link' instead of 'storage:link' in the URL
+        $command = str_replace('-', ':', $command);
+
+        try {
+            Artisan::call($command);
+            $output = Artisan::output();
+            return $this->formatResponse("Artisan '$command' Executed Successfully", $output ?: "Command completed with no output.");
+        } catch (\Exception $e) {
+            return $this->formatResponse("Error Running Artisan '$command'", $e->getMessage(), true);
+        }
+    }
+
+    public function runWebCron(Request $request)
+    {
+        if ($request->query('token') !== 'deploy123') {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        try {
+            // 1. Process Native Schedules
+            Artisan::call('schedule:run');
+            $scheduleOutput = Artisan::output();
+
+            // 2. Process Queue for max 50 seconds to avoid HTTP timeout
+            Artisan::call('queue:work', [
+                '--stop-when-empty' => true,
+                '--max-time' => 50,
+                '--memory' => 1024
+            ]);
+            
+            $queueOutput = Artisan::output();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Web Cron executed successfully',
+                'schedule_output' => $scheduleOutput ?: 'No schedules due.',
+                'queue_output' => $queueOutput ?: 'No jobs processed.'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error executing Web Cron: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
     private function promptToken()
     {
         return response('
@@ -88,6 +146,14 @@ class SystemUtilityController extends Controller
 
     private function formatResponse($title, $output, $isError = false)
     {
+        if (request()->wantsJson() || request()->ajax()) {
+            return response()->json([
+                'success' => !$isError,
+                'title'   => $title,
+                'message' => $output,
+            ], $isError ? 500 : 200);
+        }
+
         $color = $isError ? 'text-red-600' : 'text-green-600';
         $bg = $isError ? 'bg-red-50' : 'bg-green-50';
         

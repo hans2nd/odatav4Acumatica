@@ -26,12 +26,16 @@ class QueueWorkerService
         $basePath = base_path();
         $command = "php {$basePath}" . DIRECTORY_SEPARATOR . "artisan queue:work --stop-when-empty --timeout=1800 --memory=1024";
 
-        if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-            // Detached process in Windows
-            pclose(popen("start /B {$command} > NUL 2>&1", "r"));
-        } else {
-            // Detached process in Linux/Unix
-            exec("{$command} > /dev/null 2>&1 &");
+        try {
+            if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+                // Detached process in Windows
+                pclose(popen("start /B {$command} > NUL 2>&1", "r"));
+            } else {
+                // Detached process in Linux/Unix
+                exec("{$command} > /dev/null 2>&1 &");
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning("QueueWorkerService: Failed to spawn background worker. The server might have disabled exec/popen. Please run the worker manually using Supervisor.", ['error' => $e->getMessage()]);
         }
     }
 }

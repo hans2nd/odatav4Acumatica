@@ -26,12 +26,16 @@ class ScheduleWorkerService
             $basePath = base_path();
             $command = "php {$basePath}" . DIRECTORY_SEPARATOR . "artisan sync:scheduler-daemon";
 
-            if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-                // Detached process in Windows
-                pclose(popen("start /B {$command} > NUL 2>&1", "r"));
-            } else {
-                // Detached process in Linux/Unix
-                exec("{$command} > /dev/null 2>&1 &");
+            try {
+                if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+                    // Detached process in Windows
+                    pclose(popen("start /B {$command} > NUL 2>&1", "r"));
+                } else {
+                    // Detached process in Linux/Unix
+                    exec("{$command} > /dev/null 2>&1 &");
+                }
+            } catch (\Throwable $e) {
+                Log::warning("ScheduleWorkerService: Failed to spawn daemon. The server might have disabled exec/popen. Please run the daemon manually using Supervisor or Cron.", ['error' => $e->getMessage()]);
             }
         }
     }

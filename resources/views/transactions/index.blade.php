@@ -534,7 +534,23 @@
                 showToast(`${currentSyncEntity}: ${data.records} records synced in ${data.duration}`, 'success');
                 setTimeout(() => location.reload(), 1500);
             } else {
-                showToast(`${currentSyncEntity}: ${data.error || data.message}`, 'error');
+                if (data.error_type === 'connection_missing') {
+                    if (typeof Swal !== 'undefined') {
+                        Swal.fire({
+                            icon: 'warning',
+                            title: 'Koneksi Terputus!',
+                            text: data.message,
+                            confirmButtonText: 'Periksa Pengaturan',
+                            confirmButtonColor: '#f59e0b'
+                        }).then(() => {
+                            window.location.href = '/settings';
+                        });
+                    } else {
+                        alert(data.message);
+                    }
+                } else {
+                    showToast(`${currentSyncEntity}: ${data.error || data.message}`, 'error');
+                }
                 btnEl.disabled = false;
                 btnEl.innerHTML = originalText;
                 document.getElementById('syncProgressContainer').classList.add('hidden');
