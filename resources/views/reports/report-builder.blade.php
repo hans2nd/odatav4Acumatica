@@ -4,6 +4,9 @@
 @section('page-title', 'Report Builder')
 
 @section('content')
+    {{-- SortableJS CDN --}}
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+
     <div class="max-w-5xl mx-auto space-y-6">
 
         {{-- Header --}}
@@ -105,7 +108,7 @@
                         class="w-full rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2 px-3">
                 </div>
                 <div id="colListContainer"
-                    class="max-h-64 overflow-y-auto rounded-xl border border-surface-200 bg-surface-50 p-3 grid grid-cols-2 md:grid-cols-3 gap-1">
+                    class="max-h-64 overflow-y-auto rounded-xl border border-surface-200 bg-surface-50 p-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
                     {{-- Column checkboxes will be inserted here --}}
                 </div>
             </div>
@@ -319,6 +322,8 @@
         }
 
         // ── Step 2: Columns ──
+        let colSortableInstance = null;
+
         function renderColumns(columns) {
             const container = document.getElementById('colListContainer');
             container.innerHTML = '';
@@ -326,16 +331,28 @@
             columns.forEach(col => {
                 const label = document.createElement('label');
                 label.className =
-                    'flex items-center gap-2 py-1 px-2 rounded-lg hover:bg-white cursor-pointer transition-colors col-item';
+                    'flex items-center gap-2 py-1.5 px-2 rounded-lg border border-transparent hover:border-surface-200 bg-surface-50 hover:bg-white cursor-pointer transition-all col-item group';
                 label.dataset.colname = col.toLowerCase();
                 label.innerHTML = `
+                    <span class="material-symbols-outlined text-surface-300 text-[16px] cursor-grab drag-handle group-hover:text-surface-500">drag_indicator</span>
                     <input type="checkbox" class="col-checkbox w-4 h-4 text-brand-600 rounded border-surface-300 focus:ring-brand-500" value="${col}" checked onchange="updateColCount()">
-                    <span class="text-body-sm text-surface-700 truncate">${col}</span>
+                    <span class="text-body-sm text-surface-700 truncate select-none flex-1">${col}</span>
                 `;
                 container.appendChild(label);
             });
 
             updateColCount();
+
+            if (colSortableInstance) {
+                colSortableInstance.destroy();
+            }
+            
+            colSortableInstance = new Sortable(container, {
+                animation: 150,
+                handle: '.drag-handle',
+                ghostClass: 'opacity-40',
+                chosenClass: 'bg-brand-50'
+            });
         }
 
         function filterColumnList() {

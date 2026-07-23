@@ -232,7 +232,7 @@
 </div>
 
 <script>
-    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+    // csrfToken is already declared globally in app.blade.php
     let qbTables = [];
     let qbTableColumns = {}; // { tableName: [{name, type, key}] }
     let qbSelectedColumns = []; // [{table, field, alias, aggregate}]

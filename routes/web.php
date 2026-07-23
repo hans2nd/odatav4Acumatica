@@ -191,4 +191,29 @@ Route::middleware(['auth'])->group(function () {
 
         Route::get('/api/permissions', [UserManagementController::class, 'permissions'])->name('api.permissions.index');
     });
+    /*
+    |--------------------------------------------------------------------------
+    | Menu Management
+    |--------------------------------------------------------------------------
+    */
+
+    Route::middleware(['permission:settings.manage'])->group(function () {
+        Route::get('/menu-management', [App\Http\Controllers\MenuManagementController::class, 'index'])->name('menu-management.index');
+        Route::get('/api/menus/tree', [App\Http\Controllers\MenuManagementController::class, 'getTree'])->name('api.menus.tree');
+        Route::post('/api/menus', [App\Http\Controllers\MenuManagementController::class, 'store'])->name('api.menus.store');
+        Route::put('/api/menus/{id}', [App\Http\Controllers\MenuManagementController::class, 'update'])->name('api.menus.update');
+        Route::delete('/api/menus/{id}', [App\Http\Controllers\MenuManagementController::class, 'destroy'])->name('api.menus.destroy');
+        Route::post('/api/menus/reorder', [App\Http\Controllers\MenuManagementController::class, 'reorder'])->name('api.menus.reorder');
+        Route::get('/api/menus/routes', [App\Http\Controllers\MenuManagementController::class, 'getRoutes'])->name('api.menus.routes');
+        Route::get('/api/menus/icons', [App\Http\Controllers\MenuManagementController::class, 'getIcons'])->name('api.menus.icons');
+        Route::get('/api/menus/permission-matrix', [App\Http\Controllers\MenuManagementController::class, 'getPermissionMatrix'])->name('api.menus.permission-matrix');
+        Route::post('/api/menus/toggle-role-permission', [App\Http\Controllers\MenuManagementController::class, 'toggleRolePermission'])->name('api.menus.toggle-role-permission');
+        Route::post('/api/menus/publish', [App\Http\Controllers\MenuManagementController::class, 'publish'])->name('api.menus.publish');
+    });
+    // Auto-generated route for Receivables
+    Route::get('/receivables/index', [\App\Http\Controllers\ReceivablesIndexController::class, 'index'])->name('receivables.index');
+    // Auto-generated route for Piutang
+    Route::get('/piutang/index', [\App\Http\Controllers\PiutangIndexController::class, 'index'])->name('piutang.index');
+    // Auto-generated route for Aging Piutang
+    Route::get('/aging-piutang/index', [\App\Http\Controllers\AgingPiutangIndexController::class, 'index'])->name('aging-piutang.index');
 });

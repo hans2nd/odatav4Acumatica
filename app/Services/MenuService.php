@@ -3,13 +3,13 @@
 namespace App\Services;
 
 use App\Models\Menu;
-use App\Models\Module;
 use Illuminate\Support\Facades\Cache;
 
 class MenuService
 {
     /**
      * Get dynamic menus for the authenticated user based on their permissions.
+     * Now fully database-driven from the `menus` table.
      */
     public function getUserMenus($user)
     {
@@ -17,116 +17,86 @@ class MenuService
             return [];
         }
 
-        $userPermissionKeys = $user->isSuperAdmin()
-            ? collect(['*']) // Admin gets all
-            : $this->getUserPermissionKeys($user);
+        // Get all active & visible menus ordered by sort_order
+        $allMenus = Menu::where('is_active', true)
+            ->where('is_visible', true)
+            ->orderBy('sort_order')
+            ->get();
 
-        // Fetch Modules ordered by sort_order
-        $modules = Module::where('is_active', true)->orderBy('sort_order')->get();
+        // Build tree and filter by user permissions
+        $rootMenus = $allMenus->whereNull('parent_id');
         $menuStructure = [];
 
-        foreach ($modules as $module) {
-                // Determine if we should show this module
-                // A module is shown if it has menus the user can see, OR resources the user has access to.
-                
-                // For Master Data and Transaction, we can dynamically build submenus from resources!
-                $submenus = [];
-                
-                if ($module->code === 'master-data' || $module->code === 'transaction') {
-                    // Skip rendering as top-level modules, they are now under 'sync'
-                    continue;
-                }
-
-                // If module is 'report', add static report builder and dynamic endpoints
-                if ($module->code === 'report') {
-                    if ($userPermissionKeys->contains('*') || $userPermissionKeys->contains('report_builder.view') || $userPermissionKeys->contains('report_builder.manage')) {
-                        $submenus[] = ['route' => 'report.builder', 'label' => 'Report Builder', 'key' => 'report.builder'];
-                    }
-                    if ($userPermissionKeys->contains('*') || $userPermissionKeys->contains('endpoint_api.view') || $userPermissionKeys->contains('endpoint_api.manage')) {
-                        $submenus[] = ['route' => 'endpoint.api.index', 'label' => 'Endpoint API', 'key' => 'endpoint.api'];
-                    }
-                    if ($userPermissionKeys->contains('*') || $userPermissionKeys->contains('query_builder.view') || $userPermissionKeys->contains('query_builder.manage')) {
-                        $submenus[] = ['route' => 'query.builder', 'label' => 'Query Builder', 'key' => 'query.builder'];
-                    }
-                }
-
-                if ($module->code === 'sync') {
-                    // Inject Master Data
-                    $masterDataModule = $modules->where('code', 'master-data')->first();
-                    if ($masterDataModule) {
-                        $hasMasterAccess = false;
-                        foreach ($masterDataModule->resources as $resource) {
-                            if ($userPermissionKeys->contains('*') || $userPermissionKeys->contains("{$resource->slug}.view")) {
-                                $hasMasterAccess = true;
-                                break;
-                            }
-                        }
-                        if ($hasMasterAccess) {
-                            $submenus[] = ['route' => 'master-data.index', 'label' => 'Master Data', 'key' => 'master-data'];
-                        }
-                    }
-
-                    // Inject Transaction
-                    $transactionModule = $modules->where('code', 'transaction')->first();
-                    if ($transactionModule) {
-                        $hasTransAccess = false;
-                        foreach ($transactionModule->resources as $resource) {
-                            if ($userPermissionKeys->contains('*') || $userPermissionKeys->contains("{$resource->slug}.view")) {
-                                $hasTransAccess = true;
-                                break;
-                            }
-                        }
-                        if ($hasTransAccess) {
-                            $submenus[] = ['route' => 'transactions.index', 'label' => 'Transaction', 'key' => 'transaction'];
-                        }
-                    }
-
-                    if ($userPermissionKeys->contains('*') || $userPermissionKeys->contains('logs.view')) {
-                        $submenus[] = ['route' => 'logs.index', 'label' => 'Logs', 'key' => 'logs'];
-                    }
-                }
-
-                if ($module->code === 'settings') {
-                    if ($userPermissionKeys->contains('*') || $userPermissionKeys->contains('settings.view') || $userPermissionKeys->contains('settings.manage')) {
-                        $submenus[] = ['route' => 'settings.index', 'label' => 'General Settings', 'key' => 'settings'];
-                    }
-                    if ($userPermissionKeys->contains('*') || $userPermissionKeys->contains('users.view') || $userPermissionKeys->contains('users.manage')) {
-                        $submenus[] = ['route' => 'users.index', 'label' => 'Users & Roles', 'key' => 'users'];
-                    }
-                    if ($user->isSuperAdmin()) {
-                        $submenus[] = ['route' => 'settings.system-utilities', 'label' => 'System Utilities', 'key' => 'system-utilities'];
-                    }
-                }
-
-                if ($module->code === 'dashboard') {
-                    $menuStructure[] = [
-                        'route' => 'dashboard',
-                        'icon' => $module->icon,
-                        'label' => $module->name,
-                        'key' => $module->code,
-                    ];
-                    continue; // No submenus for dashboard
-                }
-
-                // Only add module if it has submenus
-                if (count($submenus) > 0) {
-                    $menuStructure[] = [
-                        'label' => $module->name,
-                        'icon' => $module->icon,
-                        'key' => $module->code,
-                        'submenus' => $submenus,
-                    ];
-                }
+        foreach ($rootMenus as $rootMenu) {
+            if (!$rootMenu->hasAccess($user)) {
+                continue;
             }
+
+            $children = $this->getAccessibleChildren($allMenus, $rootMenu->id, $user);
+
+            if ($rootMenu->route_name) {
+                // Top-level menu with a direct route (e.g. Dashboard)
+                $item = [
+                    'route' => $rootMenu->route_name,
+                    'route_param' => $rootMenu->route_params,
+                    'icon' => $rootMenu->icon,
+                    'label' => $rootMenu->title,
+                    'key' => $rootMenu->route_name,
+                    'badge' => $rootMenu->badge,
+                    'open_in_new_tab' => $rootMenu->open_in_new_tab,
+                ];
+
+                if (!empty($children)) {
+                    $item['submenus'] = $children;
+                }
+
+                $menuStructure[] = $item;
+            } elseif (!empty($children)) {
+                // Parent-only menu (no route, just a group header)
+                $menuStructure[] = [
+                    'label' => $rootMenu->title,
+                    'icon' => $rootMenu->icon,
+                    'key' => 'menu-' . $rootMenu->id,
+                    'submenus' => $children,
+                ];
+            }
+        }
 
         return $menuStructure;
     }
 
-    private function getUserPermissionKeys($user)
+    /**
+     * Recursively get children that the user has access to.
+     */
+    private function getAccessibleChildren($allMenus, $parentId, $user): array
     {
-        $roleIds = $user->roles()->pluck('roles.id');
-        return \App\Models\Permission::whereHas('roles', function ($q) use ($roleIds) {
-            $q->whereIn('roles.id', $roleIds);
-        })->pluck('permission_key');
+        $children = $allMenus->where('parent_id', $parentId);
+        $result = [];
+
+        foreach ($children as $child) {
+            if (!$child->hasAccess($user)) {
+                continue;
+            }
+
+            $grandchildren = $this->getAccessibleChildren($allMenus, $child->id, $user);
+
+            $item = [
+                'route' => $child->route_name,
+                'route_param' => $child->route_params,
+                'label' => $child->title,
+                'key' => $child->route_name ?? 'menu-' . $child->id,
+                'icon' => $child->icon,
+                'badge' => $child->badge,
+                'open_in_new_tab' => $child->open_in_new_tab,
+            ];
+
+            if (!empty($grandchildren)) {
+                $item['submenus'] = $grandchildren;
+            }
+
+            $result[] = $item;
+        }
+
+        return $result;
     }
 }

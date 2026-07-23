@@ -214,16 +214,133 @@ class UserManagementController extends Controller
         ]);
     }
 
-    /**
-     * Get all permissions grouped.
-     */
     public function permissions(): JsonResponse
     {
-        $modules = \App\Models\Module::with(['resources.permissions.action'])->orderBy('sort_order')->get();
+        // 1. Fetch menu tree with permissions
+        $menus = \App\Models\Menu::with(['permissions.action'])->orderBy('sort_order')->get();
+        
+        // 2. Fetch any orphaned or non-menu permissions
+        $menuPermissionIds = \Illuminate\Support\Facades\DB::table('menu_permissions')->pluck('permission_id')->toArray();
+        $otherPermissions = \App\Models\Permission::with('action')->whereNotIn('id', $menuPermissionIds)->get();
+
+        // Load entity definitions
+        $allEntities = array_merge(config('acumatica.default_entities', []), config('acumatica.entities', []));
+
+        // Create a mapping from entity_key to their permissions
+        $entityPermissions = [];
+        $remainingOther = [];
+
+        foreach ($otherPermissions as $perm) {
+            $parts = explode('.', $perm->permission_key);
+            $prefix = $parts[0];
+
+            if (isset($allEntities[$prefix])) {
+                $entityPermissions[$prefix][] = $perm;
+            } else {
+                $remainingOther[] = $perm;
+            }
+        }
+
+        $menusArray = $menus->toArray();
+        
+        $masterDataMenuId = null;
+        $transactionMenuId = null;
+        
+        foreach ($menusArray as $menu) {
+            if ($menu['route_name'] === 'master-data.index') {
+                $masterDataMenuId = $menu['id'];
+            } elseif ($menu['route_name'] === 'transactions.index') {
+                $transactionMenuId = $menu['id'];
+            }
+        }
+
+        // Add virtual menus for entities
+        foreach ($entityPermissions as $entityKey => $perms) {
+            $config = $allEntities[$entityKey];
+            $type = $config['type']; // 'master' or 'transaction'
+            
+            $parentId = null;
+            if ($type === 'master' && $masterDataMenuId) {
+                $parentId = $masterDataMenuId;
+            } elseif ($type === 'transaction' && $transactionMenuId) {
+                $parentId = $transactionMenuId;
+            }
+            
+            // Create a virtual menu item
+            $virtualMenu = [
+                'id' => 'virtual-' . $entityKey,
+                'parent_id' => $parentId,
+                'title' => $config['description'] ?? preg_replace('/([A-Z])/', ' $1', $entityKey),
+                'icon' => $config['icon'] ?? 'database',
+                'permissions' => $perms,
+                'children' => [],
+                'sort_order' => 9999,
+            ];
+            
+            $menusArray[] = $virtualMenu;
+        }
+
+        // Map remaining other permissions directly to their matching menus
+        $finalOther = [];
+        foreach ($remainingOther as $perm) {
+            $parts = explode('.', $perm->permission_key);
+            $prefix = $parts[0];
+            
+            $assigned = false;
+
+            // Special case: sync_engine goes to Synchronization
+            if ($prefix === 'sync_engine') {
+                foreach ($menusArray as &$m) {
+                    if ($m['title'] === 'Synchronization') {
+                        if (!isset($m['permissions'])) $m['permissions'] = [];
+                        $m['permissions'][] = $perm;
+                        $assigned = true;
+                        break;
+                    }
+                }
+                unset($m);
+            }
+
+            // General case: match prefix to menu's permission_key prefix
+            if (!$assigned) {
+                foreach ($menusArray as &$m) {
+                    if (!empty($m['permission_key'])) {
+                        $menuPrefix = explode('.', $m['permission_key'])[0];
+                        if ($menuPrefix === $prefix) {
+                            if (!isset($m['permissions'])) $m['permissions'] = [];
+                            $m['permissions'][] = $perm;
+                            $assigned = true;
+                            break;
+                        }
+                    }
+                }
+                unset($m);
+            }
+
+            if (!$assigned) {
+                $finalOther[] = $perm;
+            }
+        }
+
+        // Build the tree from the array
+        $buildArrayTree = function ($items, $parentId = null) use (&$buildArrayTree) {
+            $branch = [];
+            foreach ($items as $item) {
+                if ($item['parent_id'] == $parentId) {
+                    $children = $buildArrayTree($items, $item['id']);
+                    $item['children'] = $children;
+                    $branch[] = $item;
+                }
+            }
+            return $branch;
+        };
+
+        $menuTree = $buildArrayTree($menusArray);
 
         return response()->json([
-            'success'     => true,
-            'modules'     => $modules,
+            'success'          => true,
+            'menus'            => $menuTree,
+            'otherPermissions' => $finalOther,
         ]);
     }
 }
