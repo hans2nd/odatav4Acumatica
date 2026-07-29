@@ -11,12 +11,54 @@ class SyncService
     private AcumaticaODataService $odataService;
     private SchemaManager $schemaManager;
     private ConnectionService $connectionService;
+    private \App\Services\Contracts\SyncStateServiceInterface $syncStateService;
+    private BottleneckDetector $bottleneckDetector;
 
-    public function __construct(AcumaticaODataService $odataService, SchemaManager $schemaManager, ConnectionService $connectionService)
-    {
+    public function __construct(
+        AcumaticaODataService $odataService,
+        SchemaManager $schemaManager,
+        ConnectionService $connectionService,
+        \App\Services\Contracts\SyncStateServiceInterface $syncStateService,
+        BottleneckDetector $bottleneckDetector
+    ) {
         $this->odataService  = $odataService;
         $this->schemaManager = $schemaManager;
         $this->connectionService = $connectionService;
+        $this->syncStateService = $syncStateService;
+        $this->bottleneckDetector = $bottleneckDetector;
+    }
+
+    private function checkForControlSignals(SyncLog $log)
+    {
+        $signalKey = 'sync_control_log_' . $log->id;
+        $signal = \Illuminate\Support\Facades\Cache::get($signalKey);
+        
+        if ($signal === 'pause') {
+            $log->update(['status' => 'paused']);
+            while (\Illuminate\Support\Facades\Cache::get($signalKey) === 'pause') {
+                $progressKey = "sync_progress_{$log->entity_key}";
+                $progress = \Illuminate\Support\Facades\Cache::get($progressKey, []);
+                $progress['status'] = 'paused';
+                $progress['stage'] = 'Paused by User';
+                \Illuminate\Support\Facades\Cache::put($progressKey, $progress, 3600);
+                
+                sleep(2);
+            }
+            // If signal changed to stop or cancel while paused, re-evaluate
+            $signal = \Illuminate\Support\Facades\Cache::get($signalKey);
+            if (!$signal || $signal === 'resume') {
+                $log->update(['status' => 'running']);
+                \Illuminate\Support\Facades\Cache::forget($signalKey);
+            }
+        }
+        
+        if ($signal === 'stop') {
+            throw new \App\Exceptions\SyncStopException('Sync stopped gracefully by user.');
+        }
+        
+        if ($signal === 'cancel') {
+            throw new \App\Exceptions\SyncCancelException('Sync cancelled forcefully by user.');
+        }
     }
 
     /*
@@ -52,6 +94,15 @@ class SyncService
         ]);
 
         $startTime = microtime(true);
+        $schedule = \App\Models\SyncSchedule::firstOrCreate(
+            ['entity_key' => $entityKey],
+            ['is_active' => true]
+        );
+        $workerId = uniqid("worker_{$entityKey}_");
+
+        $this->syncStateService->initializeSyncState($schedule->id, $entityKey);
+        $this->syncStateService->acquireSynchronizationLock($schedule->id, $workerId);
+        $this->syncStateService->startSynchronization($schedule->id);
 
         try {
             Log::info("Sync [{$entityKey}]: Starting…");
@@ -155,21 +206,27 @@ class SyncService
             // --- END CUSTOM FILTERS ---
 
             $progressKey = "sync_progress_{$entityKey}";
+            $syncStartTime = microtime(true);
             \Illuminate\Support\Facades\Cache::put($progressKey, [
                 'current' => 0,
                 'total' => null,
-                'status' => 'fetching'
+                'status' => 'fetching',
+                'start_time' => $syncStartTime,
+                'stage' => 'Initializing...'
             ], 3600);
 
+            $lastProgressUpdate = $syncStartTime;
             $fetchedCount = 0;
             $insertedCount = 0;
             $hasData = false;
             $totalRecordsCount = null;
 
-            $processChunkCallback = function($recordsChunk) use (&$fetchedCount, &$insertedCount, &$hasData, &$totalRecordsCount, $tableName, $isIncremental, $customFilters, $progressKey, $destConnection, $log) {
-                if (\Illuminate\Support\Facades\Cache::get('sync_abort_log_' . $log->id)) {
-                    throw new \Exception('Sync aborted manually by user.');
-                }
+            $processChunkCallback = function($recordsChunk) use (&$fetchedCount, &$insertedCount, &$hasData, &$totalRecordsCount, $tableName, $isIncremental, $customFilters, $progressKey, $destConnection, $log, $schedule, $syncStartTime) {
+                // Check Execution Control Signals (Pause, Stop, Cancel)
+                $this->checkForControlSignals($log);
+                
+                $chunkStartTime = microtime(true);
+                $memoryMb = memory_get_usage(true) / 1024 / 1024;
 
                 $isFirstChunk = !$hasData;
                 $hasData = true;
@@ -179,8 +236,11 @@ class SyncService
                 if ($isFirstChunk) {
                     $this->schemaManager->ensureTable($destConnection, $tableName, $recordsChunk[0]);
                 }
-                Log::debug("schemaManager class: " . get_class($this->schemaManager));
+                
                 $cleanData = $this->schemaManager->cleanRecords($recordsChunk);
+                
+                $fetchTimeMs = (microtime(true) - $chunkStartTime) * 1000;
+                $writeStartTime = microtime(true);
 
                 if ($isIncremental) {
                     $inserted = $this->upsertTableData($destConnection, $tableName, $cleanData, $customFilters, $progressKey, $isFirstChunk, $insertedCount, $totalRecordsCount);
@@ -188,18 +248,49 @@ class SyncService
                     $inserted = $this->replaceTableData($destConnection, $tableName, $cleanData, $customFilters, $progressKey, $isFirstChunk, $insertedCount, $totalRecordsCount);
                 }
                 
+                $writeTimeMs = (microtime(true) - $writeStartTime) * 1000;
+                
                 $insertedCount += $inserted;
+                $this->syncStateService->updateStatistics($schedule->id, count($recordsChunk), $inserted, 0, 0);
+
+                // Throughput calculation
+                $elapsed = microtime(true) - $syncStartTime;
+                $rowsPerSec = $elapsed > 0 ? $fetchedCount / $elapsed : 0;
+                
+                // Bottleneck detection
+                $this->bottleneckDetector->analyzeChunk($log, $fetchTimeMs, $writeTimeMs, $memoryMb);
+
+                // Update Granular Log Metrics safely
+                try {
+                    $log->update([
+                        'current_stage' => 'processing_chunk',
+                        'current_batch' => ceil($fetchedCount / max(1, count($recordsChunk))),
+                        'records_updated' => $inserted, // Approximation for now
+                        'rows_per_second' => $rowsPerSec,
+                        'peak_memory_mb' => max($log->peak_memory_mb ?? 0, $memoryMb),
+                    ]);
+                } catch (\Exception $e) {
+                    // Ignore if columns don't exist yet (migration not run)
+                }
             };
 
-            $progressCallback = function($current, $total) use ($progressKey, &$totalRecordsCount) {
+            $progressCallback = function($current, $total) use ($progressKey, &$totalRecordsCount, &$lastProgressUpdate, $syncStartTime) {
                 if ($total !== null) {
                     $totalRecordsCount = $total;
                 }
-                \Illuminate\Support\Facades\Cache::put($progressKey, [
-                    'current' => $current,
-                    'total' => $totalRecordsCount,
-                    'status' => 'fetching'
-                ], 3600);
+                
+                $now = microtime(true);
+                // Buffer progress update: setiap 1.5 detik atau jika selesai
+                if (($now - $lastProgressUpdate) >= 1.5 || $current === $total) {
+                    \Illuminate\Support\Facades\Cache::put($progressKey, [
+                        'current' => $current,
+                        'total' => $totalRecordsCount,
+                        'status' => 'fetching',
+                        'start_time' => $syncStartTime,
+                        'stage' => 'Reading Source'
+                    ], 3600);
+                    $lastProgressUpdate = $now;
+                }
             };
 
             // FETCH DATA BASED ON SOURCE CONNECTION TYPE
@@ -216,7 +307,7 @@ class SyncService
                     $this->odataService->logout();
                 }
                 $this->odataService->resetPersistentHttp();
-            } else if (in_array($sourceConnection['type'], ['mysql', 'sqlsrv'])) {
+            } else if (in_array($sourceConnection['type'], \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes())) {
                 // Relational DB Source
                 // Using Laravel's DB chunking
                 $query = DB::connection($sourceConnKey)->table($odataEntity);
@@ -274,6 +365,9 @@ class SyncService
             }
 
             if ($fetchedCount === 0) {
+                $this->syncStateService->updateWatermark($schedule->id, null, null);
+                $this->syncStateService->completeSynchronization($schedule->id);
+                
                 $log->update([
                     'status'           => 'success',
                     'records_fetched'  => 0,
@@ -284,13 +378,21 @@ class SyncService
                 return $log;
             }
 
+            $this->syncStateService->updateWatermark($schedule->id, null, null);
+            $endTime = microtime(true);
+            $duration = $endTime - $startTime;
+
             $log->update([
                 'status'           => 'success',
+                'current_stage'    => 'completed',
                 'records_fetched'  => $fetchedCount,
                 'records_inserted' => $insertedCount,
-                'duration_seconds' => round(microtime(true) - $startTime, 2),
+                'duration_seconds' => $duration,
                 'completed_at'     => now(),
             ]);
+
+            $this->syncStateService->completeSynchronization($schedule->id);
+            $schedule->update(['last_run_at' => now()]);
 
             \Illuminate\Support\Facades\Cache::forget("entity_fields_{$entityKey}");
 
@@ -298,7 +400,39 @@ class SyncService
             \Illuminate\Support\Facades\Cache::forget($progressKey);
             return $log;
 
+        } catch (\App\Exceptions\SyncStopException $e) {
+            $endTime = microtime(true);
+            $log->update([
+                'status'           => 'stopped',
+                'current_stage'    => 'stopped_by_user',
+                'error_message'    => $e->getMessage(),
+                'duration_seconds' => $endTime - $startTime,
+                'completed_at'     => now(),
+            ]);
+            $this->syncStateService->failSynchronization($schedule->id);
+            Log::info("Sync [{$entityKey}]: Stopped safely.");
+            return $log;
+
+        } catch (\App\Exceptions\SyncCancelException $e) {
+            $endTime = microtime(true);
+            $log->update([
+                'status'           => 'cancelled',
+                'current_stage'    => 'cancelled_by_user',
+                'error_message'    => $e->getMessage(),
+                'duration_seconds' => $endTime - $startTime,
+                'completed_at'     => now(),
+            ]);
+            $this->syncStateService->failSynchronization($schedule->id);
+            Log::info("Sync [{$entityKey}]: Cancelled forcefully.");
+            return $log;
+
         } catch (\Throwable $e) {
+            try {
+                $this->syncStateService->failSynchronization($schedule->id);
+            } catch (\Exception $stateException) {
+                // Ignore state transition errors to prevent masking original exception
+            }
+            
             Log::error("Sync [{$entityKey}]: Failed.", [
                 'message' => $e->getMessage(),
                 'trace'   => mb_substr($e->getTraceAsString(), 0, 2000),
@@ -316,6 +450,14 @@ class SyncService
             }
 
             return $log;
+        } finally {
+            try {
+                if (isset($schedule) && isset($workerId)) {
+                    $this->syncStateService->releaseSynchronizationLock($schedule->id, $workerId);
+                }
+            } catch (\Exception $e) {
+                // Ignore lock release failures
+            }
         }
     }
 
@@ -333,7 +475,10 @@ class SyncService
     private function replaceTableData(?string $destConnection, string $tableName, array $cleanData, array $customFilters = [], ?string $progressKey = null, bool $isFirstChunk = false, int $baseInserted = 0, ?int $totalRecordsCount = null): int
     {
         $inserted = 0;
-        DB::connection($destConnection)->transaction(function () use ($destConnection, $tableName, $cleanData, &$inserted, $customFilters, $progressKey, $isFirstChunk, $baseInserted, $totalRecordsCount) {
+        $syncStartTime = microtime(true);
+        $lastProgressUpdate = $syncStartTime;
+
+        DB::connection($destConnection)->transaction(function () use ($destConnection, $tableName, $cleanData, &$inserted, $customFilters, $progressKey, $isFirstChunk, $baseInserted, $totalRecordsCount, $syncStartTime, &$lastProgressUpdate) {
             if ($isFirstChunk) {
                 if (!empty($customFilters)) {
                     $deletedCount = $this->deleteByFilterScope($destConnection, $tableName, $customFilters);
@@ -357,11 +502,17 @@ class SyncService
                 $inserted += count($chunk);
                 
                 if ($progressKey) {
-                    \Illuminate\Support\Facades\Cache::put($progressKey, [
-                        'current' => $baseInserted + $inserted,
-                        'total' => $totalRecordsCount,
-                        'status' => 'inserting'
-                    ], 3600);
+                    $now = microtime(true);
+                    if (($now - $lastProgressUpdate) >= 1.5) {
+                        \Illuminate\Support\Facades\Cache::put($progressKey, [
+                            'current' => $baseInserted + $inserted,
+                            'total' => $totalRecordsCount,
+                            'status' => 'inserting',
+                            'start_time' => $syncStartTime,
+                            'stage' => 'Persistence Pipeline'
+                        ], 3600);
+                        $lastProgressUpdate = $now;
+                    }
                 }
             }
         }, 5);
@@ -371,8 +522,10 @@ class SyncService
     private function upsertTableData(?string $destConnection, string $tableName, array $cleanData, array $customFilters = [], ?string $progressKey = null, bool $isFirstChunk = false, int $baseInserted = 0, ?int $totalRecordsCount = null): int
     {
         $insertedOrUpdated = 0;
+        $syncStartTime = microtime(true);
+        $lastProgressUpdate = $syncStartTime;
 
-        DB::connection($destConnection)->transaction(function () use ($destConnection, $tableName, $cleanData, &$insertedOrUpdated, $customFilters, $progressKey, $isFirstChunk, $baseInserted, $totalRecordsCount) {
+        DB::connection($destConnection)->transaction(function () use ($destConnection, $tableName, $cleanData, &$insertedOrUpdated, $customFilters, $progressKey, $isFirstChunk, $baseInserted, $totalRecordsCount, $syncStartTime, &$lastProgressUpdate) {
             $hasId = isset($cleanData[0]['id']);
 
             if ($hasId) {
@@ -395,11 +548,17 @@ class SyncService
                     $insertedOrUpdated += count($chunk);
                     
                     if ($progressKey) {
-                        \Illuminate\Support\Facades\Cache::put($progressKey, [
-                            'current' => $baseInserted + $insertedOrUpdated,
-                            'total' => $totalRecordsCount,
-                            'status' => 'inserting'
-                        ], 3600);
+                        $now = microtime(true);
+                        if (($now - $lastProgressUpdate) >= 1.5) {
+                            \Illuminate\Support\Facades\Cache::put($progressKey, [
+                                'current' => $baseInserted + $insertedOrUpdated,
+                                'total' => $totalRecordsCount,
+                                'status' => 'inserting',
+                                'start_time' => $syncStartTime,
+                                'stage' => 'Persistence Pipeline'
+                            ], 3600);
+                            $lastProgressUpdate = $now;
+                        }
                     }
                 }
             } else {

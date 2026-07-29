@@ -12,10 +12,12 @@ use Illuminate\Support\Str;
 class ReportBuilderController extends Controller
 {
     protected ConnectionService $connectionService;
+    protected \App\Services\Connections\ConnectionManager $connectionManager;
 
-    public function __construct(ConnectionService $connectionService)
+    public function __construct(ConnectionService $connectionService, \App\Services\Connections\ConnectionManager $connectionManager)
     {
         $this->connectionService = $connectionService;
+        $this->connectionManager = $connectionManager;
     }
 
     /**
@@ -29,7 +31,7 @@ class ReportBuilderController extends Controller
 
         foreach ($all as $key => $conn) {
             // Only include active and connected database-type connections
-            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv', 'firebird', 'local_env']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
+            if (in_array($conn['type'] ?? '', \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes()) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
                 $dbConnections[] = [
                     'key'  => $key,
                     'name' => $conn['name'] ?? $key,
@@ -38,26 +40,10 @@ class ReportBuilderController extends Controller
                 
                 // Preload tables for this connection
                 try {
-                    $connName = $this->connectionService->resolveConnectionName($key);
-                    $driver = \Illuminate\Support\Facades\DB::connection($connName)->getDriverName();
-                    
+                    $tree = $this->connectionManager->discoverMetadata($key);
                     $tables = [];
-                    if ($driver === 'mysql') {
-                        $results = \Illuminate\Support\Facades\DB::connection($connName)->select("SHOW TABLES");
-                        foreach ($results as $row) {
-                            $tables[] = array_values((array) $row)[0];
-                        }
-                    } elseif ($driver === 'sqlsrv') {
-                        $results = \Illuminate\Support\Facades\DB::connection($connName)->select("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE IN ('BASE TABLE', 'VIEW')");
-                        foreach ($results as $row) {
-                            $rowArr = (array) $row;
-                            $tables[] = $rowArr['TABLE_NAME'] ?? $rowArr['table_name'] ?? current($rowArr);
-                        }
-                    } elseif ($driver === 'firebird') {
-                        $results = \Illuminate\Support\Facades\DB::connection($connName)->select("SELECT RDB\$RELATION_NAME FROM RDB\$RELATIONS WHERE RDB\$VIEW_BLR IS NULL AND (RDB\$SYSTEM_FLAG IS NULL OR RDB\$SYSTEM_FLAG = 0)");
-                        foreach ($results as $row) {
-                            $tables[] = trim(array_values((array) $row)[0]);
-                        }
+                    foreach ($tree->nodes as $node) {
+                        $tables[] = $node->name;
                     }
                     sort($tables);
                     $allTables[$key] = $tables;
@@ -84,7 +70,7 @@ class ReportBuilderController extends Controller
 
         foreach ($all as $key => $conn) {
             // Only include active and connected database-type connections
-            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv', 'firebird', 'local_env']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
+            if (in_array($conn['type'] ?? '', \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes()) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
                 try {
                     $connName = $this->connectionService->resolveConnectionName($key);
                     \Illuminate\Support\Facades\DB::connection($connName)->getPdo();
@@ -115,11 +101,12 @@ class ReportBuilderController extends Controller
         }
 
         try {
-            $connName = $this->connectionService->resolveConnectionName($connKey);
-            $pdo = DB::connection($connName)->getPdo();
-            $driver = DB::connection($connName)->getDriverName();
-
-            $tables = app(\App\Services\ConnectionService::class)->getTables($connName);
+            $tree = $this->connectionManager->discoverMetadata($connKey);
+            $tables = [];
+            foreach ($tree->nodes as $node) {
+                $tables[] = $node->name;
+            }
+            sort($tables);
 
             return response()->json(['success' => true, 'tables' => $tables]);
         } catch (\Throwable $e) {
@@ -130,7 +117,7 @@ class ReportBuilderController extends Controller
     /**
      * List columns for a given connection + table.
      */
-    public function columns(Request $request): JsonResponse
+    public function columns(Request $request, \App\Contracts\Metadata\MetadataRepositoryInterface $metadataRepository): JsonResponse
     {
         $connKey = $request->input('connection');
         $table   = $request->input('table');
@@ -140,8 +127,12 @@ class ReportBuilderController extends Controller
         }
 
         try {
-            $connName = $this->connectionService->resolveConnectionName($connKey);
-            $columns = app(\App\Services\ConnectionService::class)->getTableColumns($connName, $table);
+            $result = $metadataRepository->getTableMetadata($connKey, $table);
+            if (!$result->isSuccess) {
+                return response()->json(['success' => false, 'message' => 'Failed to fetch columns: ' . $result->errorMessage], 500);
+            }
+            
+            $columns = array_column($result->fields, 'name');
 
             return response()->json(['success' => true, 'columns' => $columns]);
         } catch (\Throwable $e) {
@@ -172,7 +163,12 @@ class ReportBuilderController extends Controller
             $connName = $this->connectionService->resolveConnectionName($connKey);
 
             // Validate columns exist
-            $availableColumns = app(\App\Services\ConnectionService::class)->getTableColumns($connName, $table);
+            $node = $this->connectionManager->discoverStructure($connKey, $table);
+            $availableColumns = [];
+            foreach ($node->properties as $prop) {
+                $availableColumns[] = is_array($prop) ? ($prop['name'] ?? $prop['Field'] ?? '') : (string)$prop;
+            }
+            $availableColumns = array_filter($availableColumns);
             $validColumns = array_intersect($columns, $availableColumns);
 
             if (empty($validColumns)) {

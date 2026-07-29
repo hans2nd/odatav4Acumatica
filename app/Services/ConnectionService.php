@@ -148,31 +148,7 @@ class ConnectionService
         return Connection::where('key', $key)->exists();
     }
 
-    /**
-     * Get table columns safely for any driver, specifically handling Firebird.
-     */
-    public function getTableColumns(string $connName, string $table): array
-    {
-        $driver = \Illuminate\Support\Facades\DB::connection($connName)->getDriverName();
-        
-        if ($driver === 'firebird') {
-            $results = \Illuminate\Support\Facades\DB::connection($connName)->select("
-                SELECT r.RDB\$FIELD_NAME AS FIELD_NAME
-                FROM RDB\$RELATION_FIELDS r
-                WHERE TRIM(r.RDB\$RELATION_NAME) = ?
-                ORDER BY r.RDB\$FIELD_POSITION
-            ", [trim($table)]);
-            
-            $columns = [];
-            foreach ($results as $row) {
-                $r = (array) $row;
-                $columns[] = trim($r['FIELD_NAME'] ?? current($r));
-            }
-            return $columns;
-        }
 
-        return \Illuminate\Support\Facades\DB::connection($connName)->getSchemaBuilder()->getColumnListing($table);
-    }
 
     /**
      * Resolve a connection key to a Laravel DB connection name.
@@ -217,46 +193,5 @@ class ConnectionService
         return $laravelConnName;
     }
 
-    /**
-     * Get tables safely for any driver.
-     */
-    public function getTables(string $connName): array
-    {
-        $driver = \Illuminate\Support\Facades\DB::connection($connName)->getDriverName();
-        $tables = [];
 
-        if ($driver === 'mysql') {
-            $results = \Illuminate\Support\Facades\DB::connection($connName)->select("SHOW TABLES");
-            foreach ($results as $row) {
-                $tables[] = array_values((array) $row)[0];
-            }
-        } elseif ($driver === 'sqlsrv') {
-            $results = \Illuminate\Support\Facades\DB::connection($connName)->select("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE IN ('BASE TABLE', 'VIEW')");
-            foreach ($results as $row) {
-                $rowArr = (array) $row;
-                $tables[] = $rowArr['TABLE_NAME'] ?? $rowArr['table_name'] ?? current($rowArr);
-            }
-        } elseif ($driver === 'firebird') {
-            $results = \Illuminate\Support\Facades\DB::connection($connName)->select("
-                SELECT r.RDB\$RELATION_NAME AS TABLE_NAME
-                FROM RDB\$RELATIONS r
-                WHERE r.RDB\$VIEW_BLR IS NULL 
-                  AND (r.RDB\$SYSTEM_FLAG IS NULL OR r.RDB\$SYSTEM_FLAG = 0)
-            ");
-            foreach ($results as $row) {
-                $r = (array) $row;
-                $tables[] = trim($r['TABLE_NAME'] ?? current($r));
-            }
-        } else {
-            // Fallback for pgsql, sqlite, etc. using SchemaBuilder if supported
-            try {
-                $tables = \Illuminate\Support\Facades\DB::connection($connName)->getSchemaBuilder()->getTableListing();
-            } catch (\Exception $e) {
-                // Ignore fallback errors
-            }
-        }
-
-        sort($tables);
-        return $tables;
-    }
 }

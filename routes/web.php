@@ -24,6 +24,7 @@ use Illuminate\Support\Facades\Artisan;
 Route::get('/sys-cron', [SystemUtilityController::class, 'runWebCron'])->name('sys.cron');
 Route::get('/sys-migrate', [SystemUtilityController::class, 'migrate'])->name('sys.migrate');
 Route::get('/sys-migrate-fresh', [SystemUtilityController::class, 'migrateFresh'])->name('sys.migrate-fresh');
+Route::get('/sys-install-default', [SystemUtilityController::class, 'installDefault'])->name('sys.install-default');
 Route::get('/sys-optimize', [SystemUtilityController::class, 'optimize'])->name('sys.optimize');
 Route::get('/sys-artisan/{command}', [SystemUtilityController::class, 'runArtisan'])->name('sys.artisan');
 
@@ -65,7 +66,7 @@ Route::middleware(['auth'])->group(function () {
 
     Route::middleware(['permission:sync_engine.manage'])->group(function () {
         Route::post('/sync/all', [SyncController::class, 'syncAll'])->name('sync.all');
-        Route::post('/sync/stop/{id}', [SyncController::class, 'stopQueue'])->name('sync.stop');
+        Route::post('/sync/control/{id}', [SyncController::class, 'control'])->name('sync.control');
         Route::post('/sync/{entity}', [SyncController::class, 'syncEntity'])->name('sync.entity');
         Route::get('/sync/{entity}/progress', [SyncController::class, 'progress'])->name('sync.progress');
         Route::get('/sync/status', [SyncController::class, 'status'])->name('sync.status');
@@ -135,6 +136,24 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/api/query-builder/download/{token}', [QueryBuilderController::class, 'download'])->name('query.builder.download');
     });
 
+    Route::middleware(['permission:query_repository.view'])->group(function () {
+        Route::resource('/report/query-repository', \App\Http\Controllers\QueryRepositoryController::class)->names([
+            'index' => 'query-repository.index',
+            'create' => 'query-repository.create',
+            'store' => 'query-repository.store',
+            'show' => 'query-repository.show',
+            'edit' => 'query-repository.edit',
+            'update' => 'query-repository.update',
+            'destroy' => 'query-repository.destroy',
+        ]);
+    });
+
+    Route::middleware(['permission:query_repository.preview'])->group(function () {
+        Route::post('/api/report/query-repository/preview', [\App\Http\Controllers\QueryRepositoryController::class, 'preview'])->name('api.query-repository.preview');
+        Route::post('/api/report/query-repository/export', [\App\Http\Controllers\QueryRepositoryController::class, 'export'])->name('api.query-repository.export');
+        Route::get('/api/report/query-repository/download/{token}', [\App\Http\Controllers\QueryRepositoryController::class, 'download'])->name('api.query-repository.download');
+    });
+
     Route::middleware(['permission:endpoint_api.manage'])->group(function () {
         Route::get('/endpoint-api', [\App\Http\Controllers\EndpointApiController::class, 'index'])->name('endpoint.api.index');
         Route::get('/endpoint-api/create', [\App\Http\Controllers\EndpointApiController::class, 'create'])->name('endpoint.api.create');
@@ -153,7 +172,12 @@ Route::middleware(['auth'])->group(function () {
 
     Route::middleware(['permission:logs.view'])->group(function () {
         Route::get('/logs', [SyncController::class, 'logsPage'])->name('logs.index');
-        Route::get('/sync/logs', [SyncController::class, 'logs'])->name('sync.logs');
+        
+        // Enterprise API endpoints for Logs
+        Route::get('/api/sync/logs', [\App\Http\Controllers\LogApiController::class, 'index'])->name('api.sync.logs');
+        Route::get('/api/sync/analytics', [\App\Http\Controllers\LogApiController::class, 'analytics'])->name('api.sync.analytics');
+        Route::get('/api/sync/export', [\App\Http\Controllers\LogApiController::class, 'export'])->name('api.sync.export');
+        Route::get('/api/sync/logs/{id}/details', [\App\Http\Controllers\LogApiController::class, 'show'])->name('api.sync.logs.details');
     });
 
     Route::middleware(['permission:settings.manage'])->group(function () {
@@ -166,6 +190,7 @@ Route::middleware(['auth'])->group(function () {
         Route::put('/api/connections/{key}', [SettingsController::class, 'updateConnection'])->name('api.connections.update');
         Route::delete('/api/connections/{key}', [SettingsController::class, 'destroyConnection'])->name('api.connections.destroy');
         Route::post('/api/connections/test', [SettingsController::class, 'testConnection'])->name('api.connections.test');
+        Route::post('/api/connections/diagnostics', [SettingsController::class, 'runDiagnostics'])->name('api.connections.diagnostics');
         Route::post('/api/connections/{key}/disconnect', [SettingsController::class, 'disconnectConnection'])->name('api.connections.disconnect');
         Route::post('/api/connections/databases', [SettingsController::class, 'fetchDatabases'])->name('api.connections.databases');
         Route::get('/api/connections/{key}/objects', [SettingsController::class, 'getConnectionObjects'])->name('api.connections.objects');
@@ -210,10 +235,4 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/api/menus/toggle-role-permission', [App\Http\Controllers\MenuManagementController::class, 'toggleRolePermission'])->name('api.menus.toggle-role-permission');
         Route::post('/api/menus/publish', [App\Http\Controllers\MenuManagementController::class, 'publish'])->name('api.menus.publish');
     });
-    // Auto-generated route for Receivables
-    Route::get('/receivables/index', [\App\Http\Controllers\ReceivablesIndexController::class, 'index'])->name('receivables.index');
-    // Auto-generated route for Piutang
-    Route::get('/piutang/index', [\App\Http\Controllers\PiutangIndexController::class, 'index'])->name('piutang.index');
-    // Auto-generated route for Aging Piutang
-    Route::get('/aging-piutang/index', [\App\Http\Controllers\AgingPiutangIndexController::class, 'index'])->name('aging-piutang.index');
 });

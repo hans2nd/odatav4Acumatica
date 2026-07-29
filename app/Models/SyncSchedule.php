@@ -88,4 +88,9 @@ class SyncSchedule extends Model
 
         return $parts[2] !== '*' ? (int)$parts[2] : 1;
     }
+
+    public function syncState()
+    {
+        return $this->hasOne(SyncState::class, 'sync_schedule_id');
+    }
 }

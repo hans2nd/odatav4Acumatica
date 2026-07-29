@@ -13,10 +13,12 @@ use Illuminate\Support\Str;
 class QueryBuilderController extends Controller
 {
     protected ConnectionService $connectionService;
+    protected \App\Services\Connections\ConnectionManager $connectionManager;
 
-    public function __construct(ConnectionService $connectionService)
+    public function __construct(ConnectionService $connectionService, \App\Services\Connections\ConnectionManager $connectionManager)
     {
         $this->connectionService = $connectionService;
+        $this->connectionManager = $connectionManager;
     }
 
     /**
@@ -28,7 +30,7 @@ class QueryBuilderController extends Controller
         $dbConnections = [];
 
         foreach ($all as $key => $conn) {
-            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv', 'firebird', 'local_env']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
+            if (in_array($conn['type'] ?? '', \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes()) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
                 $dbConnections[] = [
                     'key'  => $key,
                     'name' => $conn['name'] ?? $key,
@@ -54,9 +56,11 @@ class QueryBuilderController extends Controller
         }
 
         try {
-            $connName = $this->connectionService->resolveConnectionName($connKey);
-            $tables = app(\App\Services\ConnectionService::class)->getTables($connName);
-
+            $tree = $this->connectionManager->discoverMetadata($connKey);
+            $tables = [];
+            foreach ($tree->nodes as $node) {
+                $tables[] = $node->name;
+            }
             sort($tables);
 
             return response()->json(['success' => true, 'tables' => $tables]);
@@ -68,7 +72,7 @@ class QueryBuilderController extends Controller
     /**
      * List columns with data types for a given connection + table.
      */
-    public function columns(Request $request): JsonResponse
+    public function columns(Request $request, \App\Contracts\Metadata\MetadataRepositoryInterface $metadataRepository): JsonResponse
     {
         $connKey = $request->input('connection');
         $table   = $request->input('table');
@@ -78,54 +82,18 @@ class QueryBuilderController extends Controller
         }
 
         try {
-            $connName = $this->connectionService->resolveConnectionName($connKey);
-            $driver = DB::connection($connName)->getDriverName();
+            $result = $metadataRepository->getTableMetadata($connKey, $table);
+            if (!$result->isSuccess) {
+                return response()->json(['success' => false, 'message' => 'Failed to fetch columns: ' . $result->errorMessage], 500);
+            }
 
             $columns = [];
-            if ($driver === 'mysql') {
-                $results = DB::connection($connName)->select("SHOW COLUMNS FROM `{$table}`");
-                foreach ($results as $row) {
-                    $r = (array) $row;
-                    $columns[] = [
-                        'name' => $r['Field'],
-                        'type' => $r['Type'],
-                        'key'  => $r['Key'] ?? '',
-                    ];
-                }
-            } elseif ($driver === 'sqlsrv') {
-                $results = DB::connection($connName)->select("
-                    SELECT c.COLUMN_NAME, c.DATA_TYPE,
-                           CASE WHEN kcu.COLUMN_NAME IS NOT NULL THEN 'PRI' ELSE '' END AS [KEY]
-                    FROM INFORMATION_SCHEMA.COLUMNS c
-                    LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
-                        ON c.TABLE_NAME = kcu.TABLE_NAME AND c.COLUMN_NAME = kcu.COLUMN_NAME
-                        AND kcu.CONSTRAINT_NAME LIKE 'PK_%'
-                    WHERE c.TABLE_NAME = ?
-                    ORDER BY c.ORDINAL_POSITION
-                ", [$table]);
-                foreach ($results as $row) {
-                    $r = (array) $row;
-                    $columns[] = [
-                        'name' => $r['COLUMN_NAME'],
-                        'type' => $r['DATA_TYPE'],
-                        'key'  => $r['KEY'] ?? '',
-                    ];
-                }
-            } elseif ($driver === 'firebird') {
-                $results = DB::connection($connName)->select("
-                    SELECT r.RDB\$FIELD_NAME AS FIELD_NAME
-                    FROM RDB\$RELATION_FIELDS r
-                    WHERE TRIM(r.RDB\$RELATION_NAME) = ?
-                    ORDER BY r.RDB\$FIELD_POSITION
-                ", [trim($table)]);
-                foreach ($results as $row) {
-                    $r = (array) $row;
-                    $columns[] = [
-                        'name' => trim($r['FIELD_NAME'] ?? current($r)),
-                        'type' => 'varchar',
-                        'key'  => '',
-                    ];
-                }
+            foreach ($result->fields as $field) {
+                $columns[] = [
+                    'name' => $field['name'],
+                    'type' => $field['dataType'] ?? 'varchar',
+                    'key'  => $field['isPrimaryKey'] ? 'PRI' : '',
+                ];
             }
 
             return response()->json(['success' => true, 'columns' => $columns]);

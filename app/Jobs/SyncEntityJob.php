@@ -64,6 +64,15 @@ class SyncEntityJob implements ShouldQueue
             'message' => $exception?->getMessage(),
         ]);
 
+        $schedule = \App\Models\SyncSchedule::where('entity_key', $this->entityKey)->first();
+        if ($schedule) {
+            try {
+                app(\App\Services\Contracts\SyncStateServiceInterface::class)->failSynchronization($schedule->id);
+            } catch (\Exception $e) {
+                // Ignore
+            }
+        }
+
         // Find the running log and mark it as failed
         $runningLog = \App\Models\SyncLog::where('entity_key', $this->entityKey)
             ->where('status', 'running')

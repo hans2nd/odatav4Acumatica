@@ -61,7 +61,16 @@ class TransactionController extends Controller
 
         if ($tableExists) {
             $firstRow = DB::connection($connName)->table($tableName)->first();
-            $columns = $firstRow ? array_keys((array)$firstRow) : app(\App\Services\ConnectionService::class)->getTableColumns($connName, $tableName);
+            if ($firstRow) {
+                $columns = array_keys((array)$firstRow);
+            } else {
+                $node = app(\App\Services\Connections\ConnectionManager::class)->discoverStructure($connName, $tableName);
+                $columns = [];
+                foreach ($node->properties as $prop) {
+                    $columns[] = is_array($prop) ? ($prop['name'] ?? $prop['Field'] ?? '') : (string)$prop;
+                }
+                $columns = array_filter($columns);
+            }
             
             $query = DB::connection($connName)->table($tableName)->orderByDesc('_sync_id');
 

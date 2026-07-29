@@ -70,6 +70,8 @@ class EntityController extends Controller
 
         $this->entityConfig->save($key, $validated);
 
+        \App\Jobs\DiscoverEntityMetadataJob::dispatch($key);
+
         return response()->json([
             'success' => true,
             'message' => "Entity '{$key}' created successfully.",
@@ -98,6 +100,7 @@ class EntityController extends Controller
             'description'            => 'required|string|max:255',
             'source_connection'      => 'nullable|string|max:100',
             'destination_connection' => 'nullable|string|max:100',
+            'schedule_minutes'       => 'nullable|integer|min:1',
         ]);
 
         $newKey = $validated['key'];
@@ -111,6 +114,8 @@ class EntityController extends Controller
         }
 
         $this->entityConfig->update($key, $newKey, $validated);
+
+        \App\Jobs\DiscoverEntityMetadataJob::dispatch($newKey);
 
         return response()->json([
             'success' => true,

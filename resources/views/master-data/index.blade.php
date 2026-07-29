@@ -161,16 +161,46 @@
                             as default for scheduled and future syncs</label>
                     </div>
 
-                    <div id="syncProgressContainer" class="hidden mt-4">
-                        <div class="flex justify-between items-center mb-2">
-                            <span id="syncProgressLabel"
-                                class="text-label-sm text-surface-700 font-medium">Syncing...</span>
-                            <span id="syncProgressPercent" class="text-label-sm text-surface-500 font-mono">0%</span>
+                    <!-- Modern Sync Dashboard -->
+                    <div id="syncProgressContainer" class="hidden mt-6 bg-surface-50 rounded-xl border border-surface-200 overflow-hidden shadow-sm transition-all duration-300">
+                        <div class="p-4 border-b border-surface-200 bg-white flex justify-between items-center">
+                            <div class="flex items-center gap-3">
+                                <div id="syncStatusIcon" class="w-8 h-8 rounded-full bg-brand-50 flex items-center justify-center text-brand-600">
+                                    <span class="material-symbols-outlined text-[18px] spin">sync</span>
+                                </div>
+                                <div>
+                                    <h4 id="syncStageLabel" class="text-label-lg font-semibold text-surface-900">Initializing...</h4>
+                                    <p id="syncProgressLabel" class="text-label-sm text-surface-500">Preparing synchronization pipeline</p>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <div id="syncProgressPercent" class="text-h3 font-bold text-brand-600 font-mono">0%</div>
+                                <div id="syncElapsedTime" class="text-label-sm text-surface-400 font-mono">00:00</div>
+                            </div>
                         </div>
-                        <div class="w-full bg-surface-100 rounded-full h-2 overflow-hidden">
-                            <div id="syncProgressBar"
-                                class="bg-gradient-to-r from-brand-600 to-brand-400 h-2 rounded-full transition-all duration-300"
-                                style="width: 0%"></div>
+                        
+                        <div class="p-4">
+                            <div class="w-full bg-surface-200 rounded-full h-2 overflow-hidden mb-5">
+                                <div id="syncProgressBar" class="bg-gradient-to-r from-brand-500 to-brand-400 h-2 rounded-full transition-all duration-500 ease-out" style="width: 0%"></div>
+                            </div>
+                            
+                            <div class="grid grid-cols-3 gap-4">
+                                <div class="bg-white p-3 rounded-lg border border-surface-100 shadow-sm flex flex-col justify-center items-center text-center">
+                                    <span class="material-symbols-outlined text-[18px] text-surface-400 mb-1">database</span>
+                                    <span class="text-label-sm text-surface-500 mb-0.5">Processed</span>
+                                    <span id="syncStatProcessed" class="text-body-lg font-bold text-surface-800 font-mono">0</span>
+                                </div>
+                                <div class="bg-white p-3 rounded-lg border border-surface-100 shadow-sm flex flex-col justify-center items-center text-center">
+                                    <span class="material-symbols-outlined text-[18px] text-surface-400 mb-1">speed</span>
+                                    <span class="text-label-sm text-surface-500 mb-0.5">Speed</span>
+                                    <span id="syncStatSpeed" class="text-body-lg font-bold text-surface-800 font-mono flex items-baseline gap-1">0 <span class="text-[10px] text-surface-400 font-normal">/s</span></span>
+                                </div>
+                                <div class="bg-white p-3 rounded-lg border border-surface-100 shadow-sm flex flex-col justify-center items-center text-center">
+                                    <span class="material-symbols-outlined text-[18px] text-surface-400 mb-1">timer</span>
+                                    <span class="text-label-sm text-surface-500 mb-0.5">ETA</span>
+                                    <span id="syncStatETA" class="text-body-lg font-bold text-surface-800 font-mono">--:--</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -335,6 +365,14 @@
             checkEmptyFilters();
 
             try {
+                if (!refresh && window.entityMetadataCache && window.entityMetadataCache[entityKey]) {
+                    // Gunakan local JS memory cache
+                    const fields = window.entityMetadataCache[entityKey];
+                    populateDatalist(fields, currentFiltersToRestore);
+                    loadingEl.classList.add('hidden');
+                    return;
+                }
+
                 const url = refresh ? `/api/entities/${entityKey}/fields?refresh=1` :
                     `/api/entities/${entityKey}/fields`;
                 const res = await fetch(url);
@@ -342,21 +380,12 @@
 
                 if (data.success && data.fields) {
                     availableFields = data.fields;
+                    
+                    // Simpan ke memory cache browser
+                    if (!window.entityMetadataCache) window.entityMetadataCache = {};
+                    window.entityMetadataCache[entityKey] = availableFields;
 
-                    // Populate datalist
-                    const datalist = document.getElementById('acumaticaFieldsDataList');
-                    datalist.innerHTML = '';
-                    availableFields.forEach(f => {
-                        const opt = document.createElement('option');
-                        opt.value = f;
-                        datalist.appendChild(opt);
-                    });
-
-                    if (currentFiltersToRestore && currentFiltersToRestore.length > 0) {
-                        currentFiltersToRestore.forEach(f => {
-                            addFilterRow(f.field, f.operator, f.value);
-                        });
-                    }
+                    populateDatalist(availableFields, currentFiltersToRestore);
                 } else {
                     availableFields = [];
                     showToast(data.message || 'Failed to load fields. You can still sync without filters.', 'warning');
@@ -367,6 +396,22 @@
                 showToast('Error loading fields for filtering.', 'error');
             } finally {
                 loadingEl.classList.add('hidden');
+            }
+        }
+
+        function populateDatalist(fields, currentFiltersToRestore) {
+            const datalist = document.getElementById('acumaticaFieldsDataList');
+            datalist.innerHTML = '';
+            fields.forEach(f => {
+                const opt = document.createElement('option');
+                opt.value = f;
+                datalist.appendChild(opt);
+            });
+
+            if (currentFiltersToRestore && currentFiltersToRestore.length > 0) {
+                currentFiltersToRestore.forEach(f => {
+                    addFilterRow(f.field, f.operator, f.value);
+                });
             }
         }
 
@@ -468,25 +513,52 @@
             document.getElementById('syncProgressContainer').classList.remove('hidden');
             document.getElementById('syncProgressBar').style.width = '0%';
             document.getElementById('syncProgressPercent').innerText = '0%';
-            document.getElementById('syncProgressLabel').innerText = 'Initializing...';
+            document.getElementById('syncStageLabel').innerText = 'Initializing...';
+            document.getElementById('syncProgressLabel').innerText = 'Connecting to service...';
+            document.getElementById('syncStatProcessed').innerText = '0';
+            document.getElementById('syncStatSpeed').innerHTML = '0 <span class="text-[10px] text-surface-400 font-normal">/s</span>';
+            document.getElementById('syncStatETA').innerText = '--:--';
+            document.getElementById('syncElapsedTime').innerText = '00:00';
+            
+            const iconEl = document.getElementById('syncStatusIcon');
+            iconEl.className = 'w-8 h-8 rounded-full bg-brand-50 flex items-center justify-center text-brand-600';
+            iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px] spin">sync</span>';
 
             let isAsync = false;
             let noProgressCount = 0;
+            let initialStartTime = Date.now();
+            let serverStartTime = 0;
+
+            function formatTime(seconds) {
+                if (seconds < 0 || isNaN(seconds) || !isFinite(seconds)) return '--:--';
+                const m = Math.floor(seconds / 60);
+                const s = Math.floor(seconds % 60);
+                return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+            }
 
             let syncInterval = setInterval(async () => {
                 try {
                     const progRes = await fetch(`/sync/${currentSyncEntity}/progress`);
                     const progData = await progRes.json();
+                    
                     if (progData.success && progData.progress) {
                         noProgressCount = 0;
                         const prog = progData.progress;
                         let percent = 0;
+                        
+                        if (prog.start_time) {
+                            serverStartTime = prog.start_time * 1000;
+                        }
+                        
+                        const effectiveStart = serverStartTime || initialStartTime;
+                        const elapsedSecs = (Date.now() - effectiveStart) / 1000;
+                        document.getElementById('syncElapsedTime').innerText = formatTime(elapsedSecs);
 
                         if (prog.status === 'queued') {
                             document.getElementById('syncProgressBar').classList.add('animate-pulse');
                             document.getElementById('syncProgressBar').style.width = '5%';
-                            document.getElementById('syncProgressLabel').innerText =
-                                'Queued — waiting for worker to start...';
+                            document.getElementById('syncStageLabel').innerText = 'Queued';
+                            document.getElementById('syncProgressLabel').innerText = 'Waiting for background worker...';
                             document.getElementById('syncProgressPercent').innerText = '...';
                             return;
                         }
@@ -495,22 +567,34 @@
                             percent = Math.round((prog.current / prog.total) * 100);
                             document.getElementById('syncProgressBar').classList.remove('animate-pulse');
                         } else if (prog.current > 0) {
-                            percent = 100;
+                            percent = 100; // Indeterminate
                             document.getElementById('syncProgressBar').classList.add('animate-pulse');
                         }
 
                         document.getElementById('syncProgressBar').style.width = `${percent}%`;
-                        if (prog.total) {
-                            document.getElementById('syncProgressPercent').innerText = `${percent}%`;
-                        } else {
-                            document.getElementById('syncProgressPercent').innerText = `...`;
+                        document.getElementById('syncProgressPercent').innerText = prog.total ? `${percent}%` : `...`;
+                        
+                        // Live Stats Calculation
+                        const currentCount = prog.current || 0;
+                        document.getElementById('syncStatProcessed').innerText = currentCount.toLocaleString();
+                        
+                        if (elapsedSecs > 1 && currentCount > 0) {
+                            const speed = Math.round(currentCount / elapsedSecs);
+                            document.getElementById('syncStatSpeed').innerHTML = `${speed.toLocaleString()} <span class="text-[10px] text-surface-400 font-normal">/s</span>`;
+                            
+                            if (prog.total && prog.total > currentCount) {
+                                const remaining = prog.total - currentCount;
+                                const etaSecs = remaining / speed;
+                                document.getElementById('syncStatETA').innerText = formatTime(etaSecs);
+                            }
                         }
 
+                        document.getElementById('syncStageLabel').innerText = prog.stage || 'Processing';
                         let label = 'Syncing...';
                         if (prog.status === 'fetching') label =
-                            `Fetching data from Acumatica... (${prog.current.toLocaleString()} records)`;
+                            `Fetching data from Acumatica... (${currentCount.toLocaleString()} records)`;
                         else if (prog.status === 'inserting') label =
-                            `Saving to database... (${prog.current.toLocaleString()}/${prog.total ? prog.total.toLocaleString() : '?'})`;
+                            `Saving to database... (${currentCount.toLocaleString()}/${prog.total ? prog.total.toLocaleString() : '?'})`;
                         document.getElementById('syncProgressLabel').innerText = label;
                     } else if (isAsync || (btnEl.disabled && btnEl.innerHTML.includes('Syncing'))) {
                         noProgressCount++;
@@ -524,11 +608,19 @@
                                 if (latest && latest.status === 'success') {
                                     document.getElementById('syncProgressBar').style.width = '100%';
                                     document.getElementById('syncProgressPercent').innerText = '100%';
-                                    document.getElementById('syncProgressLabel').innerText = 'Completed!';
+                                    document.getElementById('syncStageLabel').innerText = 'Completed!';
+                                    document.getElementById('syncProgressLabel').innerText = 'Synchronization finished successfully';
+                                    
+                                    iconEl.className = 'w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600';
+                                    iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px]">check_circle</span>';
+                                    document.getElementById('syncStatETA').innerText = '00:00';
                                     showToast(
                                         `${currentSyncEntity}: ${(latest.records_inserted || 0).toLocaleString()} records synced in ${latest.duration_seconds}s`,
                                         'success');
-                                } else if (latest && latest.status === 'failed') {
+                                    document.getElementById('syncStageLabel').innerText = 'Failed';
+                                    document.getElementById('syncProgressLabel').innerText = 'Synchronization stopped with error';
+                                    iconEl.className = 'w-8 h-8 rounded-full bg-red-50 flex items-center justify-center text-red-600';
+                                    iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px]">error</span>';
                                     showToast(
                                         `${currentSyncEntity}: ${latest.error_message || 'Sync failed'}`,
                                         'error');
@@ -573,7 +665,11 @@
                 clearInterval(syncInterval);
                 document.getElementById('syncProgressBar').style.width = '100%';
                 document.getElementById('syncProgressPercent').innerText = '100%';
-                document.getElementById('syncProgressLabel').innerText = 'Completed!';
+                document.getElementById('syncStageLabel').innerText = 'Completed!';
+                document.getElementById('syncProgressLabel').innerText = 'Synchronization finished successfully';
+                iconEl.className = 'w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600';
+                iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px]">check_circle</span>';
+                document.getElementById('syncStatETA').innerText = '00:00';
 
                 if (data.success) {
                     showToast(`${currentSyncEntity}: ${data.records} records synced in ${data.duration}`, 'success');

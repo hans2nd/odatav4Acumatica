@@ -42,8 +42,8 @@
                                 <td class="py-3 px-5 font-medium text-surface-800">{{ $c['name'] }}</td>
                                 <td class="py-3 px-5">
                                     <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-label-sm font-semibold
-                                        {{ in_array($c['type'], ['mysql', 'sqlsrv', 'firebird', 'local_env']) ? 'bg-violet-50 text-violet-700' : 'bg-sky-50 text-sky-700' }}">
-                                        {{ strtoupper($c['type']) }}
+                                        {{ in_array($c['type'], \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes()) ? 'bg-violet-50 text-violet-700' : 'bg-sky-50 text-sky-700' }}">
+                                        {{ $providers[$c['type']]['display'] ?? strtoupper($c['type']) }}
                                     </span>
                                 </td>
                                 <td class="py-3 px-5">
@@ -205,100 +205,21 @@
                     <div>
                         <label for="conn-type" class="text-label-md text-surface-600 block mb-1.5">Type <span class="text-red-500">*</span></label>
                         <select id="conn-type" name="type" required onchange="toggleConnectionFields()" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
-                            <option value="odata">OData / Acumatica ERP</option>
-                            <option value="rest_api">REST API</option>
-                            <option value="mysql">MySQL</option>
-                            <option value="sqlsrv">SQL Server</option>
-                            <option value="firebird">Firebird</option>
-                            <option value="local_env">Local DB (from .env)</option>
+                            @foreach($providers as $type => $provider)
+                                <option value="{{ $type }}">{{ $provider['display'] }}</option>
+                            @endforeach
                         </select>
                     </div>
 
-                    <!-- DB Fields -->
-                    <div id="conn-fields-db" class="hidden space-y-4 pt-2 border-t border-surface-100">
-                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <div>
-                                <label class="text-label-md text-surface-600 block mb-1.5">Host</label>
-                                <input type="text" id="conn-db-host" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
-                            </div>
-                            <div>
-                                <label class="text-label-md text-surface-600 block mb-1.5">Port</label>
-                                <input type="number" id="conn-db-port" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
-                            </div>
-                        </div>
-                        <div>
-                            <label class="text-label-md text-surface-600 block mb-1.5 flex justify-between items-center">
-                                Database
-                                <button type="button" onclick="fetchServerDatabases()" tabindex="-1" class="text-[11px] text-brand-600 hover:text-brand-700 flex items-center gap-0.5">
-                                    <span class="material-symbols-outlined text-[13px]">refresh</span> Load List
-                                </button>
-                            </label>
-                            <div class="relative">
-                                <input type="text" id="conn-db-name" placeholder="Search or enter DB name" autocomplete="off"
-                                    onfocus="document.getElementById('conn-db-dropdown').classList.remove('hidden')"
-                                    onblur="setTimeout(() => { document.getElementById('conn-db-dropdown').classList.add('hidden'); }, 200)"
-                                    oninput="filterList(this, 'conn-db-list')"
-                                    class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
-                                
-                                <div id="conn-db-dropdown" class="absolute z-20 w-full mt-1 bg-white border border-surface-200 rounded-xl shadow-lg max-h-48 overflow-y-auto hidden">
-                                    <ul id="conn-db-list" class="py-1"></ul>
-                                </div>
-                                
-                                <div id="conn-db-loading" class="absolute right-3 top-2.5 hidden bg-surface-50 pl-2">
-                                    <span class="material-symbols-outlined text-[20px] text-surface-400 spin">sync</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <div>
-                                <label class="text-label-md text-surface-600 block mb-1.5">Username</label>
-                                <input type="text" id="conn-db-user" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
-                            </div>
-                            <div>
-                                <label class="text-label-md text-surface-600 block mb-1.5">Password</label>
-                                <input type="password" id="conn-db-pass" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
-                            </div>
-                        </div>
+                    <!-- Dynamic Fields Container -->
+                    <div id="conn-dynamic-fields" class="space-y-4 pt-2 border-t border-surface-100">
+                        <!-- Fields will be injected here by JavaScript based on provider schema -->
                     </div>
 
-                    <!-- OData Fields -->
-                    <div id="conn-fields-odata" class="space-y-4 pt-2 border-t border-surface-100">
-                        <div>
-                            <label class="text-label-md text-surface-600 block mb-1.5">URL</label>
-                            <input type="url" id="conn-odata-url" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
-                        </div>
-                        <div>
-                            <label class="text-label-md text-surface-600 block mb-1.5">Tenant</label>
-                            <input type="text" id="conn-odata-tenant" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
-                        </div>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <div>
-                                <label class="text-label-md text-surface-600 block mb-1.5">Username</label>
-                                <input type="text" id="conn-odata-user" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
-                            </div>
-                            <div>
-                                <label class="text-label-md text-surface-600 block mb-1.5">Password</label>
-                                <input type="password" id="conn-odata-pass" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
-                            </div>
-                        </div>
-                        <div>
-                            <label class="text-label-md text-surface-600 block mb-1.5">OData Path</label>
-                            <select id="conn-odata-path" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
-                                <option value="odatav4">odatav4</option>
-                                <option value="odata">odata</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <!-- REST API Fields -->
-                    <div id="conn-fields-rest" class="hidden space-y-4 pt-2 border-t border-surface-100">
-                        <div>
-                            <label class="text-label-md text-surface-600 block mb-1.5">Base URL</label>
-                            <input type="url" id="conn-rest-url" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
-                        </div>
-                        <div>
-                            <label class="text-label-md text-surface-600 block mb-1.5">Auth Header / Bearer Token</label>
-                            <input type="text" id="conn-rest-token" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                    <!-- Diagnostics Results Container -->
+                    <div id="conn-diagnostics-container" class="hidden mt-4 pt-4 border-t border-surface-100">
+                        <h4 class="text-label-md font-semibold text-surface-700 mb-2">Diagnostic Results</h4>
+                        <div id="conn-diagnostics-content" class="text-body-sm text-surface-600 space-y-2">
                         </div>
                     </div>
                 </form>
@@ -306,6 +227,11 @@
                     <button type="button" onclick="closeConnectionModal()"
                         class="px-4 py-2 rounded-xl text-label-md text-surface-600 hover:bg-surface-200 transition-all duration-200 bg-surface-100 border border-surface-200">
                         Cancel
+                    </button>
+                    <button type="button" onclick="runDiagnosticsFromForm()" id="conn-diag-btn"
+                        class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-purple-50 text-purple-600 border border-purple-200 text-label-md hover:bg-purple-100 transition-all duration-200 shadow-sm">
+                        <span class="material-symbols-outlined text-[14px]">troubleshoot</span>
+                        <span>Diagnostics</span>
                     </button>
                     <button type="button" onclick="testConnectionFromForm()" id="conn-test-btn"
                         class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-50 text-blue-600 border border-blue-200 text-label-md hover:bg-blue-100 transition-all duration-200 shadow-sm">
@@ -400,7 +326,7 @@
                                 <select id="form-dest-conn" required class="w-full bg-white border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
                                     <option value="" disabled selected>Select Destination Connection</option>
                                     @foreach($connections as $k => $c)
-                                        @if(in_array($c['type'], ['mysql', 'sqlsrv', 'sqlite', 'firebird', 'local_env']) && isset($c['is_connected']) && $c['is_connected'])
+                                        @if(in_array($c['type'], \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes()) && isset($c['is_connected']) && $c['is_connected'])
                                             <option value="{{ $k }}">{{ $c['name'] }} ({{ strtoupper($c['type']) }})</option>
                                         @endif
                                     @endforeach
@@ -479,6 +405,7 @@
 <script>
     const entityData = @json($entities);
     const connectionData = @json($connections);
+    const providerSchemas = @json($schemas);
     let deleteTargetKey = null;
 
     // ── Entity Pagination ──────────────────────────────────────────────────
@@ -620,6 +547,8 @@
 
     function closeEntityModal() { document.getElementById('entity-modal').classList.add('hidden'); }
 
+    const providerRegistry = @json($providers);
+
     async function submitEntityForm(event) {
         if(event) event.preventDefault();
         if(!document.getElementById('entity-form').checkValidity()) {
@@ -655,59 +584,134 @@
     // ── Connection Modal ───────────────────────────────────────────────────
     function toggleConnectionFields() {
         const type = document.getElementById('conn-type').value;
-        const portInput = document.getElementById('conn-db-port');
+        const container = document.getElementById('conn-dynamic-fields');
+        container.innerHTML = ''; // clear current fields
+
+        const schema = providerSchemas[type] || [];
         
-        document.getElementById('conn-fields-db').classList.add('hidden');
-        document.getElementById('conn-fields-odata').classList.add('hidden');
-        document.getElementById('conn-fields-rest').classList.add('hidden');
-        
-        if (type === 'mysql' || type === 'sqlsrv' || type === 'firebird') {
-            document.getElementById('conn-fields-db').classList.remove('hidden');
-            
-            // Auto-fill port if it's empty or currently set to the default of another DB
-            if (!portInput.value || portInput.value === '3306' || portInput.value === '1433' || portInput.value === '3051') {
-                if (type === 'mysql') portInput.value = '3306';
-                else if (type === 'sqlsrv') portInput.value = '1433';
-                else if (type === 'firebird') portInput.value = '3051';
+        schema.forEach(field => {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'mb-4';
+
+            // Label
+            const label = document.createElement('label');
+            label.className = 'text-label-md text-surface-600 block mb-1.5';
+            label.innerHTML = `${field.label} ${field.required ? '<span class="text-red-500">*</span>' : ''}`;
+            wrapper.appendChild(label);
+
+            // Input element
+            if (field.type === 'select') {
+                const select = document.createElement('select');
+                select.id = `dyn_${field.field}`;
+                select.className = 'w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20';
+                if (field.required) select.required = true;
+                
+                let optionsData = field.options;
+                // If options is empty but default is an object/array, fallback to it
+                if ((!optionsData || (Array.isArray(optionsData) && optionsData.length === 0)) && field.default && typeof field.default === 'object') {
+                    optionsData = field.default;
+                }
+                
+                for (const [val, text] of Object.entries(optionsData || {})) {
+                    const opt = document.createElement('option');
+                    opt.value = val;
+                    // Handle array of objects format if it was ever passed
+                    if (typeof text === 'object' && text !== null) {
+                        opt.value = text.value || val;
+                        opt.textContent = text.label || text.text || val;
+                    } else {
+                        opt.textContent = text;
+                    }
+                    if (field.default === val || field.placeholder === val) opt.selected = true;
+                    select.appendChild(opt);
+                }
+                wrapper.appendChild(select);
+            } else if (field.type === 'boolean') {
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.id = `dyn_${field.field}`;
+                checkbox.className = 'w-4 h-4 text-brand-600 border-surface-300 rounded focus:ring-brand-500';
+                if (field.default === true || field.default === 'true' || field.default === 1) checkbox.checked = true;
+                
+                // Wrap in a flex row
+                const flex = document.createElement('div');
+                flex.className = 'flex items-center gap-2';
+                label.className = 'text-label-md text-surface-600 cursor-pointer';
+                label.setAttribute('for', checkbox.id);
+                
+                flex.appendChild(checkbox);
+                flex.appendChild(label);
+                
+                wrapper.innerHTML = ''; // remove original label
+                wrapper.appendChild(flex);
+            } else if (field.type === 'textarea') {
+                const textarea = document.createElement('textarea');
+                textarea.id = `dyn_${field.field}`;
+                textarea.className = 'w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20';
+                textarea.rows = 3;
+                if (field.required) textarea.required = true;
+                if (field.placeholder) textarea.placeholder = field.placeholder;
+                if (field.default !== null && typeof field.default !== 'object') textarea.value = field.default;
+                
+                wrapper.appendChild(textarea);
+            } else {
+                const input = document.createElement('input');
+                input.type = field.type;
+                input.id = `dyn_${field.field}`;
+                input.className = 'w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20';
+                if (field.required) input.required = true;
+                if (field.placeholder) input.placeholder = field.placeholder;
+                if (field.default !== null && typeof field.default !== 'object') input.value = field.default;
+                
+                wrapper.appendChild(input);
             }
-        } else if (type === 'odata') {
-            document.getElementById('conn-fields-odata').classList.remove('hidden');
-        } else if (type === 'rest_api') {
-            document.getElementById('conn-fields-rest').classList.remove('hidden');
-        }
+
+            // Help Text
+            if (field.helpText) {
+                const help = document.createElement('p');
+                help.className = 'text-[11px] text-surface-400 mt-1';
+                help.textContent = field.helpText;
+                wrapper.appendChild(help);
+            }
+
+            container.appendChild(wrapper);
+        });
+    }
+
+    function closeConnectionModal() {
+        document.getElementById('connection-modal').classList.add('hidden');
     }
 
     function openConnectionModal(editKey = null) {
         const modal = document.getElementById('connection-modal');
-        document.getElementById('connection-form').reset();
+        const form = document.getElementById('connection-form');
+        form.reset();
         document.getElementById('conn-form-mode').value = 'create';
         document.getElementById('conn-form-original-key').value = '';
-
+        
         if (editKey && connectionData[editKey]) {
             const c = connectionData[editKey];
             document.getElementById('conn-form-mode').value = 'edit';
             document.getElementById('conn-form-original-key').value = editKey;
+            
             document.getElementById('conn-key').value = editKey;
             document.getElementById('conn-name').value = c.name;
             document.getElementById('conn-type').value = c.type;
             
             toggleConnectionFields();
-            if (c.type === 'mysql' || c.type === 'sqlsrv') {
-                document.getElementById('conn-db-host').value = c.credentials.host || '';
-                document.getElementById('conn-db-port').value = c.credentials.port || '';
-                document.getElementById('conn-db-name').value = c.credentials.database || '';
-                document.getElementById('conn-db-user').value = c.credentials.username || '';
-                document.getElementById('conn-db-pass').value = c.credentials.password || '';
-            } else if (c.type === 'odata') {
-                document.getElementById('conn-odata-url').value = c.credentials.url || '';
-                document.getElementById('conn-odata-tenant').value = c.credentials.tenant || '';
-                document.getElementById('conn-odata-user').value = c.credentials.username || '';
-                document.getElementById('conn-odata-pass').value = c.credentials.password || '';
-                document.getElementById('conn-odata-path').value = c.credentials.odata_path || 'odatav4';
-            } else if (c.type === 'rest_api') {
-                document.getElementById('conn-rest-url').value = c.credentials.url || '';
-                document.getElementById('conn-rest-token').value = c.credentials.token || '';
-            }
+
+            // Populate dynamic fields
+            const schema = providerSchemas[c.type] || [];
+            schema.forEach(field => {
+                const el = document.getElementById(`dyn_${field.field}`);
+                if (el && c.credentials && c.credentials[field.field] !== undefined) {
+                    if (field.type === 'boolean') {
+                        el.checked = c.credentials[field.field];
+                    } else {
+                        el.value = c.credentials[field.field];
+                    }
+                }
+            });
 
             document.getElementById('conn-modal-title').innerHTML = '<span class="material-symbols-outlined text-brand-500 text-[20px]">edit</span> Edit Connection';
             document.getElementById('conn-submit-text').textContent = 'Save Changes';
@@ -719,45 +723,27 @@
         modal.classList.remove('hidden');
     }
 
-    function closeConnectionModal() { document.getElementById('connection-modal').classList.add('hidden'); }
+    function getCredentialsFromSchema(type) {
+        const schema = providerSchemas[type] || [];
+        const credentials = {};
+        schema.forEach(field => {
+            const el = document.getElementById(`dyn_${field.field}`);
+            if (el) {
+                credentials[field.field] = field.type === 'boolean' ? el.checked : el.value;
+            }
+        });
+        return credentials;
+    }
 
     async function testConnectionFromForm() {
-        if(!document.getElementById('connection-form').checkValidity()) {
-            document.getElementById('connection-form').reportValidity();
-            return;
-        }
-
+        if (!document.getElementById('connection-form').reportValidity()) return;
         const type = document.getElementById('conn-type').value;
-        let credentials = {};
-
-        if (type === 'mysql' || type === 'sqlsrv' || type === 'firebird') {
-            credentials = {
-                host: document.getElementById('conn-db-host').value,
-                port: document.getElementById('conn-db-port').value,
-                database: document.getElementById('conn-db-name').value,
-                username: document.getElementById('conn-db-user').value,
-                password: document.getElementById('conn-db-pass').value,
-            };
-        } else if (type === 'odata') {
-            credentials = {
-                url: document.getElementById('conn-odata-url').value,
-                tenant: document.getElementById('conn-odata-tenant').value,
-                username: document.getElementById('conn-odata-user').value,
-                password: document.getElementById('conn-odata-pass').value,
-                odata_path: document.getElementById('conn-odata-path').value,
-            };
-        } else if (type === 'rest_api') {
-            credentials = {
-                url: document.getElementById('conn-rest-url').value,
-                token: document.getElementById('conn-rest-token').value,
-            };
-        }
+        const credentials = getCredentialsFromSchema(type);
 
         const btn = document.getElementById('conn-test-btn');
-        const originalHtml = btn.innerHTML;
         btn.disabled = true;
         btn.innerHTML = '<span class="material-symbols-outlined text-[14px] spin">sync</span> Testing...';
-
+        
         try {
             const res = await fetch('/api/connections/test', {
                 method: 'POST',
@@ -765,21 +751,87 @@
                 body: JSON.stringify({ type, credentials })
             });
             const data = await res.json();
-            if (res.ok && data.success) {
-                showToast(data.message, 'success');
-            } else {
-                showToast(data.message || 'Connection failed', 'error');
-            }
-        } catch (e) {
-            showToast('Error: ' + e.message, 'error');
-        } finally {
+            if (res.ok && data.success) { showToast(data.message, 'success'); }
+            else { showToast(data.message || 'Connection failed', 'error'); }
+        } catch (e) { showToast('Error: ' + e.message, 'error'); }
+        finally {
             btn.disabled = false;
-            btn.innerHTML = originalHtml;
+            btn.innerHTML = '<span class="material-symbols-outlined text-[14px]">science</span> Test';
         }
     }
 
-    async function submitConnectionForm(event) {
-        if(event) event.preventDefault();
+    async function runDiagnosticsFromForm() {
+        if (!document.getElementById('connection-form').reportValidity()) return;
+        const type = document.getElementById('conn-type').value;
+        const credentials = getCredentialsFromSchema(type);
+
+        const btn = document.getElementById('conn-diag-btn');
+        const container = document.getElementById('conn-diagnostics-container');
+        const content = document.getElementById('conn-diagnostics-content');
+        
+        btn.disabled = true;
+        btn.innerHTML = '<span class="material-symbols-outlined text-[14px] spin">sync</span> Running...';
+        container.classList.remove('hidden');
+        content.innerHTML = '<div class="text-surface-500 animate-pulse">Running full production diagnostics...</div>';
+        
+        try {
+            const res = await fetch('/api/connections/diagnostics', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' },
+                body: JSON.stringify({ type, credentials })
+            });
+            const data = await res.json();
+            
+            let html = '<div class="grid grid-cols-2 gap-4">';
+            
+            // Checks
+            if (data.checks && Object.keys(data.checks).length > 0) {
+                html += '<div class="space-y-1.5"><h5 class="font-medium text-surface-700 text-xs uppercase tracking-wider mb-2">Checks</h5>';
+                for (const [key, passed] of Object.entries(data.checks)) {
+                    const icon = passed ? '<span class="text-emerald-500 material-symbols-outlined text-[16px] align-middle">check_circle</span>' : '<span class="text-red-500 material-symbols-outlined text-[16px] align-middle">cancel</span>';
+                    html += `<div class="flex items-center justify-between py-1 border-b border-surface-100 last:border-0"><span class="text-surface-600">${key}</span> ${icon}</div>`;
+                }
+                html += '</div>';
+            }
+            
+            // Summary
+            if (data.summary && Object.keys(data.summary).length > 0) {
+                html += '<div class="space-y-1.5"><h5 class="font-medium text-surface-700 text-xs uppercase tracking-wider mb-2">Summary</h5>';
+                for (const [key, val] of Object.entries(data.summary)) {
+                    html += `<div class="flex items-center justify-between py-1 border-b border-surface-100 last:border-0"><span class="text-surface-500">${key}</span> <span class="font-medium text-surface-800 text-right truncate pl-2" title="${val}">${val}</span></div>`;
+                }
+                if (data.metrics && data.metrics.latency_ms) {
+                    html += `<div class="flex items-center justify-between py-1"><span class="text-surface-500">Latency</span> <span class="font-medium text-surface-800">${data.metrics.latency_ms} ms</span></div>`;
+                }
+                html += '</div>';
+            }
+            
+            html += '</div>';
+
+            // Error
+            if (data.error) {
+                html += `<div class="mt-4 p-3 rounded-lg bg-red-50 border border-red-200">
+                    <div class="font-semibold text-red-700 flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">error</span> ${data.error.title} (${data.error.code})</div>
+                    <div class="text-red-600 mt-1">${data.error.message}</div>
+                    ${data.error.sql_state ? `<div class="text-xs font-mono text-red-500 mt-2 p-1.5 bg-red-100/50 rounded">SQLSTATE: ${data.error.sql_state}</div>` : ''}
+                    <div class="text-xs font-mono text-red-400 mt-1 truncate" title="${data.error.technical_message}">${data.error.technical_message}</div>
+                </div>`;
+            }
+
+            content.innerHTML = html;
+            
+            if (res.ok && data.success) { showToast('Diagnostics passed.', 'success'); }
+            else { showToast('Diagnostics failed or produced warnings.', 'error'); }
+        } catch (e) { 
+            content.innerHTML = `<div class="text-red-500 p-3 bg-red-50 rounded-lg border border-red-200">Error: ${e.message}</div>`;
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<span class="material-symbols-outlined text-[14px]">troubleshoot</span> Diagnostics';
+        }
+    }
+
+    async function submitConnectionForm(e) {
+        e.preventDefault();
         if(!document.getElementById('connection-form').checkValidity()) {
             document.getElementById('connection-form').reportValidity();
             return;
@@ -788,30 +840,7 @@
         const mode = document.getElementById('conn-form-mode').value;
         const originalKey = document.getElementById('conn-form-original-key').value;
         const type = document.getElementById('conn-type').value;
-        let credentials = {};
-
-        if (type === 'mysql' || type === 'sqlsrv' || type === 'firebird') {
-            credentials = {
-                host: document.getElementById('conn-db-host').value,
-                port: document.getElementById('conn-db-port').value,
-                database: document.getElementById('conn-db-name').value,
-                username: document.getElementById('conn-db-user').value,
-                password: document.getElementById('conn-db-pass').value,
-            };
-        } else if (type === 'odata') {
-            credentials = {
-                url: document.getElementById('conn-odata-url').value,
-                tenant: document.getElementById('conn-odata-tenant').value,
-                username: document.getElementById('conn-odata-user').value,
-                password: document.getElementById('conn-odata-pass').value,
-                odata_path: document.getElementById('conn-odata-path').value,
-            };
-        } else if (type === 'rest_api') {
-            credentials = {
-                url: document.getElementById('conn-rest-url').value,
-                token: document.getElementById('conn-rest-token').value,
-            };
-        }
+        const credentials = getCredentialsFromSchema(type);
 
         const payload = {
             key: document.getElementById('conn-key').value.trim(),
@@ -855,7 +884,7 @@
                 sourceSelect.appendChild(optSource);
                 
                 // Add to Destination Connection if supported
-                if (['mysql', 'sqlsrv', 'sqlite', 'firebird', 'local_env'].includes(c.type)) {
+                if (providerRegistry[c.type] && providerRegistry[c.type].kind === 'database') {
                     const optDest = document.createElement('option');
                     optDest.value = k;
                     optDest.textContent = optionText;
@@ -877,69 +906,7 @@
         }
     }
 
-    let lastDbFetchKey = '';
-    async function fetchServerDatabases() {
-        const type = document.getElementById('conn-type').value;
-        if (type !== 'mysql' && type !== 'sqlsrv') return;
 
-        const host = document.getElementById('conn-db-host').value;
-        const port = document.getElementById('conn-db-port').value;
-        const user = document.getElementById('conn-db-user').value;
-        const pass = document.getElementById('conn-db-pass').value;
-
-        if (!host || !user) {
-            showToast('Please fill Host and Username first', 'error');
-            return;
-        }
-
-        const currentKey = `${type}-${host}-${port}-${user}-${pass}`;
-        if (lastDbFetchKey === currentKey) {
-            // Already fetched, just show dropdown if there are items
-            document.getElementById('conn-db-dropdown').classList.remove('hidden');
-            return; 
-        }
-        
-        const loading = document.getElementById('conn-db-loading');
-        loading.classList.remove('hidden');
-        
-        try {
-            const res = await fetch('/api/connections/databases', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' },
-                body: JSON.stringify({ type, credentials: { host, port, username: user, password: pass } })
-            });
-            const data = await res.json();
-            if (res.ok && data.success && data.databases) {
-                // Sort databases alphabetically
-                data.databases.sort((a, b) => a.localeCompare(b));
-                
-                const list = document.getElementById('conn-db-list');
-                
-                if (data.databases.length === 0) {
-                    list.innerHTML = '<li class="px-3.5 py-2 text-sm text-surface-400 italic">No databases found</li>';
-                } else {
-                    let html = '';
-                    data.databases.forEach(db => {
-                        html += `<li onclick="document.getElementById('conn-db-name').value = '${db}'" class="px-3.5 py-2 hover:bg-surface-100 cursor-pointer text-sm font-mono text-surface-800 transition-colors">${db}</li>`;
-                    });
-                    list.innerHTML = html;
-                }
-                
-                if (document.activeElement === document.getElementById('conn-db-name')) {
-                    document.getElementById('conn-db-dropdown').classList.remove('hidden');
-                }
-                
-                lastDbFetchKey = currentKey;
-            } else {
-                showToast(data.message || 'Failed to fetch databases', 'error');
-            }
-        } catch (e) {
-            console.error('Failed to fetch databases', e);
-            showToast('Error fetching databases', 'error');
-        } finally {
-            loading.classList.add('hidden');
-        }
-    }
 
     async function testConnection(key, silent = false) {
         if (!connectionData[key]) return;

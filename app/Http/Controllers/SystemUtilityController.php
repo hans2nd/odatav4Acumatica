@@ -49,6 +49,26 @@ class SystemUtilityController extends Controller
     }
 
     /**
+     * Run fresh database migrations with the default installation seeder.
+     */
+    public function installDefault(Request $request)
+    {
+        // Basic security token to prevent unauthorized execution
+        $token = $request->query('token');
+        if ($token !== 'deploy123') {
+            return $this->promptToken();
+        }
+
+        try {
+            Artisan::call('migrate:fresh', ['--force' => true, '--seed' => true, '--seeder' => 'Database\\Seeders\\DefaultInstallationSeeder']);
+            $output = Artisan::output();
+            return $this->formatResponse('Default Installation Executed Successfully', $output);
+        } catch (\Exception $e) {
+            return $this->formatResponse('Error Running Default Installation', $e->getMessage(), true);
+        }
+    }
+
+    /**
      * Clear application cache.
      */
     public function optimize(Request $request)
