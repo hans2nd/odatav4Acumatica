@@ -417,9 +417,14 @@ class QueryBuilderController extends Controller
             $rowNum++;
         }
 
-        foreach (array_slice($columns, 0, 30) as $i => $col) {
-            $letter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
-            $sheet->getColumnDimension($letter)->setAutoSize(true);
+        // Auto-size columns (limit to first 30 for performance) - disable for large exports
+        $isLargeExport = ($rowNum > 1500);
+
+        if (!$isLargeExport) {
+            foreach (array_slice($columns, 0, 30) as $i => $col) {
+                $letter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
+                $sheet->getColumnDimension($letter)->setAutoSize(true);
+            }
         }
 
         $sheet->freezePane('A2');

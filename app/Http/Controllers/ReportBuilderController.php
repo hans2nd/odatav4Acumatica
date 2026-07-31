@@ -160,6 +160,9 @@ class ReportBuilderController extends Controller
         $filters = $request->input('filters', []);
 
         try {
+            ini_set('memory_limit', '512M');
+            ini_set('max_execution_time', '300'); // 5 minutes
+
             $connName = $this->connectionService->resolveConnectionName($connKey);
 
             // Validate columns exist
@@ -339,10 +342,14 @@ class ReportBuilderController extends Controller
             $rowNum++;
         }
 
-        // Auto-size columns (limit to first 30 for performance)
-        foreach (array_slice($columns, 0, 30) as $i => $col) {
-            $letter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
-            $sheet->getColumnDimension($letter)->setAutoSize(true);
+        // Auto-size columns (limit to first 30 for performance) - disable for large exports
+        $isLargeExport = ($rowNum > 1500);
+
+        if (!$isLargeExport) {
+            foreach (array_slice($columns, 0, 30) as $i => $col) {
+                $letter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
+                $sheet->getColumnDimension($letter)->setAutoSize(true);
+            }
         }
 
         // Alternating row colors
@@ -356,14 +363,17 @@ class ReportBuilderController extends Controller
                     ],
                 ],
             ]);
-            for ($r = 2; $r < $rowNum; $r++) {
-                if ($r % 2 === 0) {
-                    $sheet->getStyle("A{$r}:{$lastColLetter}{$r}")->applyFromArray([
-                        'fill' => [
-                            'fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID,
-                            'startColor' => ['rgb' => 'F9FAFB'],
-                        ],
-                    ]);
+            
+            if (!$isLargeExport) {
+                for ($r = 2; $r < $rowNum; $r++) {
+                    if ($r % 2 === 0) {
+                        $sheet->getStyle("A{$r}:{$lastColLetter}{$r}")->applyFromArray([
+                            'fill' => [
+                                'fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID,
+                                'startColor' => ['rgb' => 'F9FAFB'],
+                            ],
+                        ]);
+                    }
                 }
             }
         }
