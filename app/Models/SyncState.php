@@ -23,6 +23,8 @@ class SyncState extends Model
         'status',
         'lock_owner',
         'lock_acquired_at',
+        'lock_expires_at',
+        'heartbeat_at',
         'retry_count',
     ];
 
@@ -31,6 +33,8 @@ class SyncState extends Model
         'last_started_at' => 'datetime',
         'last_finished_at' => 'datetime',
         'lock_acquired_at' => 'datetime',
+        'lock_expires_at' => 'datetime',
+        'heartbeat_at' => 'datetime',
     ];
 
     // Relationships

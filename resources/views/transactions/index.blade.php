@@ -54,7 +54,14 @@
                             <span class="material-symbols-outlined text-[14px]">visibility</span> View
                         </a>
                     @endif
-                    <button onclick="openScheduleModal('{{ $key }}', '{{ $info['config']['description'] }}', '{{ $info['schedule']->frequency ?? '' }}', '{{ $info['schedule']->interval ?? '' }}', '{{ $info['schedule']->time ?? '' }}', '{{ $info['schedule']->day_of_week ?? '' }}', '{{ $info['schedule']->day_of_month ?? '' }}')"
+                    <button data-key="{{ $key }}"
+                            data-name="{{ $info['config']['description'] ?? '' }}"
+                            data-frequency="{{ $info['schedule']->frequency ?? '' }}"
+                            data-interval="{{ $info['schedule']->interval ?? '' }}"
+                            data-time="{{ $info['schedule']->time ?? '' }}"
+                            data-dayofweek="{{ $info['schedule']->day_of_week ?? '' }}"
+                            data-dayofmonth="{{ $info['schedule']->day_of_month ?? '' }}"
+                            onclick="openScheduleModal(this.dataset.key, this.dataset.name, this.dataset.frequency, this.dataset.interval, this.dataset.time, this.dataset.dayofweek, this.dataset.dayofmonth)"
                             class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg {{ !empty($info['schedule']->frequency) ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 border border-amber-300' : 'bg-surface-100 text-surface-600 hover:bg-surface-200' }} text-label-md transition-all duration-200" title="Auto Sync Schedule">
                         <span class="material-symbols-outlined text-[14px]">schedule</span> 
                         @php
@@ -71,7 +78,10 @@
                         @endphp
                         {{ $freqText }}
                     </button>
-                    <button onclick="openSyncModal('{{ $key }}', '{{ $info['config']['description'] }}', {{ json_encode($info['custom_filters']) }})"
+                    <button data-key="{{ $key }}" 
+                            data-name="{{ $info['config']['description'] ?? '' }}" 
+                            data-filters="{{ json_encode(is_string($info['custom_filters'] ?? []) ? json_decode($info['custom_filters'] ?? '[]') : ($info['custom_filters'] ?? [])) }}"
+                            onclick="try { openSyncModal(this.dataset.key, this.dataset.name, JSON.parse(this.dataset.filters || '[]')); } catch(e) { console.error('Parse error', e); openSyncModal(this.dataset.key, this.dataset.name, []); }"
                             class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-brand-600 text-white text-label-md hover:bg-brand-700 transition-all duration-200 active:scale-[0.97] shadow-sm">
                         <span class="material-symbols-outlined text-[14px]">sync</span> Sync
                     </button>
@@ -89,11 +99,10 @@
         </div>
     @endforeach
 </div>
-
-{{-- Sync Filter Modal --}}
-<div id="syncModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/40 backdrop-blur-sm transition-all duration-200 opacity-0">
-    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col transform transition-all duration-200 scale-95 border border-surface-200/60">
-        <div class="px-6 py-4 border-b border-surface-100 flex justify-between items-center">
+    {{-- Sync Filter Modal --}}
+    <div id="syncModal" class="fixed inset-0 z-[100] hidden items-center justify-center bg-black/40 backdrop-blur-sm transition-all duration-200 opacity-0">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col transform transition-all duration-200 scale-95 border border-surface-200/60">
+            <div class="px-6 py-4 border-b border-surface-100 flex justify-between items-center">
             <div>
                 <h2 class="text-h2 text-surface-800">Sync <span id="syncModalEntityName" class="text-brand-600"></span></h2>
                 <p class="text-body-sm text-surface-500 mt-1">Configure optional filters for this synchronization.</p>
@@ -270,128 +279,132 @@
 
 @section('scripts')
 <script>
-    let currentSyncEntity = null;
-    let availableFields = [];
-    let syncInterval = null;
-    
-    function openSyncModal(entityKey, entityName, defaultFilters = []) {
-        currentSyncEntity = entityKey;
-        document.getElementById('syncModalEntityName').textContent = entityName;
-        
-        const modal = document.getElementById('syncModal');
-        modal.classList.remove('hidden');
-        modal.classList.add('flex');
-        setTimeout(() => {
-            modal.classList.remove('opacity-0');
-            modal.querySelector('.transform').classList.remove('scale-95');
-            modal.querySelector('.transform').classList.add('scale-100');
-        }, 10);
-        
-        loadEntityFields(entityKey, defaultFilters);
-    }
-    
-    function closeSyncModal() {
-        const modal = document.getElementById('syncModal');
-        modal.classList.add('opacity-0');
-        modal.querySelector('.transform').classList.add('scale-95');
-        modal.querySelector('.transform').classList.remove('scale-100');
-        
-        if (syncInterval) {
-            clearInterval(syncInterval);
-            syncInterval = null;
+        let currentSyncEntity = null;
+        let availableFields = [];
+
+        function openSyncModal(entityKey, entityName, defaultFilters = []) {
+            currentSyncEntity = entityKey;
+            document.getElementById('syncModalEntityName').textContent = entityName;
+
+            const modal = document.getElementById('syncModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                modal.querySelector('.transform').classList.remove('scale-95');
+                modal.querySelector('.transform').classList.add('scale-100');
+            }, 10);
+
+            loadEntityFields(entityKey, defaultFilters);
         }
-        
-        setTimeout(() => {
-            modal.classList.add('hidden');
-            modal.classList.remove('flex');
+
+        function closeSyncModal() {
+            const modal = document.getElementById('syncModal');
+            modal.classList.add('opacity-0');
+            modal.querySelector('.transform').classList.add('scale-95');
+            modal.querySelector('.transform').classList.remove('scale-100');
+
+            setTimeout(() => {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+                document.getElementById('filtersContainer').innerHTML = '';
+                checkEmptyFilters();
+            }, 200);
+        }
+
+        async function loadEntityFields(entityKey, defaultFilters = [], refresh = false) {
+            const loadingEl = document.getElementById('syncModalLoading');
+            const contentEl = document.getElementById('syncModalContent');
+            const btnSync = document.getElementById('btnStartSync');
+
+            loadingEl.classList.remove('hidden');
+
+            // Preserve current filters if refreshing
+            let currentFiltersToRestore = defaultFilters;
+            if (refresh) {
+                const rows = document.querySelectorAll('.filter-row');
+                currentFiltersToRestore = [];
+                rows.forEach(row => {
+                    const field = row.querySelector('.filter-field').value;
+                    const op = row.querySelector('.filter-operator').value;
+                    const val = row.querySelector('.filter-value').value;
+                    if (field || val) {
+                        currentFiltersToRestore.push({
+                            field: field,
+                            operator: op,
+                            value: val
+                        });
+                    }
+                });
+            }
+
             document.getElementById('filtersContainer').innerHTML = '';
             checkEmptyFilters();
-        }, 200);
-    }
-    
-    async function loadEntityFields(entityKey, defaultFilters = [], refresh = false) {
-        const loadingEl = document.getElementById('syncModalLoading');
-        loadingEl.classList.remove('hidden');
-        
-        // Preserve current filters if refreshing
-        let currentFiltersToRestore = defaultFilters;
-        if (refresh) {
-            const rows = document.querySelectorAll('.filter-row');
-            currentFiltersToRestore = [];
-            rows.forEach(row => {
-                const field = row.querySelector('.filter-field').value;
-                const op = row.querySelector('.filter-operator').value;
-                const val = row.querySelector('.filter-value').value;
-                if (field || val) {
-                    currentFiltersToRestore.push({ field: field, operator: op, value: val });
+
+            try {
+                if (!refresh && window.entityMetadataCache && window.entityMetadataCache[entityKey]) {
+                    // Gunakan local JS memory cache
+                    const fields = window.entityMetadataCache[entityKey];
+                    populateDatalist(fields, currentFiltersToRestore);
+                    loadingEl.classList.add('hidden');
+                    return;
                 }
-            });
-        }
-        
-        document.getElementById('filtersContainer').innerHTML = '';
-        checkEmptyFilters();
-        
-        try {
-            if (!refresh && window.entityMetadataCache && window.entityMetadataCache[entityKey]) {
-                const fields = window.entityMetadataCache[entityKey];
-                populateDatalist(fields, currentFiltersToRestore);
-                loadingEl.classList.add('hidden');
-                return;
-            }
 
-            const url = refresh ? `/api/entities/${entityKey}/fields?refresh=1` : `/api/entities/${entityKey}/fields`;
-            const res = await fetch(url);
-            const data = await res.json();
-            
-            if (data.success && data.fields) {
-                availableFields = data.fields;
-                
-                if (!window.entityMetadataCache) window.entityMetadataCache = {};
-                window.entityMetadataCache[entityKey] = availableFields;
+                const url = refresh ? `/api/entities/${entityKey}/fields?refresh=1` :
+                    `/api/entities/${entityKey}/fields`;
+                const res = await fetch(url);
+                const data = await res.json();
 
-                populateDatalist(availableFields, currentFiltersToRestore);
-            } else {
+                if (data.success && data.fields) {
+                    availableFields = data.fields;
+                    
+                    // Simpan ke memory cache browser
+                    if (!window.entityMetadataCache) window.entityMetadataCache = {};
+                    window.entityMetadataCache[entityKey] = availableFields;
+
+                    populateDatalist(availableFields, currentFiltersToRestore);
+                } else {
+                    availableFields = [];
+                    showToast(data.message || 'Failed to load fields. You can still sync without filters.', 'warning');
+                }
+            } catch (e) {
+                console.error(e);
                 availableFields = [];
-                showToast(data.message || 'Failed to load fields. You can still sync without filters.', 'warning');
+                showToast('Error loading fields for filtering.', 'error');
+            } finally {
+                loadingEl.classList.add('hidden');
             }
-        } catch (e) {
-            console.error(e);
-            availableFields = [];
-            showToast('Error loading fields for filtering.', 'error');
-        } finally {
-            loadingEl.classList.add('hidden');
         }
-    }
 
-    function populateDatalist(fields, currentFiltersToRestore) {
-        const datalist = document.getElementById('acumaticaFieldsDataList');
-        datalist.innerHTML = '';
-        fields.forEach(f => {
-            const opt = document.createElement('option');
-            opt.value = f;
-            datalist.appendChild(opt);
-        });
-
-        if (currentFiltersToRestore && currentFiltersToRestore.length > 0) {
-            currentFiltersToRestore.forEach(f => {
-                addFilterRow(f.field, f.operator, f.value);
+        function populateDatalist(fields, currentFiltersToRestore) {
+            const datalist = document.getElementById('acumaticaFieldsDataList');
+            datalist.innerHTML = '';
+            fields.forEach(f => {
+                const opt = document.createElement('option');
+                opt.value = f;
+                datalist.appendChild(opt);
             });
+
+            if (currentFiltersToRestore && currentFiltersToRestore.length > 0) {
+                currentFiltersToRestore.forEach(f => {
+                    addFilterRow(f.field, f.operator, f.value);
+                });
+            }
         }
-    }
-    
-    function refreshEntityFields() {
-        if (!currentSyncEntity) return;
-        loadEntityFields(currentSyncEntity, [], true);
-    }
-    
-    function addFilterRow(field = '', op = 'eq', val = '') {
-        const container = document.getElementById('filtersContainer');
-        
-        const row = document.createElement('div');
-        row.className = 'flex items-center gap-2 filter-row animate-fade-up';
-        
-        row.innerHTML = `
-            <input type="text" list="acumaticaFieldsDataList" class="filter-field flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Search or select field..." value="${field}" onchange="handleFieldChange(this)">
+
+        function refreshEntityFields() {
+            if (!currentSyncEntity) return;
+            loadEntityFields(currentSyncEntity, [], true);
+        }
+
+        function addFilterRow(field = '', op = 'eq', val = '') {
+            const container = document.getElementById('filtersContainer');
+
+            const row = document.createElement('div');
+            row.className = 'flex items-center gap-2 filter-row animate-fade-up';
+
+            row.innerHTML = `
+            <input type="text" list="acumaticaFieldsDataList" class="filter-field flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Search or select field..." onchange="handleFieldChange(this)">
             <select class="filter-operator w-36 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2">
                 <option value="eq" ${op === 'eq' ? 'selected' : ''}>Equals (=)</option>
                 <option value="ne" ${op === 'ne' ? 'selected' : ''}>Not Eq (!=)</option>
@@ -403,316 +416,235 @@
                 <option value="lt" ${op === 'lt' ? 'selected' : ''}>Less (<)</option>
                 <option value="le" ${op === 'le' ? 'selected' : ''}>Less Eq (<=)</option>
             </select>
-            <input type="text" class="filter-value flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Value..." value="${val}">
+            <input type="text" class="filter-value flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Value...">
             <button onclick="removeFilterRow(this)" class="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all duration-200" title="Remove filter">
                 <span class="material-symbols-outlined text-[16px]">delete</span>
             </button>
         `;
         
-        container.appendChild(row);
-        checkEmptyFilters();
-    }
-    
-    function removeFilterRow(btn) {
-        const row = btn.closest('.filter-row');
-        row.remove();
-        checkEmptyFilters();
-    }
-    
-    function checkEmptyFilters() {
-        const container = document.getElementById('filtersContainer');
-        const emptyMsg = document.getElementById('emptyFiltersMsg');
-        
-        if (container.children.length === 0) {
-            emptyMsg.classList.remove('hidden');
-        } else {
-            emptyMsg.classList.add('hidden');
+            row.querySelector('.filter-field').value = field;
+            row.querySelector('.filter-value').value = val;
+
+            container.appendChild(row);
+            checkEmptyFilters();
         }
-    }
-    
-    function handleFieldChange(selectEl) {
-        const row = selectEl.closest('.filter-row');
-        const valueInput = row.querySelector('.filter-value');
-        const fieldName = selectEl.value.toLowerCase();
-        
-        if (fieldName.includes('date') || fieldName.includes('time')) {
-            valueInput.type = 'date';
-        } else {
-            valueInput.type = 'text';
-            valueInput.placeholder = 'Value...';
+
+        function removeFilterRow(btn) {
+            const row = btn.closest('.filter-row');
+            row.remove();
+            checkEmptyFilters();
         }
-    }
-    
-    async function executeFilteredSync() {
-        const rows = document.querySelectorAll('.filter-row');
-        const custom_filters = [];
-        
-        let hasError = false;
-        rows.forEach(row => {
-            const field = row.querySelector('.filter-field').value;
-            const op = row.querySelector('.filter-operator').value;
-            const val = row.querySelector('.filter-value').value;
-            
-            if (field && val) {
-                custom_filters.push({ field: field, operator: op, value: val });
-            } else if (field || val) {
-                hasError = true;
+
+        function checkEmptyFilters() {
+            const container = document.getElementById('filtersContainer');
+            const emptyMsg = document.getElementById('emptyFiltersMsg');
+
+            if (container.children.length === 0) {
+                emptyMsg.classList.remove('hidden');
+            } else {
+                emptyMsg.classList.add('hidden');
             }
-        });
-        
-        if (hasError) {
-            showToast('Please complete all filter fields or remove incomplete filters.', 'warning');
-            return;
-        }
-        
-        const btnEl = document.getElementById('btnStartSync');
-        btnEl.disabled = true;
-        const originalText = btnEl.innerHTML;
-        btnEl.innerHTML = '<span class="material-symbols-outlined text-[14px] spin">sync</span> Syncing...';
-        
-        document.getElementById('syncProgressContainer').classList.remove('hidden');
-        document.getElementById('syncProgressBar').style.width = '0%';
-        document.getElementById('syncProgressPercent').innerText = '0%';
-        document.getElementById('syncStageLabel').innerText = 'Initializing...';
-        document.getElementById('syncProgressLabel').innerText = 'Connecting to service...';
-        document.getElementById('syncStatProcessed').innerText = '0';
-        document.getElementById('syncStatSpeed').innerHTML = '0 <span class="text-[10px] text-surface-400 font-normal">/s</span>';
-        document.getElementById('syncStatETA').innerText = '--:--';
-        document.getElementById('syncElapsedTime').innerText = '00:00';
-        
-        const iconEl = document.getElementById('syncStatusIcon');
-        iconEl.className = 'w-8 h-8 rounded-full bg-brand-50 flex items-center justify-center text-brand-600';
-        iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px] spin">sync</span>';
-        
-        if (syncInterval) {
-            clearInterval(syncInterval);
         }
 
-        let isAsync = false;
-        let noProgressCount = 0;
-        let initialStartTime = Date.now();
-        let serverStartTime = 0;
+        function handleFieldChange(selectEl) {
+            const row = selectEl.closest('.filter-row');
+            const valueInput = row.querySelector('.filter-value');
+            const fieldName = selectEl.value.toLowerCase();
 
-        function formatTime(seconds) {
-            if (seconds < 0 || isNaN(seconds) || !isFinite(seconds)) return '--:--';
-            const m = Math.floor(seconds / 60);
-            const s = Math.floor(seconds % 60);
-            return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+            if (fieldName.includes('date') || fieldName.includes('time')) {
+                valueInput.type = 'date';
+            } else {
+                valueInput.type = 'text';
+                valueInput.placeholder = 'Value...';
+            }
         }
-        
-        syncInterval = setInterval(async () => {
-            try {
-                const progRes = await fetch(`/sync/${currentSyncEntity}/progress`);
-                const progData = await progRes.json();
-                
-                if (progData.success && progData.progress) {
-                    noProgressCount = 0;
-                    const prog = progData.progress;
-                    let percent = 0;
 
-                    if (prog.start_time) {
-                        serverStartTime = prog.start_time * 1000;
-                    }
-                    
-                    const effectiveStart = serverStartTime || initialStartTime;
-                    const elapsedSecs = (Date.now() - effectiveStart) / 1000;
-                    document.getElementById('syncElapsedTime').innerText = formatTime(elapsedSecs);
+        async function executeFilteredSync() {
+            const rows = document.querySelectorAll('.filter-row');
+            const custom_filters = [];
 
-                    if (prog.status === 'queued') {
-                        document.getElementById('syncProgressBar').classList.add('animate-pulse');
-                        document.getElementById('syncProgressBar').style.width = '5%';
-                        document.getElementById('syncStageLabel').innerText = 'Queued';
-                        document.getElementById('syncProgressLabel').innerText = 'Waiting for background worker...';
-                        document.getElementById('syncProgressPercent').innerText = '...';
-                        return;
-                    }
+            let hasError = false;
+            rows.forEach(row => {
+                const field = row.querySelector('.filter-field').value;
+                const op = row.querySelector('.filter-operator').value;
+                const val = row.querySelector('.filter-value').value;
 
-                    if (prog.total) {
-                        percent = Math.round((prog.current / prog.total) * 100);
-                        document.getElementById('syncProgressBar').classList.remove('animate-pulse');
-                    } else if (prog.current > 0) {
-                        percent = 100;
-                        document.getElementById('syncProgressBar').classList.add('animate-pulse');
-                    }
-                    
-                    document.getElementById('syncProgressBar').style.width = `${percent}%`;
-                    document.getElementById('syncProgressPercent').innerText = prog.total ? `${percent}%` : `...`;
-                    
-                    // Live Stats Calculation
-                    const currentCount = prog.current || 0;
-                    document.getElementById('syncStatProcessed').innerText = currentCount.toLocaleString();
-                    
-                    if (elapsedSecs > 1 && currentCount > 0) {
-                        const speed = Math.round(currentCount / elapsedSecs);
-                        document.getElementById('syncStatSpeed').innerHTML = `${speed.toLocaleString()} <span class="text-[10px] text-surface-400 font-normal">/s</span>`;
-                        
-                        if (prog.total && prog.total > currentCount) {
-                            const remaining = prog.total - currentCount;
-                            const etaSecs = remaining / speed;
-                            document.getElementById('syncStatETA').innerText = formatTime(etaSecs);
-                        }
-                    }
-
-                    document.getElementById('syncStageLabel').innerText = prog.stage || 'Processing';
-                    let label = 'Syncing...';
-                    if (prog.status === 'fetching') label = `Fetching data from Acumatica... (${currentCount.toLocaleString()} records)`;
-                    else if (prog.status === 'inserting') label = `Saving to database... (${currentCount.toLocaleString()}/${prog.total ? prog.total.toLocaleString() : '?'})`;
-                    document.getElementById('syncProgressLabel').innerText = label;
-                } else if (isAsync || (btnEl.disabled && btnEl.innerHTML.includes('Syncing'))) {
-                    noProgressCount++;
-                    if (noProgressCount >= 2) {
-                        clearInterval(syncInterval);
-                        try {
-                            const logRes = await fetch(`/sync/logs?entity=${currentSyncEntity}&limit=1`);
-                            const logData = await logRes.json();
-                            const latest = logData.logs && logData.logs[0];
-                            if (latest && latest.status === 'success') {
-                                document.getElementById('syncProgressBar').style.width = '100%';
-                                document.getElementById('syncProgressPercent').innerText = '100%';
-                                document.getElementById('syncStageLabel').innerText = 'Completed!';
-                                document.getElementById('syncProgressLabel').innerText = 'Synchronization finished successfully';
-                                iconEl.className = 'w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600';
-                                iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px]">check_circle</span>';
-                                document.getElementById('syncStatETA').innerText = '00:00';
-                                showToast(`${currentSyncEntity}: ${(latest.records_inserted || 0).toLocaleString()} records synced in ${latest.duration_seconds}s`, 'success');
-                            } else if (latest && latest.status === 'failed') {
-                                document.getElementById('syncStageLabel').innerText = 'Failed';
-                                document.getElementById('syncProgressLabel').innerText = 'Synchronization stopped with error';
-                                iconEl.className = 'w-8 h-8 rounded-full bg-red-50 flex items-center justify-center text-red-600';
-                                iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px]">error</span>';
-                                showToast(`${currentSyncEntity}: ${latest.error_message || 'Sync failed'}`, 'error');
-                            } else {
-                                showToast(`${currentSyncEntity}: Sync process finished.`, 'success');
-                            }
-                        } catch (e) {
-                            showToast(`${currentSyncEntity}: Sync process finished.`, 'success');
-                        }
-                        setTimeout(() => location.reload(), 1500);
-                    }
+                if (field && val) {
+                    custom_filters.push({
+                        field: field,
+                        operator: op,
+                        value: val
+                    });
+                } else if (field || val) {
+                    hasError = true;
                 }
-            } catch (e) {
-                // Ignore poll errors
-            }
-        }, 2000);
-        
-        const payload = {
-            custom_filters: custom_filters,
-            save_filters: document.getElementById('saveFiltersCb').checked
-        };
-        
-        try {
-            const res = await fetch(`/sync/${currentSyncEntity}`, {
-                method: 'POST',
-                headers: { 
-                    'X-CSRF-TOKEN': csrfToken, 
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(payload)
             });
-            
-            const data = await res.json();
 
-            if (data.async) {
-                isAsync = true;
-                showToast(`${currentSyncEntity}: Sync dispatched to background queue.`, 'info');
+            if (hasError) {
+                showToast('Please complete all filter fields or remove incomplete filters.', 'warning');
                 return;
             }
+
+            const btnEl = document.getElementById('btnStartSync');
+            btnEl.disabled = true;
+            const originalText = btnEl.innerHTML;
+            btnEl.innerHTML = '<span class="material-symbols-outlined text-[14px] spin">sync</span> Syncing...';
+
+            document.getElementById('syncProgressContainer').classList.remove('hidden');
+            document.getElementById('syncProgressBar').style.width = '0%';
+            document.getElementById('syncProgressPercent').innerText = '0%';
+            document.getElementById('syncStageLabel').innerText = 'Initializing...';
+            document.getElementById('syncProgressLabel').innerText = 'Connecting to service...';
+            document.getElementById('syncStatProcessed').innerText = '0';
+            document.getElementById('syncStatSpeed').innerHTML = '0 <span class="text-[10px] text-surface-400 font-normal">/s</span>';
+            document.getElementById('syncStatETA').innerText = '--:--';
+            document.getElementById('syncElapsedTime').innerText = '00:00';
             
-            clearInterval(syncInterval);
-            document.getElementById('syncProgressBar').style.width = '100%';
-            document.getElementById('syncProgressPercent').innerText = '100%';
-            document.getElementById('syncStageLabel').innerText = 'Completed!';
-            document.getElementById('syncProgressLabel').innerText = 'Synchronization finished successfully';
-            iconEl.className = 'w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600';
-            iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px]">check_circle</span>';
-            document.getElementById('syncStatETA').innerText = '00:00';
-            
-            if (data.success) {
-                showToast(`${currentSyncEntity}: ${data.records} records synced in ${data.duration}`, 'success');
-                setTimeout(() => location.reload(), 1500);
-            } else {
-                if (data.error_type === 'connection_missing') {
-                    if (typeof Swal !== 'undefined') {
-                        Swal.fire({
-                            icon: 'warning',
-                            title: 'Koneksi Terputus!',
-                            text: data.message,
-                            confirmButtonText: 'Periksa Pengaturan',
-                            confirmButtonColor: '#f59e0b'
-                        }).then(() => {
-                            window.location.href = '/settings';
-                        });
-                    } else {
-                        alert(data.message);
-                    }
+            const iconEl = document.getElementById('syncStatusIcon');
+            iconEl.className = 'w-8 h-8 rounded-full bg-brand-50 flex items-center justify-center text-brand-600';
+            iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px] spin">sync</span>';
+
+            const payload = {
+                custom_filters: custom_filters,
+                save_filters: document.getElementById('saveFiltersCb').checked
+            };
+
+            try {
+                const res = await fetch(`/sync/${currentSyncEntity}`, {
+                    method: 'POST',
+                    headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content, 'Accept': 'application/json', 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await res.json();
+
+                if (data.success && data.job_id) {
+                    showToast(`${currentSyncEntity}: Synchronization has been queued.`, 'info');
+                    
+                    window.pollSyncJob(data.job_id, currentSyncEntity, {
+                        onProgress: (job) => {
+                            document.getElementById('syncProgressBar').style.width = `${job.progress}%`;
+                            document.getElementById('syncProgressPercent').innerText = `${job.progress}%`;
+                            
+                            const pRows = job.processed_rows || 0;
+                            const tRows = job.total_rows || 0;
+                            
+                            document.getElementById('syncStatProcessed').innerText = pRows.toLocaleString();
+                            document.getElementById('syncStageLabel').innerText = job.status === 'pending' ? 'Queued' : 'Syncing';
+                            document.getElementById('syncProgressLabel').innerText = `Processing... (${pRows.toLocaleString()} / ${tRows.toLocaleString()})`;
+                            
+                            if (job.duration) {
+                                document.getElementById('syncElapsedTime').innerText = job.duration;
+                            }
+                        },
+                        onSuccess: (job) => {
+                            document.getElementById('syncProgressBar').style.width = '100%';
+                            document.getElementById('syncProgressPercent').innerText = '100%';
+                            document.getElementById('syncStageLabel').innerText = 'Completed!';
+                            document.getElementById('syncProgressLabel').innerText = 'Synchronization finished successfully';
+                            iconEl.className = 'w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600';
+                            iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px]">check_circle</span>';
+                            
+                            setTimeout(() => location.reload(), 1500);
+                        },
+                        onError: (job) => {
+                            document.getElementById('syncStageLabel').innerText = 'Failed';
+                            document.getElementById('syncProgressLabel').innerText = 'Synchronization stopped with error';
+                            iconEl.className = 'w-8 h-8 rounded-full bg-red-50 flex items-center justify-center text-red-600';
+                            iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px]">error</span>';
+                            
+                            btnEl.disabled = false;
+                            btnEl.innerHTML = originalText;
+                        }
+                    });
                 } else {
-                    showToast(`${currentSyncEntity}: ${data.error || data.message}`, 'error');
+                    if (data.error_type === 'connection_missing') {
+                        if (typeof Swal !== 'undefined') {
+                            Swal.fire({
+                                icon: 'warning',
+                                title: 'Koneksi Terputus!',
+                                text: data.message,
+                                confirmButtonText: 'Periksa Pengaturan',
+                                confirmButtonColor: '#f59e0b'
+                            }).then(() => window.location.href = '/settings');
+                        } else {
+                            alert(data.message);
+                        }
+                    } else {
+                        showToast(`${currentSyncEntity}: ${data.error || data.message}`, 'error');
+                    }
+                    btnEl.disabled = false;
+                    btnEl.innerHTML = originalText;
+                    document.getElementById('syncProgressContainer').classList.add('hidden');
                 }
+            } catch (e) {
+                showToast(`${currentSyncEntity}: ${e.message}`, 'error');
                 btnEl.disabled = false;
                 btnEl.innerHTML = originalText;
                 document.getElementById('syncProgressContainer').classList.add('hidden');
             }
-        } catch (e) {
-            console.warn("Sync HTTP connection closed, but background process may still be running.", e);
-            showToast('Connection timeout. The sync process will continue in the background.', 'info');
-        }
-    }
-
-    async function saveOnlyFilters() {
-        const rows = document.querySelectorAll('.filter-row');
-        const custom_filters = [];
-        
-        let hasError = false;
-        rows.forEach(row => {
-            const field = row.querySelector('.filter-field').value;
-            const op = row.querySelector('.filter-operator').value;
-            const val = row.querySelector('.filter-value').value;
-            
-            if (field && val) {
-                custom_filters.push({ field: field, operator: op, value: val });
-            } else if (field || val) {
-                hasError = true;
-            }
-        });
-        
-        if (hasError) {
-            showToast('Please complete all filter fields or remove incomplete filters.', 'warning');
-            return;
         }
 
-        const btnSave = document.getElementById('btnSaveFiltersOnly');
-        const originalText = btnSave.innerHTML;
-        btnSave.disabled = true;
-        btnSave.innerHTML = '<span class="material-symbols-outlined text-[16px] spin">sync</span> Saving...';
+        async function saveOnlyFilters() {
+            const rows = document.querySelectorAll('.filter-row');
+            const custom_filters = [];
 
-        try {
-            const res = await fetch(`/api/entities/${currentSyncEntity}/filters`, {
-                method: 'POST',
-                headers: { 
-                    'X-CSRF-TOKEN': csrfToken, 
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ custom_filters: custom_filters })
+            let hasError = false;
+            rows.forEach(row => {
+                const field = row.querySelector('.filter-field').value;
+                const op = row.querySelector('.filter-operator').value;
+                const val = row.querySelector('.filter-value').value;
+
+                if (field && val) {
+                    custom_filters.push({
+                        field: field,
+                        operator: op,
+                        value: val
+                    });
+                } else if (field || val) {
+                    hasError = true;
+                }
             });
-            
-            const data = await res.json();
-            
-            if (data.success) {
-                showToast(data.message || 'Filters saved successfully', 'success');
-                setTimeout(() => location.reload(), 1000);
-            } else {
-                showToast(data.message || 'Failed to save filters', 'error');
+
+            if (hasError) {
+                showToast('Please complete all filter fields or remove incomplete filters.', 'warning');
+                return;
             }
-        } catch (e) {
-            console.error(e);
-            showToast('An error occurred while saving filters', 'error');
-        } finally {
-            btnSave.disabled = false;
-            btnSave.innerHTML = originalText;
+
+            const btnSave = document.getElementById('btnSaveFiltersOnly');
+            const originalText = btnSave.innerHTML;
+            btnSave.disabled = true;
+            btnSave.innerHTML = '<span class="material-symbols-outlined text-[16px] spin">sync</span> Saving...';
+
+            try {
+                const res = await fetch(`/api/entities/${currentSyncEntity}/filters`, {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        custom_filters: custom_filters
+                    })
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    showToast(data.message || 'Filters saved successfully', 'success');
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showToast(data.message || 'Failed to save filters', 'error');
+                }
+            } catch (e) {
+                console.error(e);
+                showToast('An error occurred while saving filters', 'error');
+            } finally {
+                btnSave.disabled = false;
+                btnSave.innerHTML = originalText;
+            }
         }
-    }
 
     /* Schedule Modal Logic */
     let currentScheduleEntity = '';
@@ -802,8 +734,8 @@
         };
 
         try {
-            const res = await fetch(`/api/entities/${currentScheduleEntity}/schedule`, {
-                method: 'POST',
+            const res = await fetch(`/api/scheduler/${currentScheduleEntity}`, {
+                method: 'PUT',
                 headers: { 
                     'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content, 
                     'Accept': 'application/json',

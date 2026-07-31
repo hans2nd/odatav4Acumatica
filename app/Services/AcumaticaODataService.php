@@ -44,13 +44,39 @@ class AcumaticaODataService
     public function setConnectionConfig(array $connection): void
     {
         $creds = $connection['credentials'] ?? [];
-        $this->baseUrl = rtrim($creds['url'] ?? $this->baseUrl, '/');
+        
         $this->tenant = $creds['tenant'] ?? $this->tenant;
         $this->username = $creds['username'] ?? $this->username;
         $this->password = $creds['password'] ?? $this->password;
+        
+        if (isset($creds['odata_auth'])) {
+            $this->odataAuth = $creds['odata_auth'];
+        }
 
-        if (isset($creds['odata_path'])) {
-            config(['acumatica.odata_path' => $creds['odata_path']]);
+        // Use Explicit OData URL if provided
+        if (!empty($creds['odata_url'])) {
+            $this->baseUrl = rtrim($creds['odata_url'], '/');
+            $this->includeTenantInODataUrl = false;
+            config(['acumatica.odata_path' => '']);
+        } else {
+            $base = rtrim($creds['url'] ?? $creds['base_url'] ?? $this->baseUrl, '/');
+            $tenant = trim($this->tenant, '/');
+            
+            $protocol = $creds['protocol'] ?? 'odata_v4';
+            $endpoint = ($protocol === 'odata_v3' || $protocol === 'v3') ? 'odata' : 'odatav4';
+            
+            if (!empty($tenant)) {
+                if (str_ends_with(strtolower($base), strtolower("/{$tenant}"))) {
+                    $this->baseUrl = "{$base}/{$endpoint}";
+                } else {
+                    $this->baseUrl = "{$base}/{$tenant}/{$endpoint}";
+                }
+            } else {
+                $this->baseUrl = "{$base}/{$endpoint}";
+            }
+            
+            $this->includeTenantInODataUrl = false;
+            config(['acumatica.odata_path' => '']);
         }
     }
 
@@ -144,8 +170,12 @@ class AcumaticaODataService
 
         $pathParts = [
             $this->baseUrl,
-            config('acumatica.odata_path', 'odatav4'),
         ];
+        
+        $odataPath = config('acumatica.odata_path', 'odatav4');
+        if (!empty($odataPath)) {
+            $pathParts[] = $odataPath;
+        }
 
         if ($this->includeTenantInODataUrl) {
             $pathParts[] = rawurlencode($this->tenant);
@@ -155,7 +185,7 @@ class AcumaticaODataService
 
         $queryCount = '';
         if ($includeCount) {
-            $isV4 = config('acumatica.odata_path', 'odatav4') === 'odatav4';
+            $isV4 = config('acumatica.odata_path') === 'odatav4' || stripos($this->baseUrl, 'odatav4') !== false;
             $queryCount = $isV4 ? '&$count=true' : '&$inlinecount=allpages&$format=json';
         }
 
@@ -181,40 +211,65 @@ class AcumaticaODataService
 
         $request = $this->getPersistentRequest();
 
-        $response = $request->get($url);
+        try {
+            $response = $request->get($url);
+        } catch (\Illuminate\Http\Client\RequestException $e) {
+            $response = $e->response;
+        } catch (\Exception $e) {
+            throw new \RuntimeException("OData fetch failed for {$odataEntity}: Connection error: " . $e->getMessage());
+        }
 
         // Jika Unauthorized (401), session mungkin sudah kadaluarsa.
-        if ($response->status() === 401 && $this->usesSessionAuth()) {
+        if ($response && $response->status() === 401 && $this->usesSessionAuth()) {
             Log::warning("Acumatica OData: Session expired. Retrying login...");
             $cacheKey = 'acumatica_cookie_' . md5($this->baseUrl . $this->tenant . $this->username);
             \Illuminate\Support\Facades\Cache::forget($cacheKey);
             $this->authenticated = false;
             $this->cookieJar = null;
 
-            // Coba login ulang
             if ($this->login()) {
                 $request = $this->getPersistentRequest();
-                $response = $request->get($url);
+                try {
+                    $response = $request->get($url);
+                } catch (\Illuminate\Http\Client\RequestException $e) {
+                    $response = $e->response;
+                }
             }
         }
 
-        if (!$response->successful()) {
-            $body = $response->body();
+        if (!$response || !$response->successful()) {
+            $status = $response ? $response->status() : 0;
+            $body = $response ? $response->body() : 'No response';
+            
             Log::error("Acumatica OData: Failed to fetch {$odataEntity}", [
-                'status' => $response->status(),
+                'status' => $status,
                 'body' => mb_substr($body, 0, 1000),
                 'url' => $url,
             ]);
-            $hint = $response->status() === 404
+            $hint = $status === 404
                 ? ' Entity not found in OData. Check that the Generic Inquiry/entity name is exposed for OData.'
                 : '';
 
+            if (stripos($body, '<html') !== false) {
+                throw new \RuntimeException("OData fetch failed for {$odataEntity} (HTTP {$status}). Acumatica returned an HTML page (likely a login/redirect page or 404 page) instead of JSON. Requested URL: {$url}. {$hint}");
+            }
+
             throw new \RuntimeException(
-                "OData fetch failed for {$odataEntity}: HTTP {$response->status()} - " . mb_substr($body, 0, 500) . $hint
+                "OData fetch failed for {$odataEntity}: HTTP {$status} - " . mb_substr($body, 0, 500) . $hint . ". Requested URL: {$url}"
             );
         }
 
-        return $response->json();
+        $json = $response->json();
+        
+        if ($json === null) {
+            $body = $response->body();
+            if (stripos($body, '<html') !== false) {
+                throw new \RuntimeException("OData fetch failed for {$odataEntity}: Acumatica returned an HTML page (likely a login/redirect page) instead of JSON. Please check your Connection Management credentials and authentication type (Basic vs Session).");
+            }
+            throw new \RuntimeException("OData fetch failed for {$odataEntity}: Response is not valid JSON.");
+        }
+
+        return $json;
     }
 
     /**

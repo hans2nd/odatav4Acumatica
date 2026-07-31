@@ -84,7 +84,10 @@
                             {{ $freqText }}
                         </button>
                         <button
-                            onclick="openSyncModal('{{ $key }}', '{{ $info['config']['description'] }}', {{ json_encode($info['custom_filters']) }})"
+                            data-key="{{ $key }}"
+                            data-name="{{ $info['config']['description'] }}"
+                            data-filters="{{ json_encode($info['custom_filters'] ?? []) }}"
+                            onclick="openSyncModal(this.dataset.key, this.dataset.name, JSON.parse(this.dataset.filters))"
                             class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-brand-600 text-white text-label-md hover:bg-brand-700 transition-all duration-200 active:scale-[0.97] shadow-sm">
                             <span class="material-symbols-outlined text-[14px]">sync</span> Sync
                         </button>
@@ -427,7 +430,7 @@
             row.className = 'flex items-center gap-2 filter-row animate-fade-up';
 
             row.innerHTML = `
-            <input type="text" list="acumaticaFieldsDataList" class="filter-field flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Search or select field..." value="${field}" onchange="handleFieldChange(this)">
+            <input type="text" list="acumaticaFieldsDataList" class="filter-field flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Search or select field..." onchange="handleFieldChange(this)">
             <select class="filter-operator w-36 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2">
                 <option value="eq" ${op === 'eq' ? 'selected' : ''}>Equals (=)</option>
                 <option value="ne" ${op === 'ne' ? 'selected' : ''}>Not Eq (!=)</option>
@@ -439,11 +442,14 @@
                 <option value="lt" ${op === 'lt' ? 'selected' : ''}>Less (<)</option>
                 <option value="le" ${op === 'le' ? 'selected' : ''}>Less Eq (<=)</option>
             </select>
-            <input type="text" class="filter-value flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Value..." value="${val}">
+            <input type="text" class="filter-value flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Value...">
             <button onclick="removeFilterRow(this)" class="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all duration-200" title="Remove filter">
                 <span class="material-symbols-outlined text-[16px]">delete</span>
             </button>
         `;
+        
+            row.querySelector('.filter-field').value = field;
+            row.querySelector('.filter-value').value = val;
 
             container.appendChild(row);
             checkEmptyFilters();
@@ -524,120 +530,6 @@
             iconEl.className = 'w-8 h-8 rounded-full bg-brand-50 flex items-center justify-center text-brand-600';
             iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px] spin">sync</span>';
 
-            let isAsync = false;
-            let noProgressCount = 0;
-            let initialStartTime = Date.now();
-            let serverStartTime = 0;
-
-            function formatTime(seconds) {
-                if (seconds < 0 || isNaN(seconds) || !isFinite(seconds)) return '--:--';
-                const m = Math.floor(seconds / 60);
-                const s = Math.floor(seconds % 60);
-                return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-            }
-
-            let syncInterval = setInterval(async () => {
-                try {
-                    const progRes = await fetch(`/sync/${currentSyncEntity}/progress`);
-                    const progData = await progRes.json();
-                    
-                    if (progData.success && progData.progress) {
-                        noProgressCount = 0;
-                        const prog = progData.progress;
-                        let percent = 0;
-                        
-                        if (prog.start_time) {
-                            serverStartTime = prog.start_time * 1000;
-                        }
-                        
-                        const effectiveStart = serverStartTime || initialStartTime;
-                        const elapsedSecs = (Date.now() - effectiveStart) / 1000;
-                        document.getElementById('syncElapsedTime').innerText = formatTime(elapsedSecs);
-
-                        if (prog.status === 'queued') {
-                            document.getElementById('syncProgressBar').classList.add('animate-pulse');
-                            document.getElementById('syncProgressBar').style.width = '5%';
-                            document.getElementById('syncStageLabel').innerText = 'Queued';
-                            document.getElementById('syncProgressLabel').innerText = 'Waiting for background worker...';
-                            document.getElementById('syncProgressPercent').innerText = '...';
-                            return;
-                        }
-
-                        if (prog.total) {
-                            percent = Math.round((prog.current / prog.total) * 100);
-                            document.getElementById('syncProgressBar').classList.remove('animate-pulse');
-                        } else if (prog.current > 0) {
-                            percent = 100; // Indeterminate
-                            document.getElementById('syncProgressBar').classList.add('animate-pulse');
-                        }
-
-                        document.getElementById('syncProgressBar').style.width = `${percent}%`;
-                        document.getElementById('syncProgressPercent').innerText = prog.total ? `${percent}%` : `...`;
-                        
-                        // Live Stats Calculation
-                        const currentCount = prog.current || 0;
-                        document.getElementById('syncStatProcessed').innerText = currentCount.toLocaleString();
-                        
-                        if (elapsedSecs > 1 && currentCount > 0) {
-                            const speed = Math.round(currentCount / elapsedSecs);
-                            document.getElementById('syncStatSpeed').innerHTML = `${speed.toLocaleString()} <span class="text-[10px] text-surface-400 font-normal">/s</span>`;
-                            
-                            if (prog.total && prog.total > currentCount) {
-                                const remaining = prog.total - currentCount;
-                                const etaSecs = remaining / speed;
-                                document.getElementById('syncStatETA').innerText = formatTime(etaSecs);
-                            }
-                        }
-
-                        document.getElementById('syncStageLabel').innerText = prog.stage || 'Processing';
-                        let label = 'Syncing...';
-                        if (prog.status === 'fetching') label =
-                            `Fetching data from Acumatica... (${currentCount.toLocaleString()} records)`;
-                        else if (prog.status === 'inserting') label =
-                            `Saving to database... (${currentCount.toLocaleString()}/${prog.total ? prog.total.toLocaleString() : '?'})`;
-                        document.getElementById('syncProgressLabel').innerText = label;
-                    } else if (isAsync || (btnEl.disabled && btnEl.innerHTML.includes('Syncing'))) {
-                        noProgressCount++;
-                        if (noProgressCount >= 2) {
-                            clearInterval(syncInterval);
-                            try {
-                                const logRes = await fetch(
-                                `/sync/logs?entity=${currentSyncEntity}&limit=1`);
-                                const logData = await logRes.json();
-                                const latest = logData.logs && logData.logs[0];
-                                if (latest && latest.status === 'success') {
-                                    document.getElementById('syncProgressBar').style.width = '100%';
-                                    document.getElementById('syncProgressPercent').innerText = '100%';
-                                    document.getElementById('syncStageLabel').innerText = 'Completed!';
-                                    document.getElementById('syncProgressLabel').innerText = 'Synchronization finished successfully';
-                                    
-                                    iconEl.className = 'w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600';
-                                    iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px]">check_circle</span>';
-                                    document.getElementById('syncStatETA').innerText = '00:00';
-                                    showToast(
-                                        `${currentSyncEntity}: ${(latest.records_inserted || 0).toLocaleString()} records synced in ${latest.duration_seconds}s`,
-                                        'success');
-                                    document.getElementById('syncStageLabel').innerText = 'Failed';
-                                    document.getElementById('syncProgressLabel').innerText = 'Synchronization stopped with error';
-                                    iconEl.className = 'w-8 h-8 rounded-full bg-red-50 flex items-center justify-center text-red-600';
-                                    iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px]">error</span>';
-                                    showToast(
-                                        `${currentSyncEntity}: ${latest.error_message || 'Sync failed'}`,
-                                        'error');
-                                } else {
-                                    showToast(`${currentSyncEntity}: Sync process finished.`, 'success');
-                                }
-                            } catch (e) {
-                                showToast(`${currentSyncEntity}: Sync process finished.`, 'success');
-                            }
-                            setTimeout(() => location.reload(), 1500);
-                        }
-                    }
-                } catch (e) {
-                    // Ignore poll errors
-                }
-            }, 2000);
-
             const payload = {
                 custom_filters: custom_filters,
                 save_filters: document.getElementById('saveFiltersCb').checked
@@ -646,34 +538,51 @@
             try {
                 const res = await fetch(`/sync/${currentSyncEntity}`, {
                     method: 'POST',
-                    headers: {
-                        'X-CSRF-TOKEN': csrfToken,
-                        'Accept': 'application/json',
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content, 'Accept': 'application/json', 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
 
                 const data = await res.json();
 
-                if (data.async) {
-                    isAsync = true;
-                    showToast(`${currentSyncEntity}: Sync dispatched to background queue.`, 'info');
-                    return;
-                }
-
-                clearInterval(syncInterval);
-                document.getElementById('syncProgressBar').style.width = '100%';
-                document.getElementById('syncProgressPercent').innerText = '100%';
-                document.getElementById('syncStageLabel').innerText = 'Completed!';
-                document.getElementById('syncProgressLabel').innerText = 'Synchronization finished successfully';
-                iconEl.className = 'w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600';
-                iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px]">check_circle</span>';
-                document.getElementById('syncStatETA').innerText = '00:00';
-
-                if (data.success) {
-                    showToast(`${currentSyncEntity}: ${data.records} records synced in ${data.duration}`, 'success');
-                    setTimeout(() => location.reload(), 1500);
+                if (data.success && data.job_id) {
+                    showToast(`${currentSyncEntity}: Synchronization has been queued.`, 'info');
+                    
+                    window.pollSyncJob(data.job_id, currentSyncEntity, {
+                        onProgress: (job) => {
+                            document.getElementById('syncProgressBar').style.width = `${job.progress}%`;
+                            document.getElementById('syncProgressPercent').innerText = `${job.progress}%`;
+                            
+                            const pRows = job.processed_rows || 0;
+                            const tRows = job.total_rows || 0;
+                            
+                            document.getElementById('syncStatProcessed').innerText = pRows.toLocaleString();
+                            document.getElementById('syncStageLabel').innerText = job.status === 'pending' ? 'Queued' : 'Syncing';
+                            document.getElementById('syncProgressLabel').innerText = `Processing... (${pRows.toLocaleString()} / ${tRows.toLocaleString()})`;
+                            
+                            if (job.duration) {
+                                document.getElementById('syncElapsedTime').innerText = job.duration;
+                            }
+                        },
+                        onSuccess: (job) => {
+                            document.getElementById('syncProgressBar').style.width = '100%';
+                            document.getElementById('syncProgressPercent').innerText = '100%';
+                            document.getElementById('syncStageLabel').innerText = 'Completed!';
+                            document.getElementById('syncProgressLabel').innerText = 'Synchronization finished successfully';
+                            iconEl.className = 'w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600';
+                            iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px]">check_circle</span>';
+                            
+                            setTimeout(() => location.reload(), 1500);
+                        },
+                        onError: (job) => {
+                            document.getElementById('syncStageLabel').innerText = 'Failed';
+                            document.getElementById('syncProgressLabel').innerText = 'Synchronization stopped with error';
+                            iconEl.className = 'w-8 h-8 rounded-full bg-red-50 flex items-center justify-center text-red-600';
+                            iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px]">error</span>';
+                            
+                            btnEl.disabled = false;
+                            btnEl.innerHTML = originalText;
+                        }
+                    });
                 } else {
                     if (data.error_type === 'connection_missing') {
                         if (typeof Swal !== 'undefined') {
@@ -683,9 +592,7 @@
                                 text: data.message,
                                 confirmButtonText: 'Periksa Pengaturan',
                                 confirmButtonColor: '#f59e0b'
-                            }).then(() => {
-                                window.location.href = '/settings';
-                            });
+                            }).then(() => window.location.href = '/settings');
                         } else {
                             alert(data.message);
                         }
@@ -697,8 +604,10 @@
                     document.getElementById('syncProgressContainer').classList.add('hidden');
                 }
             } catch (e) {
-                console.warn("Sync HTTP connection closed, but background process may still be running.", e);
-                showToast('Connection timeout. The sync process will continue in the background.', 'info');
+                showToast(`${currentSyncEntity}: ${e.message}`, 'error');
+                btnEl.disabled = false;
+                btnEl.innerHTML = originalText;
+                document.getElementById('syncProgressContainer').classList.add('hidden');
             }
         }
 
@@ -737,7 +646,7 @@
                 const res = await fetch(`/api/entities/${currentSyncEntity}/filters`, {
                     method: 'POST',
                     headers: {
-                        'X-CSRF-TOKEN': csrfToken,
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
                         'Accept': 'application/json',
                         'Content-Type': 'application/json'
                     },
@@ -851,8 +760,8 @@
             };
 
             try {
-                const res = await fetch(`/api/entities/${currentScheduleEntity}/schedule`, {
-                    method: 'POST',
+                const res = await fetch(`/api/scheduler/${currentScheduleEntity}`, {
+                    method: 'PUT',
                     headers: { 
                         'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content, 
                         'Accept': 'application/json',

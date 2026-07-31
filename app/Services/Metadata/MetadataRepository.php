@@ -5,7 +5,7 @@ namespace App\Services\Metadata;
 use App\Contracts\Metadata\MetadataRepositoryInterface;
 use App\Contracts\Metadata\MetadataCacheInterface;
 use App\Contracts\Metadata\DatabaseMetadataStorageInterface;
-use App\Services\Connections\ConnectionProviderFactory;
+use App\Services\Connections\ConnectionManager;
 use App\Services\EntityConfigService;
 use App\DTO\Metadata\MetadataResult;
 use App\DTO\Metadata\MetadataEntity;
@@ -20,7 +20,7 @@ class MetadataRepository implements MetadataRepositoryInterface
     public function __construct(
         private MetadataCacheInterface $cache,
         private DatabaseMetadataStorageInterface $databaseStore,
-        private ConnectionProviderFactory $providerFactory,
+        private ConnectionManager $connectionManager,
         private EntityConfigService $entityConfigService
     ) {}
 
@@ -86,11 +86,8 @@ class MetadataRepository implements MetadataRepositoryInterface
                 $sourceConnName = $config['source_connection'] ?? 'acumatica_default';
                 $odataEntity = $config['odata_entity'];
                 
-                $provider = $this->providerFactory->make($sourceConnName);
-                $connection = app(\App\Services\ConnectionService::class)->get($sourceConnName);
-                $credentials = $connection['credentials'] ?? [];
-                
-                $metadataNode = $provider->discoverStructure($credentials, $odataEntity);
+                // Use the newly dedicated method and discover structure through the ConnectionManager
+                $metadataNode = $this->connectionManager->discoverStructure($sourceConnName, $odataEntity);
                 $providerNetworkMs = round((microtime(true) - $tProvNetStart) * 1000);
                 
                 $tProvProcStart = microtime(true);
@@ -241,11 +238,7 @@ class MetadataRepository implements MetadataRepositoryInterface
                 $stats['provider_calls'] = 1;
                 
                 $tProvNetStart = microtime(true);
-                $provider = $this->providerFactory->make($connectionKey);
-                $connection = app(\App\Services\ConnectionService::class)->get($connectionKey);
-                $credentials = $connection['credentials'] ?? [];
-                
-                $metadataNode = $provider->discoverStructure($credentials, $table);
+                $metadataNode = $this->connectionManager->discoverStructure($connectionKey, $table);
                 $providerNetworkMs = round((microtime(true) - $tProvNetStart) * 1000);
                 
                 $tProvProcStart = microtime(true);

@@ -184,13 +184,39 @@ class SyncStateRepository implements SyncStateRepositoryInterface
     /**
      * Atomically acquire a distributed lock in the database.
      */
-    public function acquireLock(int $scheduleId, string $owner): bool
+    public function acquireLock(int $scheduleId, string $owner, int $ttlMinutes = 5): bool
     {
+        $now = Carbon::now();
+        $expiresAt = $now->copy()->addMinutes($ttlMinutes);
+
         $updated = SyncState::where('sync_schedule_id', $scheduleId)
-            ->whereNull('lock_owner')
+            ->where(function ($query) use ($now) {
+                $query->whereNull('lock_owner')
+                      ->orWhere('lock_expires_at', '<', $now);
+            })
             ->update([
                 'lock_owner' => $owner,
-                'lock_acquired_at' => Carbon::now(),
+                'lock_acquired_at' => $now,
+                'heartbeat_at' => $now,
+                'lock_expires_at' => $expiresAt,
+            ]);
+
+        return $updated > 0;
+    }
+
+    /**
+     * Heartbeat to extend the distributed lock TTL.
+     */
+    public function heartbeatLock(int $scheduleId, string $owner, int $ttlMinutes = 5): bool
+    {
+        $now = Carbon::now();
+        $expiresAt = $now->copy()->addMinutes($ttlMinutes);
+
+        $updated = SyncState::where('sync_schedule_id', $scheduleId)
+            ->where('lock_owner', $owner)
+            ->update([
+                'heartbeat_at' => $now,
+                'lock_expires_at' => $expiresAt,
             ]);
 
         return $updated > 0;
@@ -206,6 +232,8 @@ class SyncStateRepository implements SyncStateRepositoryInterface
             ->update([
                 'lock_owner' => null,
                 'lock_acquired_at' => null,
+                'heartbeat_at' => null,
+                'lock_expires_at' => null,
             ]);
 
         return $updated > 0;
@@ -218,6 +246,10 @@ class SyncStateRepository implements SyncStateRepositoryInterface
     {
         return SyncState::where('sync_schedule_id', $scheduleId)
             ->whereNotNull('lock_owner')
+            ->where(function ($query) {
+                $query->whereNull('lock_expires_at')
+                      ->orWhere('lock_expires_at', '>=', Carbon::now());
+            })
             ->exists();
     }
 

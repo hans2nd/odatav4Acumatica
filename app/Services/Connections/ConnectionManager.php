@@ -31,6 +31,14 @@ class ConnectionManager
      */
     public function getProvider(string $connectionKey): ConnectionProviderInterface
     {
+        return $this->providerForConnection($connectionKey);
+    }
+
+    /**
+     * Resolves a connection by key, determines its type, and instantiates the provider.
+     */
+    public function providerForConnection(string $connectionKey): ConnectionProviderInterface
+    {
         $connection = $this->getConnectionModel($connectionKey);
         return $this->factory->make($connection->type);
     }

@@ -1,1 +1,2 @@
-<?php phpinfo(); ?>
+<?php
+// Deleted for security reasons

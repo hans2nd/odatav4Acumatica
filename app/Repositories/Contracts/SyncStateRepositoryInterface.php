@@ -80,7 +80,12 @@ interface SyncStateRepositoryInterface
     /**
      * Atomically acquire a distributed lock in the database.
      */
-    public function acquireLock(int $scheduleId, string $owner): bool;
+    public function acquireLock(int $scheduleId, string $owner, int $ttlMinutes = 5): bool;
+
+    /**
+     * Heartbeat to extend the distributed lock TTL.
+     */
+    public function heartbeatLock(int $scheduleId, string $owner, int $ttlMinutes = 5): bool;
 
     /**
      * Release a previously acquired distributed lock.

@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Jobs\SyncAllJob;
 use App\Jobs\SyncEntityJob;
 use App\Models\SyncLog;
 use App\Services\AcumaticaODataService;
@@ -33,7 +32,6 @@ class SyncController extends Controller
      */
     public function syncAll(): JsonResponse
     {
-        // Validate all connections before dispatching
         $entities = config('acumatica.entities', []);
         $connectionService = app(\App\Services\ConnectionService::class);
         $invalidEntities = [];
@@ -54,88 +52,85 @@ class SyncController extends Controller
             ], 400);
         }
 
-        if ($this->queueWorker->isAsyncQueue()) {
-            SyncAllJob::dispatch();
-            $this->queueWorker->startBackgroundWorker();
+        $sorted = collect($entities)->sortBy(fn ($e) => ($e['type'] ?? '') === 'master' ? 0 : 1);
+        $jobIds = [];
 
-            return response()->json([
-                'success' => true,
-                'async' => true,
-                'message' => 'Sync All has been dispatched to the queue. Monitor progress on the dashboard.',
+        foreach ($sorted as $key => $config) {
+            $jobRecord = \App\Models\SyncJob::create([
+                'entity' => $key,
+                'status' => \App\Models\SyncJob::STATUS_PENDING,
+                'progress' => 0,
             ]);
+
+            SyncEntityJob::dispatch($key, [], 'manual', $jobRecord->id);
+            $jobIds[] = $jobRecord->id;
         }
-
-        // Fallback: synchronous execution
-        set_time_limit(0);
-
-        // Release session lock so the frontend can remain responsive
-        if (request()->hasSession()) {
-            request()->session()->save();
-        }
-
+        
         try {
-            $results = $this->syncService->syncAll();
+            $this->queueWorker->startBackgroundWorker();
+        } catch (\Throwable $e) {}
 
-            $summary = [];
-            foreach ($results as $key => $log) {
-                $summary[] = [
-                    'entity' => $key,
-                    'status' => $log->status,
-                    'records' => $log->records_inserted,
-                    'duration' => $log->duration_seconds . 's',
-                    'error' => $log->error_message,
-                ];
-            }
-
-            $totalRecords = collect($results)->sum(fn($l) => $l->records_inserted);
-            $failedCount = collect($results)->where('status', 'failed')->count();
-
-            return response()->json([
-                'success' => $failedCount === 0,
-                'message' => $failedCount === 0
-                    ? "Sync completed: {$totalRecords} total records."
-                    : "Sync completed with {$failedCount} error(s).",
-                'results' => $summary,
-            ]);
-
-        } catch (\Throwable $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Sync failed: ' . $e->getMessage(),
-            ], 500);
-        }
+        return response()->json([
+            'success' => true,
+            'status' => 'queued',
+            'message' => count($jobIds) . ' synchronization jobs have been queued.',
+            'job_ids' => $jobIds,
+        ], 202);
     }
 
-    public function stopQueue(int $id): JsonResponse
+    public function control(Request $request, int $id): JsonResponse
     {
         try {
             $log = SyncLog::find($id);
 
-            if (!$log || $log->status !== 'running') {
+            if (!$log) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Log not found or sync is not currently running.',
+                    'message' => 'Log not found.',
                 ], 404);
             }
 
-            // Signal running sync to abort specifically for this log ID
-            \Illuminate\Support\Facades\Cache::put("sync_abort_log_{$id}", true, 120);
+            $action = $request->input('action');
+            if (!in_array($action, ['pause', 'resume', 'stop', 'cancel'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid action.',
+                ], 400);
+            }
 
-            // Mark this specific log as failed immediately
-            $log->update([
-                'status' => 'failed',
-                'error_message' => 'Aborted manually by user.',
-                'completed_at' => now()
-            ]);
+            // Signal running sync
+            \Illuminate\Support\Facades\Cache::put("sync_control_log_{$id}", $action, 3600);
+
+            // Give immediate UI feedback
+            if ($action === 'resume') {
+                $log->update(['status' => 'running']);
+                \Illuminate\Support\Facades\Cache::forget("sync_control_log_{$id}");
+            } elseif ($action === 'pause') {
+                $log->update(['status' => 'paused', 'current_stage' => 'Pause Requested']);
+            } elseif ($action === 'stop' || $action === 'cancel') {
+                $log->update(['status' => 'stopped', 'current_stage' => 'Stop Requested']);
+                
+                // We also proactively clear the sync state lock if possible so user can restart immediately
+                try {
+                    $schedule = \App\Models\SyncSchedule::where('entity_key', $log->entity_key)->first();
+                    if ($schedule) {
+                        $syncStateService = app(\App\Services\Contracts\SyncStateServiceInterface::class);
+                        $syncStateService->failSynchronization($schedule->id);
+                        $syncStateService->releaseSynchronizationLock($schedule->id, $log->session_id);
+                    }
+                } catch (\Exception $e) {
+                    // Ignore state errors if it's already released or failed
+                }
+            }
 
             return response()->json([
                 'success' => true,
-                'message' => "Queue stopped successfully for sync task #{$id}.",
+                'message' => "Signal '{$action}' sent to sync task #{$id}.",
             ]);
         } catch (\Throwable $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to stop queue: ' . $e->getMessage(),
+                'message' => 'Failed to send control signal: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -177,54 +172,24 @@ class SyncController extends Controller
             ], 400);
         }
 
-        // Dispatch to queue for async processing
-        if ($this->queueWorker->isAsyncQueue()) {
-            // Initialize progress cache before dispatching so frontend can start polling
-            \Illuminate\Support\Facades\Cache::put("sync_progress_{$entity}", [
-                'current' => 0,
-                'total' => null,
-                'status' => 'queued',
-            ], 3600);
+        $jobRecord = \App\Models\SyncJob::create([
+            'entity' => $entity,
+            'status' => \App\Models\SyncJob::STATUS_PENDING,
+            'progress' => 0,
+        ]);
 
-            SyncEntityJob::dispatch($entity, $customFilters);
-            $this->queueWorker->startBackgroundWorker();
-
-            return response()->json([
-                'success' => true,
-                'async' => true,
-                'entity' => $entity,
-                'message' => "Sync for {$entity} has been dispatched to the queue.",
-            ]);
-        }
-
-        // Fallback: synchronous execution
-        set_time_limit(0);
-        ini_set('memory_limit', '1024M');
-        ignore_user_abort(true);
-
-        // Release session lock so the frontend can poll /progress concurrently
-        if ($request->hasSession()) {
-            $request->session()->save();
-        }
-
+        SyncEntityJob::dispatch($entity, $customFilters, 'manual', $jobRecord->id);
+        
         try {
-            $log = $this->syncService->syncEntity($entity, $customFilters);
+            $this->queueWorker->startBackgroundWorker();
+        } catch (\Throwable $e) {}
 
-            return response()->json([
-                'success' => $log->status === 'success',
-                'entity' => $entity,
-                'status' => $log->status,
-                'records' => $log->records_inserted,
-                'duration' => $log->duration_seconds . 's',
-                'error' => $log->error_message,
-            ]);
-
-        } catch (\Throwable $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], 500);
-        }
+        return response()->json([
+            'success' => true,
+            'status' => 'queued',
+            'message' => 'Synchronization has been queued.',
+            'job_id' => $jobRecord->id,
+        ], 202);
     }
 
     /**
@@ -247,71 +212,7 @@ class SyncController extends Controller
         return response()->json(['logs' => $logs]);
     }
 
-    /**
-     * Get current sync status (running jobs).
-     */
-    public function status(): JsonResponse
-    {
-        $running = SyncLog::running()->get();
 
-        $latestPerEntity = SyncLog::latestPerEntity()
-            ->orderByDesc('id')
-            ->get()
-            ->keyBy('entity_key');
-
-        return response()->json([
-            'running' => $running,
-            'latest' => $latestPerEntity,
-            'is_syncing' => $running->isNotEmpty(),
-        ]);
-    }
-
-    /**
-     * Send control signal to a running execution.
-     */
-    public function control(Request $request, int $logId): JsonResponse
-    {
-        $log = SyncLog::findOrFail($logId);
-
-        $action = $request->input('action');
-        if (!in_array($action, ['pause', 'resume', 'stop', 'cancel'])) {
-            return response()->json(['success' => false, 'message' => 'Invalid action'], 400);
-        }
-
-        if (!in_array($log->status, ['running', 'paused'])) {
-            return response()->json(['success' => false, 'message' => "Cannot {$action} a job in {$log->status} state."], 400);
-        }
-
-        $signalKey = 'sync_control_log_' . $logId;
-
-        if ($action === 'resume') {
-            \Illuminate\Support\Facades\Cache::forget($signalKey);
-        } else {
-            \Illuminate\Support\Facades\Cache::put($signalKey, $action, 3600); // Signal valid for 1 hour
-        }
-
-        // Optimistically update the UI status
-        $message = "Execution successfully signaled to {$action}.";
-
-        return response()->json([
-            'success' => true,
-            'message' => $message,
-            'status' => $action === 'resume' ? 'running' : ($action === 'pause' ? 'paused' : $action)
-        ]);
-    }
-
-    /**
-     * Get real-time sync progress for an entity.
-     */
-    public function progress(string $entity): JsonResponse
-    {
-        $progress = \Illuminate\Support\Facades\Cache::get("sync_progress_{$entity}");
-
-        return response()->json([
-            'success' => true,
-            'progress' => $progress
-        ]);
-    }
 
     /**
      * Logs page view.

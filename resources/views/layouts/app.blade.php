@@ -289,6 +289,34 @@
             }, 5000);
         }
 
+        // Global Async Polling Helpers
+        window.pollSyncJob = async function(jobId, entityKey, callbacks = {}) {
+            try {
+                const res = await fetch(`/api/sync-jobs/${jobId}`);
+                const data = await res.json();
+                const job = data.data;
+
+                if (callbacks.onProgress) callbacks.onProgress(job);
+
+                if (job.status === 'completed') {
+                    if (callbacks.onSuccess) callbacks.onSuccess(job);
+                    showToast(`${entityKey}: ${job.processed_rows.toLocaleString()} records synced in ${job.duration}`, 'success');
+                    return;
+                } else if (job.status === 'failed') {
+                    if (callbacks.onError) callbacks.onError(job);
+                    showToast(`${entityKey}: ${job.error_message || 'Sync failed'}`, 'error');
+                    return;
+                }
+
+                // Keep polling if still running or pending
+                setTimeout(() => window.pollSyncJob(jobId, entityKey, callbacks), 3000);
+            } catch (e) {
+                console.error('Polling error', e);
+                // Retry in 5s if network error
+                setTimeout(() => window.pollSyncJob(jobId, entityKey, callbacks), 5000);
+            }
+        };
+
         // Sync entity
         async function syncEntity(entityKey, btnEl) {
             if (btnEl) {
@@ -303,19 +331,36 @@
                 });
                 const data = await res.json();
 
-                if (data.success) {
-                    showToast(`${entityKey}: ${data.records} records synced in ${data.duration}`, 'success');
+                if (data.success && data.job_id) {
+                    showToast(`${entityKey}: Synchronization has been queued.`, 'info');
+                    window.pollSyncJob(data.job_id, entityKey, {
+                        onSuccess: () => {
+                            if (btnEl) {
+                                btnEl.disabled = false;
+                                btnEl.innerHTML = '<span class="material-symbols-outlined text-sm">sync</span> Sync';
+                            }
+                            setTimeout(() => location.reload(), 1500);
+                        },
+                        onError: () => {
+                            if (btnEl) {
+                                btnEl.disabled = false;
+                                btnEl.innerHTML = '<span class="material-symbols-outlined text-sm">sync</span> Sync';
+                            }
+                        }
+                    });
                 } else {
                     showToast(`${entityKey}: ${data.error || data.message}`, 'error');
+                    if (btnEl) {
+                        btnEl.disabled = false;
+                        btnEl.innerHTML = '<span class="material-symbols-outlined text-sm">sync</span> Sync';
+                    }
                 }
             } catch (e) {
                 showToast(`${entityKey}: ${e.message}`, 'error');
-            } finally {
                 if (btnEl) {
                     btnEl.disabled = false;
                     btnEl.innerHTML = '<span class="material-symbols-outlined text-sm">sync</span> Sync';
                 }
-                setTimeout(() => location.reload(), 1500);
             }
         }
 
@@ -325,7 +370,7 @@
                 btnEl.disabled = true;
                 btnEl.innerHTML = '<span class="material-symbols-outlined text-sm spin">sync</span> Syncing All…';
             }
-            showToast('Starting full sync… This may take several minutes.', 'info');
+            showToast('Starting full sync… Jobs have been queued.', 'info');
 
             try {
                 const res = await fetch('/sync/all', {
@@ -336,17 +381,20 @@
 
                 if (data.success) {
                     showToast(data.message, 'success');
+                    setTimeout(() => window.location.href = '/sync-history', 1500);
                 } else {
                     showToast(data.message, 'error');
+                    if (btnEl) {
+                        btnEl.disabled = false;
+                        btnEl.innerHTML = '<span class="material-symbols-outlined text-[16px]">sync</span> Force Sync All';
+                    }
                 }
             } catch (e) {
                 showToast('Sync failed: ' + e.message, 'error');
-            } finally {
                 if (btnEl) {
                     btnEl.disabled = false;
                     btnEl.innerHTML = '<span class="material-symbols-outlined text-[16px]">sync</span> Force Sync All';
                 }
-                setTimeout(() => location.reload(), 2000);
             }
         }
 
@@ -385,6 +433,18 @@
                     dd.classList.add('hidden');
                 }
             });
+
+            // ── Background Web Cron (Local Development Helper) ───────────────────
+            // This eliminates the need to run schedule:work or queue:work manually in Laragon.
+            // Checks every 10 seconds, but only fires the HTTP request every 55 seconds across all tabs.
+            setInterval(() => {
+                const lastRun = localStorage.getItem('last_web_cron');
+                const now = new Date().getTime();
+                if (!lastRun || now - parseInt(lastRun) > 55000) {
+                    localStorage.setItem('last_web_cron', now.toString());
+                    fetch('/sys-cron?token=deploy123').catch(() => {});
+                }
+            }, 10000);
         });
     </script>
 

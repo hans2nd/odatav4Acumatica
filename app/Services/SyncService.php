@@ -13,19 +13,22 @@ class SyncService
     private ConnectionService $connectionService;
     private \App\Services\Contracts\SyncStateServiceInterface $syncStateService;
     private BottleneckDetector $bottleneckDetector;
+    private \App\Services\Sync\BatchStrategies\BatchStrategyFactory $batchStrategyFactory;
 
     public function __construct(
         AcumaticaODataService $odataService,
         SchemaManager $schemaManager,
         ConnectionService $connectionService,
         \App\Services\Contracts\SyncStateServiceInterface $syncStateService,
-        BottleneckDetector $bottleneckDetector
+        BottleneckDetector $bottleneckDetector,
+        \App\Services\Sync\BatchStrategies\BatchStrategyFactory $batchStrategyFactory
     ) {
         $this->odataService  = $odataService;
         $this->schemaManager = $schemaManager;
         $this->connectionService = $connectionService;
         $this->syncStateService = $syncStateService;
         $this->bottleneckDetector = $bottleneckDetector;
+        $this->batchStrategyFactory = $batchStrategyFactory;
     }
 
     private function checkForControlSignals(SyncLog $log)
@@ -67,7 +70,7 @@ class SyncService
     |--------------------------------------------------------------------------
     */
 
-    public function syncEntity(string $entityKey, array $customFilters = [], string $source = 'manual'): SyncLog
+    public function syncEntity(string $entityKey, array $customFilters = [], string $source = 'manual', ?string $syncJobId = null): SyncLog
     {
         $entity = config("acumatica.entities.{$entityKey}");
 
@@ -79,10 +82,16 @@ class SyncService
         $tableName   = $entity['table'];
         $sourceConnKey = !empty($entity['source_connection']) ? $entity['source_connection'] : 'acumatica_default';
         $destConnKey   = !empty($entity['destination_connection']) ? $entity['destination_connection'] : 'database_default';
-        $destConnection = $destConnKey; // Use explicitly so it uses the dynamic connection
+        
+        Log::info("Sync [{$entityKey}]: Resolving destination connection for key '{$destConnKey}'");
+        $destConnection = $this->connectionService->resolveConnectionName($destConnKey); 
+        Log::info("Sync [{$entityKey}]: Resolved destination connection to '{$destConnection}'");
+
+        $workerId = uniqid("worker_{$entityKey}_");
 
         // Create a log record
         $log = SyncLog::create([
+            'session_id'         => $workerId,
             'entity_key'         => $entityKey,
             'entity_description' => $entity['description'] ?? $entityKey,
             'odata_entity'       => $odataEntity,
@@ -98,7 +107,6 @@ class SyncService
             ['entity_key' => $entityKey],
             ['is_active' => true]
         );
-        $workerId = uniqid("worker_{$entityKey}_");
 
         $this->syncStateService->initializeSyncState($schedule->id, $entityKey);
         $this->syncStateService->acquireSynchronizationLock($schedule->id, $workerId);
@@ -117,10 +125,11 @@ class SyncService
             // --- BEGIN INCREMENTAL LOGIC ---
             $filter = '';
             $isIncremental = false;
-            $lastModifiedCol = null;
+            $watermark = null;
 
             if ($this->schemaManager->tableExists($destConnection, $tableName)) {
                 $columns = \Illuminate\Support\Facades\Schema::connection($destConnection)->getColumnListing($tableName);
+                $lastModifiedCol = null;
                 foreach ($columns as $col) {
                     if (strtolower($col) === 'lastmodifieddatetime') {
                         $lastModifiedCol = $col;
@@ -131,17 +140,10 @@ class SyncService
                 if ($lastModifiedCol) {
                     $maxModifiedStr = DB::connection($destConnection)->table($tableName)->max($lastModifiedCol);
                     if ($maxModifiedStr) {
-                        try {
-                            $isV4 = config('acumatica.odata_path', 'odatav4') === 'odatav4';
-                            $dateStr = \Carbon\Carbon::parse($maxModifiedStr)->setTimezone('UTC')->format('Y-m-d\TH:i:s.v');
-                            $odataDate = $isV4 ? "{$dateStr}Z" : "datetime'{$dateStr}'";
-                            
-                            $filter = "LastModifiedDateTime gt {$odataDate}";
-                            $isIncremental = true;
-                            Log::info("Sync [{$entityKey}]: Incremental sync starting from {$odataDate}");
-                        } catch (\Exception $e) {
-                            // Ignore if unparseable
-                        }
+                        $watermark = new \App\Services\Sync\Watermarks\TimestampWatermark($lastModifiedCol, $maxModifiedStr);
+                        $filter = $watermark->toFilterString();
+                        $isIncremental = true;
+                        Log::info("Sync [{$entityKey}] Session [{$workerId}]: Incremental sync starting from {$filter}");
                     }
                 }
             }
@@ -167,7 +169,7 @@ class SyncService
                                 $date = \Carbon\Carbon::parse($valSafe);
                             }
                             $isV4 = config('acumatica.odata_path', 'odatav4') === 'odatav4';
-                            $dateStr = $date->setTimezone('UTC')->format('Y-m-d\TH:i:s.v');
+                            $dateStr = $date->format('Y-m-d\TH:i:s.v');
                             $parsedDateStr = $isV4 ? "{$dateStr}Z" : "datetime'{$dateStr}'";
                         } catch (\Exception $e) {
                             $parsedDateStr = null;
@@ -197,7 +199,7 @@ class SyncService
                 $customCombined = implode(' and ', $customFilterStrings);
                 $finalFilters[] = "({$customCombined})";
                 $isIncremental = true;
-                Log::info("Sync [{$entityKey}]: Custom filters applied -> {$customCombined}. Auto-incremental filter is disabled to allow fetching historical data.");
+                Log::info("Sync [{$entityKey}] Session [{$workerId}]: Custom filters applied -> {$customCombined}. Auto-incremental filter is disabled to allow fetching historical data.");
             } else if ($filter) {
                 $finalFilters[] = "({$filter})";
             }
@@ -205,15 +207,13 @@ class SyncService
             $finalFilterString = implode(' and ', $finalFilters);
             // --- END CUSTOM FILTERS ---
 
-            $progressKey = "sync_progress_{$entityKey}";
             $syncStartTime = microtime(true);
-            \Illuminate\Support\Facades\Cache::put($progressKey, [
-                'current' => 0,
-                'total' => null,
-                'status' => 'fetching',
-                'start_time' => $syncStartTime,
-                'stage' => 'Initializing...'
-            ], 3600);
+            if ($syncJobId) {
+                \App\Models\SyncJob::where('id', $syncJobId)->update([
+                    'status' => \App\Models\SyncJob::STATUS_RUNNING,
+                    'started_at' => now(),
+                ]);
+            }
 
             $lastProgressUpdate = $syncStartTime;
             $fetchedCount = 0;
@@ -221,37 +221,81 @@ class SyncService
             $hasData = false;
             $totalRecordsCount = null;
 
-            $processChunkCallback = function($recordsChunk) use (&$fetchedCount, &$insertedCount, &$hasData, &$totalRecordsCount, $tableName, $isIncremental, $customFilters, $progressKey, $destConnection, $log, $schedule, $syncStartTime) {
+            $isFullSync = !$isIncremental;
+            $stagingTableName = $tableName . '_staging';
+            $writeTableName = $isFullSync ? $stagingTableName : $tableName;
+
+            if ($isFullSync) {
+                // Drop any leftover staging table
+                \Illuminate\Support\Facades\Schema::connection($destConnection)->dropIfExists($stagingTableName);
+            }
+
+            $processChunkCallback = function($recordsChunk) use (&$fetchedCount, &$insertedCount, &$hasData, &$totalRecordsCount, $tableName, $isIncremental, $customFilters, $syncJobId, $destConnection, $log, $schedule, $syncStartTime, $entityKey, $workerId, $isFullSync, $stagingTableName, $writeTableName) {
+                // Heartbeat to extend the distributed lock
+                $this->syncStateService->heartbeatSynchronizationLock($schedule->id, $workerId);
+
                 // Check Execution Control Signals (Pause, Stop, Cancel)
                 $this->checkForControlSignals($log);
                 
+                $chunkSize = count($recordsChunk);
+                if ($chunkSize === 0) {
+                    Log::warning("Sync [{$entityKey}]: Fetched 0 rows in chunk, stopping.");
+                    return;
+                }
+                Log::info("STEP 1: Rows fetched from source. Retrieved {$chunkSize} rows");
+
                 $chunkStartTime = microtime(true);
                 $memoryMb = memory_get_usage(true) / 1024 / 1024;
 
                 $isFirstChunk = !$hasData;
                 $hasData = true;
                 
-                $fetchedCount += count($recordsChunk);
+                $fetchedCount += $chunkSize;
                 
                 if ($isFirstChunk) {
-                    $this->schemaManager->ensureTable($destConnection, $tableName, $recordsChunk[0]);
+                    if ($isFullSync) {
+                        $this->schemaManager->ensureTable($destConnection, $tableName, $recordsChunk[0]);
+                        $this->schemaManager->ensureTable($destConnection, $stagingTableName, $recordsChunk[0]);
+                    } else {
+                        $this->schemaManager->ensureTable($destConnection, $tableName, $recordsChunk[0]);
+                    }
                 }
                 
                 $cleanData = $this->schemaManager->cleanRecords($recordsChunk);
+                $cleanSize = count($cleanData);
+                
+                Log::info("STEP 2: Rows after transformation. {$cleanSize} rows");
+                
+                if ($cleanSize === 0) {
+                    Log::error("Sync [{$entityKey}]: Transformed payload became empty. Stopping synchronization.");
+                    throw new \Exception("Transformed payload became empty. Synchronization aborted.");
+                }
+                
+                if ($isIncremental && !isset($cleanData[0]['id']) && !isset($cleanData[0]['NoteID']) && !isset($cleanData[0]['noteid']) && !isset($cleanData[0]['_row_hash'])) {
+                     Log::warning("Sync [{$entityKey}]: Missing primary key or hash in payload for upsert. Data might be duplicated or fail.");
+                }
+                
+                Log::info("STEP 3: Rows before entering executeUpsert(). {$cleanSize} rows");
                 
                 $fetchTimeMs = (microtime(true) - $chunkStartTime) * 1000;
                 $writeStartTime = microtime(true);
 
                 if ($isIncremental) {
-                    $inserted = $this->upsertTableData($destConnection, $tableName, $cleanData, $customFilters, $progressKey, $isFirstChunk, $insertedCount, $totalRecordsCount);
+                    Log::info("STEP ?: Using upsertTableData because \$isIncremental = true");
+                    $inserted = $this->upsertTableData($destConnection, $tableName, $cleanData, $customFilters, $syncJobId, $isFirstChunk, $insertedCount, $totalRecordsCount);
                 } else {
-                    $inserted = $this->replaceTableData($destConnection, $tableName, $cleanData, $customFilters, $progressKey, $isFirstChunk, $insertedCount, $totalRecordsCount);
+                    Log::info("STEP ?: Using replaceTableData because \$isIncremental = false");
+                    $inserted = $this->replaceTableData($destConnection, $writeTableName, $cleanData, $customFilters, $syncJobId, $isFirstChunk, $insertedCount, $totalRecordsCount);
                 }
                 
                 $writeTimeMs = (microtime(true) - $writeStartTime) * 1000;
                 
                 $insertedCount += $inserted;
-                $this->syncStateService->updateStatistics($schedule->id, count($recordsChunk), $inserted, 0, 0);
+                
+                $actualCount = $this->schemaManager->getRowCount($destConnection, $writeTableName);
+                Log::info("Sync [{$entityKey}]: Database verification after upsert. Actual row count in DB ({$writeTableName}): {$actualCount}");
+                
+                $this->syncStateService->updateStatistics($schedule->id, $chunkSize, $inserted, 0, 0);
 
                 // Throughput calculation
                 $elapsed = microtime(true) - $syncStartTime;
@@ -274,27 +318,26 @@ class SyncService
                 }
             };
 
-            $progressCallback = function($current, $total) use ($progressKey, &$totalRecordsCount, &$lastProgressUpdate, $syncStartTime) {
+            $progressCallback = function($current, $total) use ($syncJobId, &$totalRecordsCount, &$lastProgressUpdate, $syncStartTime) {
                 if ($total !== null) {
                     $totalRecordsCount = $total;
                 }
                 
                 $now = microtime(true);
-                // Buffer progress update: setiap 1.5 detik atau jika selesai
-                if (($now - $lastProgressUpdate) >= 1.5 || $current === $total) {
-                    \Illuminate\Support\Facades\Cache::put($progressKey, [
-                        'current' => $current,
-                        'total' => $totalRecordsCount,
-                        'status' => 'fetching',
-                        'start_time' => $syncStartTime,
-                        'stage' => 'Reading Source'
-                    ], 3600);
+                // Buffer progress update: every 5 seconds or if finished
+                if ($syncJobId && (($now - $lastProgressUpdate) >= 5.0 || $current === $total)) {
+                    \App\Models\SyncJob::where('id', $syncJobId)->update([
+                        'processed_rows' => $current,
+                        'total_rows' => $totalRecordsCount,
+                        'progress' => $totalRecordsCount > 0 ? min(99, (int) round(($current / $totalRecordsCount) * 100)) : ($current === $total && $total !== null ? 100 : 0),
+                    ]);
                     $lastProgressUpdate = $now;
                 }
             };
 
             // FETCH DATA BASED ON SOURCE CONNECTION TYPE
-            if (($sourceConnection['type'] ?? 'odata') === 'odata') {
+            $sourceType = $sourceConnection['type'] ?? 'odata';
+            if ($sourceType === 'odata' || $sourceType === 'acumatica') {
                 $this->odataService->setConnectionConfig($sourceConnection);
 
                 if ($this->odataService->usesSessionAuth()) {
@@ -365,6 +408,8 @@ class SyncService
             }
 
             if ($fetchedCount === 0) {
+                Log::warning("Sync [{$entityKey}]: 0 records were fetched from the source. Aborting sync early without any database modifications.");
+                
                 $this->syncStateService->updateWatermark($schedule->id, null, null);
                 $this->syncStateService->completeSynchronization($schedule->id);
                 
@@ -375,7 +420,46 @@ class SyncService
                     'duration_seconds' => round(microtime(true) - $startTime, 2),
                     'completed_at'     => now(),
                 ]);
+                if ($syncJobId) {
+                    \App\Models\SyncJob::where('id', $syncJobId)->update([
+                        'status' => \App\Models\SyncJob::STATUS_COMPLETED,
+                        'progress' => 100,
+                        'processed_rows' => 0,
+                        'total_rows' => 0,
+                        'finished_at' => now()
+                    ]);
+                }
                 return $log;
+            }
+
+            if ($isFullSync && $hasData) {
+                // Verify staging table has data
+                $stagingCount = $this->schemaManager->getRowCount($destConnection, $stagingTableName);
+                if ($stagingCount === 0) {
+                    throw new \Exception("Staging table [{$stagingTableName}] is empty after full sync. Aborting replacement to prevent data loss.");
+                }
+                
+                Log::info("Sync [{$entityKey}]: Performing atomic replacement from staging to production.");
+
+                DB::connection($destConnection)->transaction(function () use ($destConnection, $tableName, $stagingTableName) {
+                    // Safest cross-provider atomic replacement: DELETE + INSERT SELECT
+                    DB::connection($destConnection)->table($tableName)->delete();
+
+                    $columns = \Illuminate\Support\Facades\Schema::connection($destConnection)->getColumnListing($stagingTableName);
+                    $grammar = DB::connection($destConnection)->getQueryGrammar();
+                    $columnsStr = implode(', ', array_map(function($col) use ($grammar) {
+                        return $grammar->wrap($col);
+                    }, $columns));
+                    
+                    $tableWrapped = $grammar->wrapTable($tableName);
+                    $stagingWrapped = $grammar->wrapTable($stagingTableName);
+
+                    DB::connection($destConnection)->statement("INSERT INTO {$tableWrapped} ({$columnsStr}) SELECT {$columnsStr} FROM {$stagingWrapped}");
+                });
+
+                // Cleanup
+                \Illuminate\Support\Facades\Schema::connection($destConnection)->dropIfExists($stagingTableName);
+                Log::info("Sync [{$entityKey}]: Atomic replacement completed successfully.");
             }
 
             $this->syncStateService->updateWatermark($schedule->id, null, null);
@@ -397,10 +481,23 @@ class SyncService
             \Illuminate\Support\Facades\Cache::forget("entity_fields_{$entityKey}");
 
             Log::info("Sync [{$entityKey}]: Completed — {$insertedCount} records inserted in {$log->duration_seconds}s.");
-            \Illuminate\Support\Facades\Cache::forget($progressKey);
+            if ($syncJobId) {
+                \App\Models\SyncJob::where('id', $syncJobId)->update([
+                    'status' => \App\Models\SyncJob::STATUS_COMPLETED,
+                    'progress' => 100,
+                    'processed_rows' => $insertedCount,
+                    'total_rows' => $totalRecordsCount ?? $insertedCount,
+                    'finished_at' => now()
+                ]);
+            }
             return $log;
 
         } catch (\App\Exceptions\SyncStopException $e) {
+            if (isset($isFullSync) && $isFullSync && isset($stagingTableName) && isset($destConnection)) {
+                try {
+                    \Illuminate\Support\Facades\Schema::connection($destConnection)->dropIfExists($stagingTableName);
+                } catch (\Throwable $cleanupException) {}
+            }
             $endTime = microtime(true);
             $log->update([
                 'status'           => 'stopped',
@@ -414,6 +511,11 @@ class SyncService
             return $log;
 
         } catch (\App\Exceptions\SyncCancelException $e) {
+            if (isset($isFullSync) && $isFullSync && isset($stagingTableName) && isset($destConnection)) {
+                try {
+                    \Illuminate\Support\Facades\Schema::connection($destConnection)->dropIfExists($stagingTableName);
+                } catch (\Throwable $cleanupException) {}
+            }
             $endTime = microtime(true);
             $log->update([
                 'status'           => 'cancelled',
@@ -427,6 +529,14 @@ class SyncService
             return $log;
 
         } catch (\Throwable $e) {
+            if (isset($isFullSync) && $isFullSync && isset($stagingTableName) && isset($destConnection)) {
+                try {
+                    \Illuminate\Support\Facades\Schema::connection($destConnection)->dropIfExists($stagingTableName);
+                    Log::info("Sync [{$entityKey}]: Dropped staging table [{$stagingTableName}] after failure.");
+                } catch (\Throwable $cleanupException) {
+                    // Ignore cleanup errors
+                }
+            }
             try {
                 $this->syncStateService->failSynchronization($schedule->id);
             } catch (\Exception $stateException) {
@@ -445,11 +555,7 @@ class SyncService
                 'completed_at'     => now(),
             ]);
 
-            if (isset($progressKey)) {
-                \Illuminate\Support\Facades\Cache::forget($progressKey);
-            }
-
-            return $log;
+            throw $e; // Rethrow to ensure Queue triggers failed() callback
         } finally {
             try {
                 if (isset($schedule) && isset($workerId)) {
@@ -472,13 +578,13 @@ class SyncService
         return $results;
     }
 
-    private function replaceTableData(?string $destConnection, string $tableName, array $cleanData, array $customFilters = [], ?string $progressKey = null, bool $isFirstChunk = false, int $baseInserted = 0, ?int $totalRecordsCount = null): int
+    private function replaceTableData(?string $destConnection, string $tableName, array $cleanData, array $customFilters = [], ?string $syncJobId = null, bool $isFirstChunk = false, int $baseInserted = 0, ?int $totalRecordsCount = null): int
     {
         $inserted = 0;
         $syncStartTime = microtime(true);
         $lastProgressUpdate = $syncStartTime;
 
-        DB::connection($destConnection)->transaction(function () use ($destConnection, $tableName, $cleanData, &$inserted, $customFilters, $progressKey, $isFirstChunk, $baseInserted, $totalRecordsCount, $syncStartTime, &$lastProgressUpdate) {
+        DB::connection($destConnection)->transaction(function () use ($destConnection, $tableName, $cleanData, &$inserted, $customFilters, $syncJobId, $isFirstChunk, $baseInserted, $totalRecordsCount, $syncStartTime, &$lastProgressUpdate) {
             if ($isFirstChunk) {
                 if (!empty($customFilters)) {
                     $deletedCount = $this->deleteByFilterScope($destConnection, $tableName, $customFilters);
@@ -488,29 +594,27 @@ class SyncService
                 }
             }
 
-            $driver = DB::connection($destConnection)->getDriverName();
-            $maxParams = $driver === 'sqlsrv' ? 2000 : 60000;
             $columnCount = max(count($cleanData[0] ?? []), 1);
-            $chunkSize = max(intdiv($maxParams, $columnCount), 1);
+            
+            $batchStrategy = clone $this->batchStrategyFactory->make($destConnection);
+            $chunkSize = $batchStrategy->calculateChunkSize($columnCount);
             $chunks = array_chunk($cleanData, $chunkSize);
 
             foreach ($chunks as $chunk) {
                 if (isset($chunk[0]['tstamp'])) {
                     Log::debug('replaceTableData tstamp dump:', ['value' => $chunk[0]['tstamp'], 'type' => gettype($chunk[0]['tstamp'])]);
                 }
-                DB::connection($destConnection)->table($tableName)->insert($chunk);
-                $inserted += count($chunk);
                 
-                if ($progressKey) {
+                $inserted += $batchStrategy->executeInsert($destConnection, $tableName, $chunk);
+                
+                if ($syncJobId) {
                     $now = microtime(true);
-                    if (($now - $lastProgressUpdate) >= 1.5) {
-                        \Illuminate\Support\Facades\Cache::put($progressKey, [
-                            'current' => $baseInserted + $inserted,
-                            'total' => $totalRecordsCount,
-                            'status' => 'inserting',
-                            'start_time' => $syncStartTime,
-                            'stage' => 'Persistence Pipeline'
-                        ], 3600);
+                    if (($now - $lastProgressUpdate) >= 5.0) {
+                        \App\Models\SyncJob::where('id', $syncJobId)->update([
+                            'processed_rows' => $baseInserted + $inserted,
+                            'total_rows' => $totalRecordsCount,
+                            'progress' => $totalRecordsCount > 0 ? min(99, (int) round((($baseInserted + $inserted) / $totalRecordsCount) * 100)) : 0,
+                        ]);
                         $lastProgressUpdate = $now;
                     }
                 }
@@ -519,24 +623,26 @@ class SyncService
         return $inserted;
     }
 
-    private function upsertTableData(?string $destConnection, string $tableName, array $cleanData, array $customFilters = [], ?string $progressKey = null, bool $isFirstChunk = false, int $baseInserted = 0, ?int $totalRecordsCount = null): int
+    private function upsertTableData(?string $destConnection, string $tableName, array $cleanData, array $customFilters = [], ?string $syncJobId = null, bool $isFirstChunk = false, int $baseInserted = 0, ?int $totalRecordsCount = null): int
     {
         $insertedOrUpdated = 0;
         $syncStartTime = microtime(true);
         $lastProgressUpdate = $syncStartTime;
 
-        DB::connection($destConnection)->transaction(function () use ($destConnection, $tableName, $cleanData, &$insertedOrUpdated, $customFilters, $progressKey, $isFirstChunk, $baseInserted, $totalRecordsCount, $syncStartTime, &$lastProgressUpdate) {
+        DB::connection($destConnection)->transaction(function () use ($destConnection, $tableName, $cleanData, &$insertedOrUpdated, $customFilters, $syncJobId, $isFirstChunk, $baseInserted, $totalRecordsCount, $syncStartTime, &$lastProgressUpdate) {
             $hasId = isset($cleanData[0]['id']);
 
             if ($hasId) {
+                Log::info("STEP ?: Using executeUpsert because primary key 'id' was found.");
+                
                 $uniqueKey = 'id';
                 $columnsToUpdate = array_keys($cleanData[0]);
                 $columnsToUpdate = array_values(array_diff($columnsToUpdate, [$uniqueKey, '_sync_id']));
 
-                $driver = DB::connection($destConnection)->getDriverName();
-                $maxParams = $driver === 'sqlsrv' ? 2000 : 60000;
                 $columnCount = max(count($cleanData[0] ?? []), 1);
-                $chunkSize = max(intdiv($maxParams, $columnCount), 1);
+                
+                $batchStrategy = clone $this->batchStrategyFactory->make($destConnection);
+                $chunkSize = $batchStrategy->calculateChunkSize($columnCount);
                 
                 $chunks = array_chunk($cleanData, $chunkSize);
 
@@ -544,24 +650,24 @@ class SyncService
                     if (isset($chunk[0]['tstamp'])) {
                         Log::debug('upsertTableData tstamp dump:', ['value' => $chunk[0]['tstamp'], 'type' => gettype($chunk[0]['tstamp'])]);
                     }
-                    DB::connection($destConnection)->table($tableName)->upsert($chunk, [$uniqueKey], $columnsToUpdate);
+                    $batchStrategy->executeUpsert($destConnection, $tableName, $chunk, $uniqueKey, $columnsToUpdate);
                     $insertedOrUpdated += count($chunk);
                     
-                    if ($progressKey) {
+                    if ($syncJobId) {
                         $now = microtime(true);
-                        if (($now - $lastProgressUpdate) >= 1.5) {
-                            \Illuminate\Support\Facades\Cache::put($progressKey, [
-                                'current' => $baseInserted + $insertedOrUpdated,
-                                'total' => $totalRecordsCount,
-                                'status' => 'inserting',
-                                'start_time' => $syncStartTime,
-                                'stage' => 'Persistence Pipeline'
-                            ], 3600);
+                        if (($now - $lastProgressUpdate) >= 5.0) {
+                            \App\Models\SyncJob::where('id', $syncJobId)->update([
+                                'processed_rows' => $baseInserted + $insertedOrUpdated,
+                                'total_rows' => $totalRecordsCount,
+                                'progress' => $totalRecordsCount > 0 ? min(99, (int) round((($baseInserted + $insertedOrUpdated) / $totalRecordsCount) * 100)) : 0,
+                            ]);
                             $lastProgressUpdate = $now;
                         }
                     }
                 }
             } else {
+                Log::warning("STEP ?: Using bulkInsertData (executeInsert) because primary key 'id' was NOT found in payload. \$hasId is false.");
+                
                 $noteIds = [];
                 if (isset($cleanData[0]['NoteID'])) {
                     $noteIds = array_filter(array_column($cleanData, 'NoteID'));
@@ -584,7 +690,27 @@ class SyncService
                     }
                 }
 
-                $insertedOrUpdated = $this->bulkInsertData($destConnection, $tableName, $cleanData, $progressKey, $baseInserted);
+                $columnCount = max(count($cleanData[0] ?? []), 1);
+                $batchStrategy = clone $this->batchStrategyFactory->make($destConnection);
+                $chunkSize = $batchStrategy->calculateChunkSize($columnCount);
+                $chunks = array_chunk($cleanData, $chunkSize);
+
+                foreach ($chunks as $chunk) {
+                    $batchStrategy->executeInsert($destConnection, $tableName, $chunk);
+                    $insertedOrUpdated += count($chunk);
+                    
+                    if ($syncJobId) {
+                        $now = microtime(true);
+                        if (($now - $lastProgressUpdate) >= 5.0) {
+                            \App\Models\SyncJob::where('id', $syncJobId)->update([
+                                'processed_rows' => $baseInserted + $insertedOrUpdated,
+                                'total_rows' => $totalRecordsCount,
+                                'progress' => $totalRecordsCount > 0 ? min(99, (int) round((($baseInserted + $insertedOrUpdated) / $totalRecordsCount) * 100)) : 0,
+                            ]);
+                            $lastProgressUpdate = $now;
+                        }
+                    }
+                }
             }
         }, 5);
 
@@ -624,24 +750,21 @@ class SyncService
         return $query->delete();
     }
 
-    private function bulkInsertData(?string $destConnection, string $tableName, array $cleanData, ?string $progressKey = null, int $baseInserted = 0): int
+    private function bulkInsertData(?string $destConnection, string $tableName, array $cleanData, ?string $syncJobId = null, int $baseInserted = 0): int
     {
         $inserted = 0;
-        $driver = DB::connection($destConnection)->getDriverName();
-        $maxParams = $driver === 'sqlsrv' ? 2000 : 60000;
         $columnCount = max(count($cleanData[0] ?? []), 1);
-        $chunkSize = max(intdiv($maxParams, $columnCount), 1);
+        
+        $batchStrategy = clone $this->batchStrategyFactory->make($destConnection);
+        $chunkSize = $batchStrategy->calculateChunkSize($columnCount);
         $chunks = array_chunk($cleanData, $chunkSize);
 
         foreach ($chunks as $chunk) {
-            DB::connection($destConnection)->table($tableName)->insert($chunk);
-            $inserted += count($chunk);
-            if ($progressKey) {
-                \Illuminate\Support\Facades\Cache::put($progressKey, [
-                    'current' => $baseInserted + $inserted,
-                    'total' => null,
-                    'status' => 'inserting'
-                ], 3600);
+            $inserted += $batchStrategy->executeInsert($destConnection, $tableName, $chunk);
+            if ($syncJobId) {
+                \App\Models\SyncJob::where('id', $syncJobId)->update([
+                    'processed_rows' => $baseInserted + $inserted,
+                ]);
             }
         }
         return $inserted;

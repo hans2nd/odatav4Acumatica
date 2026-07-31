@@ -58,7 +58,7 @@ class SyncStateService implements SyncStateServiceInterface
 
     public function failSynchronization(int $scheduleId): bool
     {
-        $this->validateSyncState($scheduleId, ['Running']);
+        $this->validateSyncState($scheduleId, ['Running', 'Paused']);
         return $this->repository->markFailed($scheduleId);
     }
 
@@ -96,28 +96,28 @@ class SyncStateService implements SyncStateServiceInterface
         return $this->repository->resetRetry($scheduleId);
     }
 
-    public function acquireSynchronizationLock(int $scheduleId, string $owner): bool
+    public function acquireSynchronizationLock(int $scheduleId, string $owner, int $ttlMinutes = 5): bool
     {
-        if ($this->repository->isLocked($scheduleId)) {
+        $acquired = $this->repository->acquireLock($scheduleId, $owner, $ttlMinutes);
+        if (!$acquired) {
             $state = $this->loadSyncState($scheduleId);
             if ($state->lock_owner !== $owner) {
                 throw new SyncStateLockException("Lock for schedule ID {$scheduleId} is already held by {$state->lock_owner}.");
             }
-            return true;
-        }
-        
-        $acquired = $this->repository->acquireLock($scheduleId, $owner);
-        if (!$acquired) {
-            throw new SyncStateLockException("Failed to acquire lock for schedule ID {$scheduleId}.");
         }
         return true;
+    }
+
+    public function heartbeatSynchronizationLock(int $scheduleId, string $owner, int $ttlMinutes = 5): bool
+    {
+        return $this->repository->heartbeatLock($scheduleId, $owner, $ttlMinutes);
     }
 
     public function releaseSynchronizationLock(int $scheduleId, string $owner): bool
     {
         $state = $this->loadSyncState($scheduleId);
         
-        if ($state->lock_owner !== $owner) {
+        if ($state->lock_owner && $state->lock_owner !== $owner) {
             throw new SyncStateLockException("Cannot release lock for schedule ID {$scheduleId}. Owned by {$state->lock_owner}, but {$owner} attempted release.");
         }
 
@@ -131,6 +131,11 @@ class SyncStateService implements SyncStateServiceInterface
 
     public function resetSynchronizationState(int $scheduleId): bool
     {
+        $state = $this->repository->findBySchedule($scheduleId);
+        if ($state && $state->lock_owner) {
+            $this->repository->releaseLock($scheduleId, $state->lock_owner);
+        }
+
         return $this->repository->updateStatus($scheduleId, 'Idle') &&
                $this->repository->updateWatermark($scheduleId, null, null) &&
                $this->repository->resetRetry($scheduleId);

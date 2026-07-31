@@ -9,6 +9,7 @@ class SyncLog extends Model
     protected $table = 'sync_logs';
 
     protected $fillable = [
+        'session_id',
         'entity_key',
         'entity_description',
         'odata_entity',

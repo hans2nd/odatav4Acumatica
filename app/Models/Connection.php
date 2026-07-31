@@ -22,7 +22,7 @@ class Connection extends Model
     ];
 
     protected $casts = [
-        'credentials'  => 'array',
+        'credentials'  => \App\Casts\EncryptedCredentials::class,
         'is_active'    => 'boolean',
         'is_connected' => 'boolean',
         'is_default'   => 'boolean',

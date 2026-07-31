@@ -23,7 +23,8 @@ interface SyncStateServiceInterface
     public function incrementRetry(int $scheduleId): int;
     public function resetRetry(int $scheduleId): bool;
     
-    public function acquireSynchronizationLock(int $scheduleId, string $owner): bool;
+    public function acquireSynchronizationLock(int $scheduleId, string $owner, int $ttlMinutes = 5): bool;
+    public function heartbeatSynchronizationLock(int $scheduleId, string $owner, int $ttlMinutes = 5): bool;
     public function releaseSynchronizationLock(int $scheduleId, string $owner): bool;
     public function checkSynchronizationStatus(int $scheduleId): string;
     

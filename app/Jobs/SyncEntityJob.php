@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Models\SyncJob;
 use App\Services\AcumaticaODataService;
 use App\Services\SyncService;
 use Illuminate\Bus\Queueable;
@@ -9,8 +10,8 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+
 use Illuminate\Support\Facades\Log;
-use Illuminate\Queue\Middleware\WithoutOverlapping;
 
 class SyncEntityJob implements ShouldQueue
 {
@@ -20,36 +21,60 @@ class SyncEntityJob implements ShouldQueue
      * Allow up to 30 minutes for very large entities (200K+ rows).
      */
     public int $timeout = 1800;
-    public int $tries = 1;
+    
+    /**
+     * Use exponential backoff for retries.
+     */
+    public int $tries = 3;
+    
+    /**
+     * Wait 60 seconds before retrying.
+     */
+    public int $backoff = 60;
 
     public function __construct(
         public string $entityKey,
         public array $customFilters = [],
-        public string $source = 'manual'
+        public string $source = 'manual',
+        public ?string $syncJobId = null
     ) {}
-
-    /**
-     * Get the middleware the job should pass through.
-     * Prevents multiple concurrent syncs for the same entity.
-     */
-    public function middleware()
-    {
-        return [
-            // Do not release back to queue; discard overlapping jobs to prevent queue pile-up.
-            (new WithoutOverlapping($this->entityKey))->dontRelease()
-        ];
-    }
 
     public function handle(SyncService $syncService): void
     {
-        Log::info("SyncEntityJob: Starting sync for [{$this->entityKey}]", [
-            'filters' => $this->customFilters,
-        ]);
+        $jobRecord = null;
+        if ($this->syncJobId) {
+            $jobRecord = SyncJob::find($this->syncJobId);
+        }
+
+        // Cache lock has been removed.
+        // We now rely on the robust database-based lock in SyncStateService.
 
         try {
-            $syncService->syncEntity($this->entityKey, $this->customFilters, $this->source);
+            if ($jobRecord) {
+                $jobRecord->update(['status' => SyncJob::STATUS_RUNNING, 'started_at' => now()]);
+            }
+
+            Log::info("SyncEntityJob: Starting sync for [{$this->entityKey}]", [
+                'filters' => $this->customFilters,
+                'job_id' => $this->syncJobId
+            ]);
+
+            $syncService->syncEntity($this->entityKey, $this->customFilters, $this->source, $this->syncJobId);
+            
+            // Note: SyncService->syncEntity() now guarantees it will update the SyncJob 
+            // with the accurate final processed_rows, or it will throw an exception.
+            // We no longer blindly mark it as completed here.
+        } catch (\Throwable $e) {
+            if ($jobRecord) {
+                $jobRecord->update([
+                    'status' => SyncJob::STATUS_FAILED,
+                    'error_message' => mb_substr($e->getMessage(), 0, 15000),
+                    'finished_at' => now(),
+                ]);
+            }
+            throw $e; // Rethrow so Laravel registers the queue job failure
         } finally {
-            // Release persistent HTTP resources after sync completes
+            // DB Lock is released in SyncService->syncEntity
             try {
                 app(AcumaticaODataService::class)->resetPersistentHttp();
             } catch (\Throwable $e) {
@@ -60,34 +85,18 @@ class SyncEntityJob implements ShouldQueue
 
     public function failed(?\Throwable $exception): void
     {
-        Log::error("SyncEntityJob: Failed for [{$this->entityKey}]", [
+        Log::error("SyncEntityJob: Failed catastrophically for [{$this->entityKey}]", [
             'message' => $exception?->getMessage(),
         ]);
 
-        $schedule = \App\Models\SyncSchedule::where('entity_key', $this->entityKey)->first();
-        if ($schedule) {
-            try {
-                app(\App\Services\Contracts\SyncStateServiceInterface::class)->failSynchronization($schedule->id);
-            } catch (\Exception $e) {
-                // Ignore
-            }
-        }
-
-        // Find the running log and mark it as failed
-        $runningLog = \App\Models\SyncLog::where('entity_key', $this->entityKey)
-            ->where('status', 'running')
-            ->orderBy('id', 'desc')
-            ->first();
-
-        if ($runningLog) {
-            $runningLog->update([
-                'status' => 'failed',
+        if ($this->syncJobId) {
+            SyncJob::where('id', $this->syncJobId)->update([
+                'status' => SyncJob::STATUS_FAILED,
                 'error_message' => 'Job failed catastrophically: ' . mb_substr($exception?->getMessage() ?? 'Unknown error', 0, 15000),
-                'completed_at' => now(),
+                'finished_at' => now(),
             ]);
         }
+        
 
-        // Ensure progress cache is cleared on failure
-        \Illuminate\Support\Facades\Cache::forget("sync_progress_{$this->entityKey}");
     }
 }

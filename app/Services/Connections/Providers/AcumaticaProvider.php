@@ -27,7 +27,8 @@ class AcumaticaProvider implements ConnectionProviderInterface
             new ConfigurationField('protocol', 'Protocol', 'select', true, [
                 'odata_v3' => 'OData v3 (Generic Inquiry)',
                 'odata_v4' => 'OData v4 (DAC)',
-            ], 'odata_v4')
+            ], 'odata_v4'),
+            new ConfigurationField('odata_url', 'Exact OData Base URL (Override)', 'text', false, null, '', 'Optional. Leave blank to auto-generate. If filled, this exact URL will be used (e.g. https://erp.com/PL/odatav4).'),
         ];
     }
 

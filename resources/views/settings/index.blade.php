@@ -676,6 +676,72 @@
 
             container.appendChild(wrapper);
         });
+
+        // Add Live URL Preview for Acumatica Connections
+        if (type === 'acumatica') {
+            const previewWrapper = document.createElement('div');
+            previewWrapper.className = 'mt-5 p-4 bg-brand-50 rounded-xl border border-brand-200 shadow-inner';
+            
+            const title = document.createElement('div');
+            title.className = 'text-label-md font-semibold text-brand-800 mb-1 flex items-center gap-1.5';
+            title.innerHTML = '<span class="material-symbols-outlined text-[16px]">link</span> Computed OData URL Preview';
+            
+            const urlText = document.createElement('div');
+            urlText.id = 'acm-url-preview';
+            urlText.className = 'text-body-sm text-brand-700 font-mono break-all font-semibold';
+            
+            const hintText = document.createElement('div');
+            hintText.id = 'acm-entity-hint';
+            hintText.className = 'text-[11px] text-brand-600/80 mt-1.5 italic';
+            
+            previewWrapper.appendChild(title);
+            previewWrapper.appendChild(urlText);
+            previewWrapper.appendChild(hintText);
+            container.appendChild(previewWrapper);
+            
+            const updatePreview = () => {
+                const baseUrlInput = document.getElementById('dyn_base_url');
+                const tenantInput = document.getElementById('dyn_tenant');
+                const protocolInput = document.getElementById('dyn_protocol');
+                const overrideInput = document.getElementById('dyn_odata_url');
+                
+                if (!baseUrlInput || !tenantInput || !protocolInput) return;
+                
+                let base = baseUrlInput.value.trim().replace(/\/$/, '');
+                let tenant = tenantInput.value.trim().replace(/^\/|\/$/g, '');
+                let protocol = protocolInput.value;
+                let endpoint = (protocol === 'odata_v3' || protocol === 'v3') ? 'odata' : 'odatav4';
+                
+                let finalUrl = '';
+                if (overrideInput && overrideInput.value.trim() !== '') {
+                    finalUrl = overrideInput.value.trim().replace(/\/$/, '');
+                } else {
+                    if (tenant !== '') {
+                        if (base.toLowerCase().endsWith('/' + tenant.toLowerCase())) {
+                            finalUrl = `${base}/${endpoint}`;
+                        } else {
+                            finalUrl = `${base}/${tenant}/${endpoint}`;
+                        }
+                    } else {
+                        finalUrl = `${base}/${endpoint}`;
+                    }
+                }
+                
+                document.getElementById('acm-url-preview').textContent = finalUrl || 'https://...';
+                document.getElementById('acm-entity-hint').textContent = `* Jika memanggil entity baru contoh INSite, pemanggilan sync nya menjadi: ${finalUrl}/INSite`;
+            };
+            
+            // Allow DOM to render inputs then bind events
+            setTimeout(() => {
+                ['dyn_base_url', 'dyn_tenant', 'dyn_odata_url'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) el.addEventListener('input', updatePreview);
+                });
+                const protoEl = document.getElementById('dyn_protocol');
+                if (protoEl) protoEl.addEventListener('change', updatePreview);
+                updatePreview();
+            }, 50);
+        }
     }
 
     function closeConnectionModal() {

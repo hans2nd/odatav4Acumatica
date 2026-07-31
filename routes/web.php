@@ -16,6 +16,42 @@ use App\Http\Controllers\SystemUtilityController;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Artisan;
 
+Route::get('/debug-sync/{entity}', function($entity) {
+    \Illuminate\Support\Facades\Artisan::call('cache:clear');
+    \Illuminate\Support\Facades\Artisan::call('config:clear');
+    \Illuminate\Support\Facades\Artisan::call('route:clear');
+    \Illuminate\Support\Facades\Artisan::call('view:clear');
+    return response()->json(['success' => true, 'message' => 'Caches cleared.']);
+});
+
+Route::get('/debug-odata/{entity}', function($entity) {
+    try {
+        $entityConfig = config("acumatica.entities.{$entity}");
+        if (!$entityConfig) return response()->json(['error' => 'Not found']);
+        
+        $odataService = app(\App\Services\AcumaticaODataService::class);
+        
+        $sourceConnKey = $entityConfig['source_connection'] ?? 'acumatica_default';
+        $sourceConnection = app(\App\Services\ConnectionService::class)->get($sourceConnKey);
+        if ($sourceConnection && ($sourceConnection['type'] ?? 'odata') === 'odata') {
+            $odataService->setConnectionConfig($sourceConnection);
+        }
+
+        // Login if needed
+        if ($odataService->usesSessionAuth()) {
+            $odataService->login();
+        }
+        
+        $result = $odataService->fetchPage($entityConfig['odata_entity'], 10, 0, '', true);
+        
+        return response()->json([
+            'raw_response' => $result
+        ]);
+    } catch (\Exception $e) {
+        return response()->json(['error' => $e->getMessage()]);
+    }
+});
+
 /*
 |--------------------------------------------------------------------------
 | System Utilities (VPS Deployment)
@@ -48,6 +84,13 @@ Route::middleware(['auth.basic'])->group(function () {
     Route::get('/data/{slug}', [\App\Http\Controllers\Api\DataEndpointController::class, 'getData'])->name('api.data.endpoint');
 });
 
+Route::get('/dev/debug-logs', function() {
+    $schedules = \App\Models\SyncSchedule::all();
+    return response()->json([
+        'schedules' => $schedules
+    ]);
+});
+
 Route::middleware(['auth'])->group(function () {
     /*
     |--------------------------------------------------------------------------
@@ -68,8 +111,20 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/sync/all', [SyncController::class, 'syncAll'])->name('sync.all');
         Route::post('/sync/control/{id}', [SyncController::class, 'control'])->name('sync.control');
         Route::post('/sync/{entity}', [SyncController::class, 'syncEntity'])->name('sync.entity');
-        Route::get('/sync/{entity}/progress', [SyncController::class, 'progress'])->name('sync.progress');
-        Route::get('/sync/status', [SyncController::class, 'status'])->name('sync.status');
+
+        // New Sync History & Progress MVP Routes
+        Route::get('/sync-history', [\App\Http\Controllers\SyncJobController::class, 'page'])->name('sync-history.index');
+        Route::get('/api/sync-jobs', [\App\Http\Controllers\SyncJobController::class, 'index'])->name('api.sync-jobs.index');
+        Route::get('/api/sync-jobs/active', [\App\Http\Controllers\SyncJobController::class, 'active'])->name('api.sync-jobs.active');
+        Route::get('/api/sync-jobs/{id}', [\App\Http\Controllers\SyncJobController::class, 'show'])->name('api.sync-jobs.show');
+        
+        // Scheduler MVP Routes
+        Route::get('/scheduler', [\App\Http\Controllers\ScheduleController::class, 'index'])->name('scheduler.index');
+        Route::get('/api/scheduler/{entity}', [\App\Http\Controllers\ScheduleController::class, 'show'])->name('api.scheduler.show');
+        Route::put('/api/scheduler/{entity}', [\App\Http\Controllers\ScheduleController::class, 'update'])->name('api.scheduler.update');
+        Route::patch('/api/scheduler/{entity}/toggle', [\App\Http\Controllers\ScheduleController::class, 'toggle'])->name('api.scheduler.toggle');
+        Route::post('/api/scheduler/preview', [\App\Http\Controllers\ScheduleController::class, 'preview'])->name('api.scheduler.preview');
+        Route::post('/api/scheduler/{entity}/run-now', [\App\Http\Controllers\ScheduleController::class, 'runNow'])->name('api.scheduler.run-now');
     });
 
     /*
@@ -101,7 +156,6 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/api/entities/{key}', [EntityController::class, 'show'])->name('api.entities.show');
         Route::post('/api/entities', [EntityController::class, 'store'])->name('api.entities.store');
         Route::put('/api/entities/{key}', [EntityController::class, 'update'])->name('api.entities.update');
-        Route::post('/api/entities/{key}/schedule', [EntityController::class, 'updateSchedule'])->name('api.entities.schedule');
         Route::delete('/api/entities/{key}', [EntityController::class, 'destroy'])->name('api.entities.destroy');
     });
 
