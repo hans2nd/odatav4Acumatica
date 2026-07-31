@@ -164,7 +164,7 @@ class ConnectionService
         $laravelConnName = 'dyn_' . $connKey;
 
         if (!config()->has("database.connections.{$laravelConnName}")) {
-            if ($type === 'local_env') {
+            if ($type === 'local_env' || $type === 'local') {
                 $defaultConn = config('database.default');
                 $mergedConfig = config("database.connections.{$defaultConn}");
             } else {
