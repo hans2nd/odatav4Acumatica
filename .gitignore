@@ -6,7 +6,7 @@
 # /storage/*.key
 # /storage/pail
 /scratch
-/vendor
+# /vendor
 .env
 .env.backup
 .env.production
