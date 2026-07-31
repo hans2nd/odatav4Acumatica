@@ -283,19 +283,17 @@ class ReportBuilderController extends Controller
      */
     private function generateCsv($query, array $columns, string $filePath): void
     {
-        $file = fopen($filePath, 'w');
-        fprintf($file, chr(0xEF) . chr(0xBB) . chr(0xBF)); // UTF-8 BOM
-        fputcsv($file, $columns);
+        $writer = \Spatie\SimpleExcel\SimpleExcelWriter::create($filePath)
+            ->addHeader($columns);
 
         foreach ($query->cursor() as $row) {
             $rowArray = [];
             foreach ($columns as $col) {
-                $rowArray[] = $row->{$col} ?? '';
+                $rowArray[$col] = $row->{$col} ?? '';
             }
-            fputcsv($file, $rowArray);
+            $writer->addRow($rowArray);
         }
-
-        fclose($file);
+        $writer->close();
     }
 
     /**
@@ -303,87 +301,32 @@ class ReportBuilderController extends Controller
      */
     private function generateExcel($query, array $columns, string $filePath, string $sheetTitle): void
     {
-        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
-        $sheet = $spreadsheet->getActiveSheet();
-        $sheet->setTitle(mb_substr($sheetTitle, 0, 31));
+        $writer = \Spatie\SimpleExcel\SimpleExcelWriter::create($filePath);
 
-        // Header row
-        $colIndex = 1;
-        foreach ($columns as $col) {
-            $sheet->setCellValue([$colIndex, 1], $col);
-            $colIndex++;
-        }
-
-        // Header style
-        $lastColLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex(count($columns));
-        $sheet->getStyle("A1:{$lastColLetter}1")->applyFromArray([
-            'font' => ['bold' => true, 'color' => ['rgb' => 'FFFFFF'], 'size' => 11],
-            'fill' => [
-                'fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID,
-                'startColor' => ['rgb' => '1F2937'],
-            ],
-            'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER],
-            'borders' => [
-                'allBorders' => [
-                    'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
-                    'color' => ['rgb' => 'D1D5DB'],
-                ],
-            ],
-        ]);
-
-        // Data rows
-        $rowNum = 2;
-        foreach ($query->cursor() as $row) {
-            $colIndex = 1;
-            foreach ($columns as $col) {
-                $sheet->setCellValue([$colIndex, $rowNum], $row->{$col} ?? '');
-                $colIndex++;
-            }
-            $rowNum++;
-        }
-
-        // Auto-size columns (limit to first 30 for performance) - disable for large exports
-        $isLargeExport = ($rowNum > 1500);
-
-        if (!$isLargeExport) {
-            foreach (array_slice($columns, 0, 30) as $i => $col) {
-                $letter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
-                $sheet->getColumnDimension($letter)->setAutoSize(true);
-            }
-        }
-
-        // Alternating row colors
-        if ($rowNum > 2) {
-            $dataRange = "A2:{$lastColLetter}" . ($rowNum - 1);
-            $sheet->getStyle($dataRange)->applyFromArray([
-                'borders' => [
-                    'allBorders' => [
-                        'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
-                        'color' => ['rgb' => 'E5E7EB'],
-                    ],
-                ],
-            ]);
-            
-            if (!$isLargeExport) {
-                for ($r = 2; $r < $rowNum; $r++) {
-                    if ($r % 2 === 0) {
-                        $sheet->getStyle("A{$r}:{$lastColLetter}{$r}")->applyFromArray([
-                            'fill' => [
-                                'fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID,
-                                'startColor' => ['rgb' => 'F9FAFB'],
-                            ],
-                        ]);
+        // Attempt to set sheet name using underlying Spout writer
+        try {
+            if (method_exists($writer, 'getWriter')) {
+                $spoutWriter = $writer->getWriter();
+                if (method_exists($spoutWriter, 'getCurrentSheet')) {
+                    $sheet = $spoutWriter->getCurrentSheet();
+                    $safeTitle = mb_substr($sheetTitle, 0, 31);
+                    if (method_exists($sheet, 'setName')) {
+                        $sheet->setName($safeTitle);
                     }
                 }
             }
+        } catch (\Throwable $e) {}
+
+        $writer->addHeader($columns);
+
+        foreach ($query->cursor() as $row) {
+            $rowArray = [];
+            foreach ($columns as $col) {
+                $rowArray[$col] = $row->{$col} ?? '';
+            }
+            $writer->addRow($rowArray);
         }
-
-        $sheet->freezePane('A2');
-        $sheet->setAutoFilter("A1:{$lastColLetter}1");
-
-        $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
-        $writer->save($filePath);
-        $spreadsheet->disconnectWorksheets();
+        $writer->close();
     }
 
     /**

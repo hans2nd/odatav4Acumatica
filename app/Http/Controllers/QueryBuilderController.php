@@ -306,6 +306,9 @@ class QueryBuilderController extends Controller
         $format  = $request->input('format');
 
         try {
+            ini_set('memory_limit', '512M');
+            ini_set('max_execution_time', '300'); // 5 minutes
+
             $connName = $this->connectionService->resolveConnectionName($connKey);
 
             if (!preg_match('/^\s*SELECT\s/i', $sql)) {
@@ -370,69 +373,45 @@ class QueryBuilderController extends Controller
 
     private function generateCsv(array $rows, array $columns, string $filePath): void
     {
-        $file = fopen($filePath, 'w');
-        fprintf($file, chr(0xEF) . chr(0xBB) . chr(0xBF));
-        fputcsv($file, $columns);
+        $writer = \Spatie\SimpleExcel\SimpleExcelWriter::create($filePath)
+            ->addHeader($columns);
 
         foreach ($rows as $row) {
             $rowArray = [];
             foreach ($columns as $col) {
-                $rowArray[] = $row[$col] ?? '';
+                $rowArray[$col] = $row[$col] ?? '';
             }
-            fputcsv($file, $rowArray);
+            $writer->addRow($rowArray);
         }
-
-        fclose($file);
+        $writer->close();
     }
 
     private function generateExcel(array $rows, array $columns, string $filePath): void
     {
-        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
-        $sheet = $spreadsheet->getActiveSheet();
-        $sheet->setTitle('Query Result');
+        $writer = \Spatie\SimpleExcel\SimpleExcelWriter::create($filePath);
 
-        $colIndex = 1;
-        foreach ($columns as $col) {
-            $sheet->setCellValue([$colIndex, 1], $col);
-            $colIndex++;
-        }
+        try {
+            if (method_exists($writer, 'getWriter')) {
+                $spoutWriter = $writer->getWriter();
+                if (method_exists($spoutWriter, 'getCurrentSheet')) {
+                    $sheet = $spoutWriter->getCurrentSheet();
+                    if (method_exists($sheet, 'setName')) {
+                        $sheet->setName('Query Result');
+                    }
+                }
+            }
+        } catch (\Throwable $e) {}
 
-        $lastColLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex(count($columns));
-        $sheet->getStyle("A1:{$lastColLetter}1")->applyFromArray([
-            'font' => ['bold' => true, 'color' => ['rgb' => 'FFFFFF'], 'size' => 11],
-            'fill' => [
-                'fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID,
-                'startColor' => ['rgb' => '1F2937'],
-            ],
-            'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER],
-        ]);
+        $writer->addHeader($columns);
 
-        $rowNum = 2;
         foreach ($rows as $row) {
-            $colIndex = 1;
+            $rowArray = [];
             foreach ($columns as $col) {
-                $sheet->setCellValue([$colIndex, $rowNum], $row[$col] ?? '');
-                $colIndex++;
+                $rowArray[$col] = $row[$col] ?? '';
             }
-            $rowNum++;
+            $writer->addRow($rowArray);
         }
-
-        // Auto-size columns (limit to first 30 for performance) - disable for large exports
-        $isLargeExport = ($rowNum > 1500);
-
-        if (!$isLargeExport) {
-            foreach (array_slice($columns, 0, 30) as $i => $col) {
-                $letter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
-                $sheet->getColumnDimension($letter)->setAutoSize(true);
-            }
-        }
-
-        $sheet->freezePane('A2');
-        $sheet->setAutoFilter("A1:{$lastColLetter}1");
-
-        $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
-        $writer->save($filePath);
-        $spreadsheet->disconnectWorksheets();
+        $writer->close();
     }
 
     private function formatBytes(int $bytes): string
