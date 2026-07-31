@@ -50,6 +50,24 @@ class SyncEntityJob implements ShouldQueue
         // We now rely on the robust database-based lock in SyncStateService.
 
         try {
+            if ($this->source === 'schedule') {
+                $schedule = \Illuminate\Support\Facades\DB::table('sync_schedules')
+                    ->where('entity_key', $this->entityKey)
+                    ->first();
+
+                if ($schedule && !$schedule->is_active) {
+                    Log::info("SyncEntityJob: Aborting scheduled sync for [{$this->entityKey}] because its schedule is inactive.");
+                    if ($jobRecord) {
+                        $jobRecord->update([
+                            'status' => SyncJob::STATUS_COMPLETED, 
+                            'finished_at' => now(), 
+                            'error_message' => 'Skipped: Schedule was deactivated before execution'
+                        ]);
+                    }
+                    return;
+                }
+            }
+
             if ($jobRecord) {
                 $jobRecord->update(['status' => SyncJob::STATUS_RUNNING, 'started_at' => now()]);
             }

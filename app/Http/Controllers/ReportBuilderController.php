@@ -161,7 +161,7 @@ class ReportBuilderController extends Controller
 
         try {
             ini_set('memory_limit', '512M');
-            ini_set('max_execution_time', '300'); // 5 minutes
+            ini_set('max_execution_time', '0'); // Unlimited for streaming
 
             $connName = $this->connectionService->resolveConnectionName($connKey);
 
@@ -204,56 +204,43 @@ class ReportBuilderController extends Controller
                 }
             }
 
-            // Generate file
-            $token = Str::random(32);
-            $exportDir = storage_path('app/exports');
-            if (!is_dir($exportDir)) {
-                mkdir($exportDir, 0755, true);
-            }
-
             $baseFilename = $table . '_' . now()->format('Ymd_His');
+            $downloadName = $baseFilename . ($format === 'xlsx' ? '.xlsx' : '.csv');
 
+            $writer = \Spatie\SimpleExcel\SimpleExcelWriter::streamDownload($downloadName);
+
+            // For Excel, attempt to set sheet name (spout underlying)
             if ($format === 'xlsx') {
-                $filePath = $exportDir . '/' . $baseFilename . '.xlsx';
-                $this->generateExcel($query, $validColumns, $filePath, $table);
-                $downloadName = $baseFilename . '.xlsx';
-            } else {
-                $filePath = $exportDir . '/' . $baseFilename . '.csv';
-                $this->generateCsv($query, $validColumns, $filePath);
-                $downloadName = $baseFilename . '.csv';
+                try {
+                    if (method_exists($writer, 'getWriter')) {
+                        $spoutWriter = $writer->getWriter();
+                        if (method_exists($spoutWriter, 'getCurrentSheet')) {
+                            $sheet = $spoutWriter->getCurrentSheet();
+                            if (method_exists($sheet, 'setName')) {
+                                $sheet->setName(mb_substr($table, 0, 31));
+                            }
+                        }
+                    }
+                } catch (\Throwable $e) {}
             }
 
-            // Check file size — zip if > 10MB
-            $fileSize = filesize($filePath);
-            $zipped = false;
+            $writer->addHeader($validColumns);
 
-            if ($fileSize > 10 * 1024 * 1024) {
-                $zipPath = $exportDir . '/' . $baseFilename . '.zip';
-                $zip = new \ZipArchive();
-                if ($zip->open($zipPath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) === true) {
-                    $zip->addFile($filePath, $downloadName);
-                    $zip->close();
-                    @unlink($filePath);
-                    $filePath = $zipPath;
-                    $downloadName = $baseFilename . '.zip';
-                    $fileSize = filesize($filePath);
-                    $zipped = true;
+            $count = 0;
+            foreach ($query->cursor() as $row) {
+                $rowArray = [];
+                foreach ($validColumns as $col) {
+                    $rowArray[$col] = $row->{$col} ?? '';
+                }
+                $writer->addRow($rowArray);
+                
+                $count++;
+                if ($count % 1000 === 0) {
+                    flush();
                 }
             }
 
-            // Store token mapping in cache (expires in 1 hour)
-            \Illuminate\Support\Facades\Cache::put("report_download_{$token}", [
-                'path'     => $filePath,
-                'filename' => $downloadName,
-            ], now()->addHour());
-
-            return response()->json([
-                'success'  => true,
-                'token'    => $token,
-                'filename' => $downloadName,
-                'size'     => $this->formatBytes($fileSize),
-                'zipped'   => $zipped,
-            ]);
+            return $writer->toBrowser();
         } catch (\Throwable $e) {
             Log::error('Report Builder prepare failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
             return response()->json(['success' => false, 'message' => 'Failed to prepare report: ' . $e->getMessage()], 500);

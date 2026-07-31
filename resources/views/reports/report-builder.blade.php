@@ -471,45 +471,76 @@
             errorEl.classList.add('hidden');
 
             try {
-                const baseUrl = "/api/report-builder/prepare";
-                const res = await fetch(baseUrl, {
-                    method: 'POST',
-                    headers: {
-                        'X-CSRF-TOKEN': csrfToken,
-                        'Accept': 'application/json',
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        connection: connKey,
-                        table,
-                        columns,
-                        format,
-                        filters
-                    }),
+                // Ensure hidden iframe exists
+                let iframe = document.getElementById('downloadFrame');
+                if (!iframe) {
+                    iframe = document.createElement('iframe');
+                    iframe.id = 'downloadFrame';
+                    iframe.name = 'downloadFrame';
+                    iframe.style.display = 'none';
+                    document.body.appendChild(iframe);
+                }
+
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = '/api/report-builder/prepare';
+                form.target = 'downloadFrame';
+                form.style.display = 'none';
+
+                // Add CSRF
+                const csrf = document.createElement('input');
+                csrf.type = 'hidden';
+                csrf.name = '_token';
+                csrf.value = csrfToken; // Note: Ensure csrfToken is globally defined
+                form.appendChild(csrf);
+
+                const addInput = (name, value) => {
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = name;
+                    input.value = value;
+                    form.appendChild(input);
+                };
+
+                addInput('connection', connKey);
+                addInput('table', table);
+                addInput('format', format);
+
+                columns.forEach(col => addInput('columns[]', col));
+
+                filters.forEach((f, i) => {
+                    addInput(`filters[${i}][field]`, f.field);
+                    addInput(`filters[${i}][operator]`, f.operator);
+                    addInput(`filters[${i}][value]`, f.value);
                 });
 
-                const data = await res.json();
+                document.body.appendChild(form);
+                form.submit();
+                document.body.removeChild(form);
 
-                if (data.success) {
-                    document.getElementById('rbResultFilename').textContent = data.filename;
-                    document.getElementById('rbResultSize').textContent = data.size;
-                    document.getElementById('rbResultZipped').classList.toggle('hidden', !data.zipped);
-                    document.getElementById('rbDownloadLink').href = `/api/report-builder/download/${data.token}`;
+                // Because form submission does not return a promise we can await for success/failure
+                // of the download, we will just assume success after a short delay and reset the UI.
+                setTimeout(() => {
+                    document.getElementById('rbResultFilename').textContent = table + (format === 'xlsx' ? '.xlsx' : '.csv');
+                    document.getElementById('rbResultSize').textContent = 'Streamed directly';
+                    document.getElementById('rbResultZipped').classList.add('hidden');
+                    
+                    // We can't provide a direct link anymore as it is streamed dynamically
+                    document.getElementById('rbDownloadLink').style.display = 'none';
+                    
                     result.classList.remove('hidden');
+                    
+                    btn.disabled = false;
+                    btn.innerHTML = '<span class="material-symbols-outlined text-[18px]">download</span> Prepare & Download';
+                    progress.classList.add('hidden');
+                }, 3000);
 
-                    // Auto-trigger download
-                    window.location.href = `/api/report-builder/download/${data.token}`;
-                } else {
-                    document.getElementById('rbErrorMsg').textContent = data.message || 'Failed to prepare report.';
-                    errorEl.classList.remove('hidden');
-                }
             } catch (e) {
-                document.getElementById('rbErrorMsg').textContent = 'Network error while preparing report.';
+                document.getElementById('rbErrorMsg').textContent = 'Error initiating download.';
                 errorEl.classList.remove('hidden');
-            } finally {
+                
                 btn.disabled = false;
-                btn.innerHTML =
-                    '<span class="material-symbols-outlined text-[18px]">download</span> Prepare & Download';
+                btn.innerHTML = '<span class="material-symbols-outlined text-[18px]">download</span> Prepare & Download';
                 progress.classList.add('hidden');
             }
         }
