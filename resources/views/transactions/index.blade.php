@@ -319,8 +319,19 @@
 
             loadingEl.classList.remove('hidden');
 
-            // Preserve current filters if refreshing
             let currentFiltersToRestore = defaultFilters;
+            if (typeof currentFiltersToRestore === 'string') {
+                try {
+                    currentFiltersToRestore = JSON.parse(currentFiltersToRestore);
+                    if (typeof currentFiltersToRestore === 'string') {
+                        currentFiltersToRestore = JSON.parse(currentFiltersToRestore);
+                    }
+                } catch(e) {
+                    console.warn("Failed to parse default filters:", e);
+                }
+            }
+
+            // Preserve current filters if refreshing
             if (refresh) {
                 const rows = document.querySelectorAll('.filter-row');
                 currentFiltersToRestore = [];
