@@ -88,6 +88,33 @@ class SystemUtilityController extends Controller
     }
 
     /**
+     * Clear Laravel Logs.
+     */
+    public function clearLogs(Request $request)
+    {
+        $token = $request->query('token');
+        if ($token !== 'deploy123') {
+            return $this->promptToken();
+        }
+
+        try {
+            $logPath = storage_path('logs');
+            $files = glob($logPath . '/*.log');
+            $deleted = 0;
+            foreach ($files as $file) {
+                if (is_file($file)) {
+                    // Empty the file instead of deleting it to prevent permission issues
+                    file_put_contents($file, '');
+                    $deleted++;
+                }
+            }
+            return $this->formatResponse('Logs Cleared Successfully', "Cleared contents of $deleted log file(s).");
+        } catch (\Exception $e) {
+            return $this->formatResponse('Error Clearing Logs', $e->getMessage(), true);
+        }
+    }
+
+    /**
      * Run an arbitrary artisan command.
      * Note: Colons (:) in URLs can sometimes cause issues, so you can pass dashes (-) which will be converted to colons if the command exists.
      */

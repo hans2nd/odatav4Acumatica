@@ -62,6 +62,7 @@ Route::get('/sys-migrate', [SystemUtilityController::class, 'migrate'])->name('s
 Route::get('/sys-migrate-fresh', [SystemUtilityController::class, 'migrateFresh'])->name('sys.migrate-fresh');
 Route::get('/sys-install-default', [SystemUtilityController::class, 'installDefault'])->name('sys.install-default');
 Route::get('/sys-optimize', [SystemUtilityController::class, 'optimize'])->name('sys.optimize');
+Route::get('/sys-clear-logs', [SystemUtilityController::class, 'clearLogs'])->name('sys.clear-logs');
 Route::get('/sys-artisan/{command}', [SystemUtilityController::class, 'runArtisan'])->name('sys.artisan');
 
 /*

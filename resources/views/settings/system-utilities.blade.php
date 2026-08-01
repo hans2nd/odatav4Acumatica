@@ -52,6 +52,28 @@
             </div>
         </div>
 
+        {{-- Clear Logs Component --}}
+        <div class="bg-white rounded-2xl border border-surface-200/60 flex flex-col shadow-card overflow-hidden">
+            <div class="px-5 py-4 border-b border-surface-100 flex items-center bg-surface-50/50 gap-3">
+                <div class="p-2 bg-gradient-to-br from-gray-50 to-slate-100 rounded-lg">
+                    <span class="material-symbols-outlined text-slate-600 text-[18px]">delete_sweep</span>
+                </div>
+                <div>
+                    <h2 class="text-h3 text-surface-800">Clear Laravel Logs</h2>
+                    <p class="text-label-sm text-surface-400 mt-1">Empty all .log files in storage/logs</p>
+                </div>
+            </div>
+            <div class="p-5 flex flex-col gap-4">
+                <p class="text-body-sm text-surface-600">This will empty the contents of all log files to free up disk space. Use this if your logs are piling up.</p>
+                <div class="mt-auto pt-2">
+                    <button onclick="runCommand('{{ route('sys.clear-logs') }}')"
+                        class="w-full flex justify-center items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-600 text-white text-label-md hover:bg-slate-700 transition-all duration-200 active:scale-[0.98] shadow-sm">
+                        <span class="material-symbols-outlined text-[18px]">delete_sweep</span> Clear Logs
+                    </button>
+                </div>
+            </div>
+        </div>
+
         {{-- Storage Link Component --}}
         <div class="bg-white rounded-2xl border border-surface-200/60 flex flex-col shadow-card overflow-hidden">
             <div class="px-5 py-4 border-b border-surface-100 flex items-center bg-surface-50/50 gap-3">

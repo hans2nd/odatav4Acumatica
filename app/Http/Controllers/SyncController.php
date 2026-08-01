@@ -52,7 +52,7 @@ class SyncController extends Controller
             ], 400);
         }
 
-        $sorted = collect($entities)->sortBy(fn ($e) => ($e['type'] ?? '') === 'master' ? 0 : 1);
+        $sorted = collect($entities)->sortBy(fn($e) => ($e['type'] ?? '') === 'master' ? 0 : 1);
         $jobIds = [];
 
         foreach ($sorted as $key => $config) {
@@ -65,10 +65,11 @@ class SyncController extends Controller
             SyncEntityJob::dispatch($key, [], 'manual', $jobRecord->id);
             $jobIds[] = $jobRecord->id;
         }
-        
+
         try {
             $this->queueWorker->startBackgroundWorker();
-        } catch (\Throwable $e) {}
+        } catch (\Throwable $e) {
+        }
 
         return response()->json([
             'success' => true,
@@ -109,7 +110,7 @@ class SyncController extends Controller
                 $log->update(['status' => 'paused', 'current_stage' => 'Pause Requested']);
             } elseif ($action === 'stop' || $action === 'cancel') {
                 $log->update(['status' => 'stopped', 'current_stage' => 'Stop Requested']);
-                
+
                 // We also proactively clear the sync state lock if possible so user can restart immediately
                 try {
                     $schedule = \App\Models\SyncSchedule::where('entity_key', $log->entity_key)->first();
@@ -142,55 +143,65 @@ class SyncController extends Controller
      */
     public function syncEntity(Request $request, string $entity): JsonResponse
     {
-        $config = config("acumatica.entities.{$entity}");
-        if (!$config) {
-            return response()->json([
-                'success' => false,
-                'message' => "Unknown entity: {$entity}",
-            ], 404);
-        }
-
-        // custom_filters should be an array of associative arrays: [['field' => 'X', 'operator' => 'eq', 'value' => 'Y']]
-        $customFilters = $request->input('custom_filters', []);
-
-        if ($request->boolean('save_filters')) {
-            \App\Models\SyncSchedule::updateOrCreate(
-                ['entity_key' => $entity],
-                ['custom_filters' => $customFilters]
-            );
-        }
-
-        // Validate Connection before dispatching
-        $sourceConnKey = !empty($config['source_connection']) ? $config['source_connection'] : 'acumatica_default';
-        $sourceConnection = app(\App\Services\ConnectionService::class)->get($sourceConnKey);
-
-        if (!$sourceConnection) {
-            return response()->json([
-                'success' => false,
-                'message' => "Koneksi tidak ditemukan! Data koneksi ({$sourceConnKey}) mungkin telah dihapus atau belum dikonfigurasi. Harap periksa menu Connection Management.",
-                'error_type' => 'connection_missing'
-            ], 400);
-        }
-
-        $jobRecord = \App\Models\SyncJob::create([
-            'entity' => $entity,
-            'status' => \App\Models\SyncJob::STATUS_PENDING,
-            'progress' => 0,
-        ]);
-
-        SyncEntityJob::dispatch($entity, $customFilters, 'manual', $jobRecord->id);
-        
         try {
-            $this->queueWorker->startBackgroundWorker();
-        } catch (\Throwable $e) {}
+            $config = config("acumatica.entities.{$entity}");
+            if (!$config) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Unknown entity: {$entity}",
+                ], 404);
+            }
 
-        return response()->json([
-            'success' => true,
-            'status' => 'queued',
-            'message' => 'Synchronization has been queued.',
-            'job_id' => $jobRecord->id,
-        ], 202);
+            // custom_filters should be an array of associative arrays: [['field' => 'X', 'operator' => 'eq', 'value' => 'Y']]
+            $customFilters = $request->input('custom_filters', []);
+
+            if ($request->boolean('save_filters')) {
+                \App\Models\SyncSchedule::updateOrCreate(
+                    ['entity_key' => $entity],
+                    ['custom_filters' => $customFilters]
+                );
+            }
+
+            // Validate Connection before dispatching
+            $sourceConnKey = !empty($config['source_connection']) ? $config['source_connection'] : 'acumatica_default';
+            $sourceConnection = app(\App\Services\ConnectionService::class)->get($sourceConnKey);
+
+            if (!$sourceConnection) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Koneksi tidak ditemukan! Data koneksi ({$sourceConnKey}) mungkin telah dihapus atau belum dikonfigurasi. Harap periksa menu Connection Management.",
+                    'error_type' => 'connection_missing'
+                ], 400);
+            }
+
+            $jobRecord = \App\Models\SyncJob::create([
+                'entity' => $entity,
+                'status' => \App\Models\SyncJob::STATUS_PENDING,
+                'progress' => 0,
+            ]);
+
+            SyncEntityJob::dispatch($entity, $customFilters, 'manual', $jobRecord->id);
+
+            try {
+                $this->queueWorker->startBackgroundWorker();
+            } catch (\Throwable $e) {
+            }
+
+            return response()->json([
+                'success' => true,
+                'status' => 'queued',
+                'message' => 'Synchronization has been queued.',
+                'job_id' => $jobRecord->id,
+            ]);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error("Failed to queue sync for {$entity}: " . $e->getMessage(), ['exception' => $e]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to start sync: ' . $e->getMessage()
+            ], 500);
+        }
     }
+
 
     /**
      * Get recent sync logs as JSON.
