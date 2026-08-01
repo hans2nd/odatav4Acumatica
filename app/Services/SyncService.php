@@ -380,7 +380,8 @@ class SyncService
             } else if (in_array($sourceConnection['type'], \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes())) {
                 // Relational DB Source
                 // Using Laravel's DB chunking
-                $query = DB::connection($sourceConnKey)->table($odataEntity);
+                $resolvedSourceConn = $this->connectionService->resolveConnectionName($sourceConnKey);
+                $query = DB::connection($resolvedSourceConn)->table($odataEntity);
                 
                 // Apply custom filters for DB sources
                 if (!empty($customFilters)) {
@@ -420,7 +421,7 @@ class SyncService
                     });
                 } catch (\Exception $e) {
                     // Fallback if no 'id' column. chunk() requires an orderBy clause
-                    $firstRow = DB::connection($sourceConnKey)->table($odataEntity)->first();
+                    $firstRow = DB::connection($resolvedSourceConn)->table($odataEntity)->first();
                     $firstCol = $firstRow ? array_key_first((array)$firstRow) : null;
                     if ($firstCol) {
                         $query->orderBy($firstCol);

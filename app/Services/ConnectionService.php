@@ -182,8 +182,13 @@ class ConnectionService
                 );
 
                 if ($type === 'sqlsrv') {
-                    $mergedConfig['encrypt'] = $mergedConfig['encrypt'] ?? 'no';
-                    $mergedConfig['trust_server_certificate'] = $mergedConfig['trust_server_certificate'] ?? 'true';
+                    $encrypt = isset($creds['encrypt']) ? $creds['encrypt'] : ($mergedConfig['encrypt'] ?? 'no');
+                    $trust = isset($creds['trust_server_certificate']) ? $creds['trust_server_certificate'] : ($mergedConfig['trust_server_certificate'] ?? true);
+                    
+                    // Laravel's SqlServerConnector handles booleans or 'yes'/'no' properly.
+                    // We ensure they are passed through to the dynamically built config.
+                    $mergedConfig['encrypt'] = $encrypt;
+                    $mergedConfig['trust_server_certificate'] = $trust;
                 }
             }
 
