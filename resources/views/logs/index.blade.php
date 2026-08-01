@@ -164,7 +164,11 @@
                         <span class="material-symbols-outlined text-[18px]">refresh</span>
                     </button>
                     <div class="h-6 w-px bg-surface-200 mx-1"></div>
-                    <button onclick="exportData('csv')" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 font-semibold text-label-sm transition-colors border border-emerald-200/50">
+                    <button onclick="openClearByDateModal()" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 font-semibold text-label-sm transition-colors border border-red-200/50 shadow-sm">
+                        <span class="material-symbols-outlined text-[16px]">calendar_today</span> Clear by Date
+                    </button>
+                    <div class="h-6 w-px bg-surface-200 mx-1"></div>
+                    <button onclick="exportData('csv')" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 font-semibold text-label-sm transition-colors border border-emerald-200/50 shadow-sm">
                         <span class="material-symbols-outlined text-[16px]">csv</span> Export CSV
                     </button>
                     <button onclick="exportData('excel')" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 font-semibold text-label-sm transition-colors shadow-sm">
@@ -173,10 +177,23 @@
                 </div>
             </div>
             
+            <!-- Bulk Actions Toolbar -->
+            <div id="bulkActionsToolbar" class="hidden px-5 py-3 bg-indigo-50 border-b border-surface-200 flex flex-wrap items-center justify-between gap-4 transition-all">
+                <span class="text-label-md font-semibold text-indigo-900"><span id="selectedCount">0</span> log(s) selected</span>
+                <div class="flex items-center gap-2">
+                    <button onclick="sendBulkAction('resume')" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-label-sm font-medium transition-colors shadow-sm"><span class="material-symbols-outlined text-[16px]">play_arrow</span> Resume</button>
+                    <button onclick="sendBulkAction('pause')" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-label-sm font-medium transition-colors shadow-sm"><span class="material-symbols-outlined text-[16px]">pause</span> Pause</button>
+                    <button onclick="sendBulkAction('stop')" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-label-sm font-medium transition-colors shadow-sm"><span class="material-symbols-outlined text-[16px]">stop</span> Stop</button>
+                    <div class="w-px h-5 bg-indigo-200 mx-1"></div>
+                    <button onclick="sendBulkAction('delete')" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-label-sm font-medium transition-colors shadow-sm"><span class="material-symbols-outlined text-[16px]">delete</span> Delete Selected</button>
+                </div>
+            </div>
+            
             <div class="overflow-x-auto">
                 <table class="w-full text-left border-collapse">
                     <thead>
                         <tr class="border-b border-surface-100 bg-surface-50/50">
+                            <th class="py-3 px-4 w-12"><input type="checkbox" id="selectAllCheckbox" onchange="toggleAllCheckboxes(this)" class="rounded text-indigo-600 focus:ring-indigo-500 border-surface-300 w-4 h-4 cursor-pointer"></th>
                             <th class="py-3 px-4 text-label-xs text-surface-500 font-bold uppercase tracking-wider w-16">ID</th>
                             <th class="py-3 px-4 text-label-xs text-surface-500 font-bold uppercase tracking-wider">Entity</th>
                             <th class="py-3 px-4 text-label-xs text-surface-500 font-bold uppercase tracking-wider">Metrics</th>
@@ -309,6 +326,37 @@
 .btn-action { @apply inline-flex items-center justify-center w-8 h-8 rounded-lg transition-all outline-none focus:ring-2 focus:ring-surface-400/20 shadow-sm border; }
 </style>
 
+<!-- Clear By Date Modal -->
+<div id="clearDateModal" class="fixed inset-0 z-[100] hidden flex items-center justify-center bg-surface-900/60 backdrop-blur-sm transition-opacity opacity-0">
+    <div class="bg-white rounded-2xl w-full max-w-md shadow-2xl mx-4 transform transition-transform scale-95" id="clearDateModalContent">
+        <div class="px-6 py-4 border-b border-surface-100 flex justify-between items-center bg-surface-50 rounded-t-2xl">
+            <h3 class="text-h4 text-surface-800 flex items-center gap-2">
+                <span class="material-symbols-outlined text-red-600">delete_sweep</span> Clear Logs by Date
+            </h3>
+            <button type="button" onclick="closeClearByDateModal()" class="text-surface-400 hover:text-surface-600 transition-colors">
+                <span class="material-symbols-outlined">close</span>
+            </button>
+        </div>
+        <div class="px-6 py-5">
+            <p class="text-body-sm text-surface-600 mb-4">Select a date range to permanently delete sync logs. This action cannot be undone.</p>
+            <form id="clearDateForm" class="space-y-4">
+                <div>
+                    <label class="block text-label-sm font-medium text-surface-700 mb-1">From Date</label>
+                    <input type="date" id="clearDateFrom" required class="w-full bg-surface-50 border border-surface-200 rounded-xl text-body-sm px-3 py-2 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500">
+                </div>
+                <div>
+                    <label class="block text-label-sm font-medium text-surface-700 mb-1">To Date</label>
+                    <input type="date" id="clearDateTo" required class="w-full bg-surface-50 border border-surface-200 rounded-xl text-body-sm px-3 py-2 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500">
+                </div>
+            </form>
+        </div>
+        <div class="px-6 py-4 border-t border-surface-100 flex justify-end gap-3 bg-surface-50 rounded-b-2xl">
+            <button type="button" onclick="closeClearByDateModal()" class="px-4 py-2 rounded-xl text-label-sm font-semibold text-surface-600 hover:bg-surface-200 transition-colors">Cancel</button>
+            <button type="button" onclick="submitClearByDate()" class="px-4 py-2 rounded-xl bg-red-600 text-white text-label-sm font-semibold hover:bg-red-700 transition-colors shadow-sm">Delete Logs</button>
+        </div>
+    </div>
+</div>
+
 <script>
     let currentPage = 1;
     let refreshInterval = null;
@@ -428,6 +476,9 @@
         tableBody.innerHTML = data.data.map(log => `
             <tr class="hover:bg-surface-50/50 transition-colors">
                 <td class="py-3 px-4 align-top">
+                    <input type="checkbox" value="${log.id}" class="row-checkbox rounded text-indigo-600 focus:ring-indigo-500 border-surface-300 w-4 h-4 cursor-pointer mt-0.5" onchange="updateBulkToolbar()">
+                </td>
+                <td class="py-3 px-4 align-top">
                     <span class="font-mono text-label-md text-surface-600 block mb-1">#${log.id}</span>
                     <span class="inline-flex items-center gap-1 text-[11px] font-semibold uppercase text-surface-400">
                         <span class="material-symbols-outlined text-[14px]">${log.source === 'schedule' ? 'schedule' : 'bolt'}</span>
@@ -498,6 +549,131 @@
             }
         });
         pageButtons.innerHTML = btns;
+        
+        // Reset select all checkbox
+        document.getElementById('selectAllCheckbox').checked = false;
+        updateBulkToolbar();
+    }
+
+    function toggleAllCheckboxes(source) {
+        const checkboxes = document.querySelectorAll('.row-checkbox');
+        checkboxes.forEach(cb => cb.checked = source.checked);
+        updateBulkToolbar();
+    }
+
+    function updateBulkToolbar() {
+        const checked = document.querySelectorAll('.row-checkbox:checked').length;
+        const toolbar = document.getElementById('bulkActionsToolbar');
+        const countSpan = document.getElementById('selectedCount');
+        
+        countSpan.textContent = checked;
+        if (checked > 0) {
+            toolbar.classList.remove('hidden');
+        } else {
+            toolbar.classList.add('hidden');
+        }
+    }
+
+    async function sendBulkAction(action) {
+        const checkedBoxes = document.querySelectorAll('.row-checkbox:checked');
+        const ids = Array.from(checkedBoxes).map(cb => cb.value);
+        
+        if (ids.length === 0) return;
+        
+        if (action === 'delete' && !confirm(`Are you sure you want to permanently delete ${ids.length} selected logs?`)) return;
+        if (action === 'stop' && !confirm(`Graceful stop will finish the current batch safely for ${ids.length} logs. Proceed?`)) return;
+
+        try {
+            const res = await fetch('/api/sync/logs/bulk', {
+                method: 'POST',
+                headers: { 
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json' 
+                },
+                body: JSON.stringify({ action: action, target_type: 'ids', ids: ids })
+            });
+            const data = await res.json();
+            if (res.ok && data.success) {
+                document.getElementById('selectAllCheckbox').checked = false;
+                updateBulkToolbar();
+                fetchData(true);
+                fetchAnalytics();
+            } else {
+                alert(data.message || 'Failed to process bulk action');
+            }
+        } catch (e) {
+            alert('Error: ' + e.message);
+        }
+    }
+
+    function openClearByDateModal() {
+        const modal = document.getElementById('clearDateModal');
+        const content = document.getElementById('clearDateModalContent');
+        
+        // Default to last 7 days
+        const today = new Date();
+        const lastWeek = new Date(today);
+        lastWeek.setDate(lastWeek.getDate() - 7);
+        
+        document.getElementById('clearDateTo').value = today.toISOString().split('T')[0];
+        document.getElementById('clearDateFrom').value = lastWeek.toISOString().split('T')[0];
+
+        modal.classList.remove('hidden');
+        setTimeout(() => {
+            modal.classList.remove('opacity-0');
+            content.classList.remove('scale-95');
+        }, 10);
+    }
+
+    function closeClearByDateModal() {
+        const modal = document.getElementById('clearDateModal');
+        const content = document.getElementById('clearDateModalContent');
+        modal.classList.add('opacity-0');
+        content.classList.add('scale-95');
+        setTimeout(() => {
+            modal.classList.add('hidden');
+        }, 300);
+    }
+
+    async function submitClearByDate() {
+        const dateFrom = document.getElementById('clearDateFrom').value;
+        const dateTo = document.getElementById('clearDateTo').value;
+        
+        if (!dateFrom || !dateTo) {
+            alert('Please select both dates');
+            return;
+        }
+
+        if (!confirm(`Are you sure you want to permanently delete all logs between ${dateFrom} and ${dateTo}?`)) return;
+
+        try {
+            const res = await fetch('/api/sync/logs/bulk', {
+                method: 'POST',
+                headers: { 
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json' 
+                },
+                body: JSON.stringify({ 
+                    action: 'delete', 
+                    target_type: 'date_range', 
+                    date_from: dateFrom,
+                    date_to: dateTo
+                })
+            });
+            const data = await res.json();
+            if (res.ok && data.success) {
+                alert(data.message);
+                closeClearByDateModal();
+                fetchData(true);
+                fetchAnalytics();
+            } else {
+                alert(data.message || 'Failed to delete logs');
+            }
+        } catch (e) {
+            alert('Error: ' + e.message);
+        }
     }
 
     function goToPage(page) {

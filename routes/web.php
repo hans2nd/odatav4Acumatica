@@ -248,6 +248,7 @@ Route::middleware(['auth'])->group(function () {
         
         // Enterprise API endpoints for Logs
         Route::get('/api/sync/logs', [\App\Http\Controllers\LogApiController::class, 'index'])->name('api.sync.logs');
+        Route::post('/api/sync/logs/bulk', [\App\Http\Controllers\LogApiController::class, 'bulkAction'])->name('api.sync.logs.bulk');
         Route::get('/api/sync/analytics', [\App\Http\Controllers\LogApiController::class, 'analytics'])->name('api.sync.analytics');
         Route::get('/api/sync/export', [\App\Http\Controllers\LogApiController::class, 'export'])->name('api.sync.export');
         Route::get('/api/sync/logs/{id}/details', [\App\Http\Controllers\LogApiController::class, 'show'])->name('api.sync.logs.details');

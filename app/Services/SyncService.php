@@ -90,7 +90,18 @@ class SyncService
         $workerId = uniqid("worker_{$entityKey}_");
 
         // Create a log record
-        $log = SyncLog::create([
+        $startTime = microtime(true);
+        $schedule = \App\Models\SyncSchedule::firstOrCreate(
+            ['entity_key' => $entityKey],
+            ['is_active' => true]
+        );
+
+        $this->syncStateService->initializeSyncState($schedule->id, $entityKey);
+        $this->syncStateService->acquireSynchronizationLock($schedule->id, $workerId);
+        $this->syncStateService->startSynchronization($schedule->id);
+
+        // Create log only AFTER successfully acquiring the lock
+        $log = \App\Models\SyncLog::create([
             'session_id'         => $workerId,
             'entity_key'         => $entityKey,
             'entity_description' => $entity['description'] ?? $entityKey,
@@ -101,16 +112,6 @@ class SyncService
             'status'             => 'running',
             'started_at'         => now(),
         ]);
-
-        $startTime = microtime(true);
-        $schedule = \App\Models\SyncSchedule::firstOrCreate(
-            ['entity_key' => $entityKey],
-            ['is_active' => true]
-        );
-
-        $this->syncStateService->initializeSyncState($schedule->id, $entityKey);
-        $this->syncStateService->acquireSynchronizationLock($schedule->id, $workerId);
-        $this->syncStateService->startSynchronization($schedule->id);
 
         try {
             Log::info("Sync [{$entityKey}]: Starting…");
