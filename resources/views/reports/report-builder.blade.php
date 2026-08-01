@@ -397,7 +397,7 @@
             row.className = 'flex items-center gap-2 rb-filter-row animate-fade-up';
 
             row.innerHTML = `
-                <input type="text" list="rbFilterFieldDataList" class="rb-filter-field flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Search or select field..." value="${field}">
+                <input type="text" list="rbFilterFieldDataList" class="rb-filter-field flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Search or select field..." value="${field}" oninput="updateRbFilterType(this)" onchange="updateRbFilterType(this)">
                 <select class="rb-filter-operator w-36 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2">
                     <option value="eq" ${op === 'eq' ? 'selected' : ''}>Equals (=)</option>
                     <option value="ne" ${op === 'ne' ? 'selected' : ''}>Not Eq (!=)</option>
@@ -427,6 +427,18 @@
         function checkEmptyReportFilters() {
             const rows = document.querySelectorAll('.rb-filter-row');
             document.getElementById('rbEmptyFiltersMsg').classList.toggle('hidden', rows.length > 0);
+        }
+
+        function updateRbFilterType(fieldInput) {
+            const valInput = fieldInput.closest('.rb-filter-row').querySelector('.rb-filter-value');
+            const fieldName = fieldInput.value.toLowerCase();
+            
+            // Common keywords indicating a date field
+            if (fieldName.includes('date') || fieldName.includes('time') || fieldName.endsWith('_at') || fieldName.endsWith('dt')) {
+                valInput.type = 'date';
+            } else {
+                valInput.type = 'text';
+            }
         }
 
         function getFilters() {

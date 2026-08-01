@@ -190,17 +190,38 @@ class ReportBuilderController extends Controller
                 if (!$field || $value === null || $value === '' || !in_array($field, $availableColumns)) {
                     continue;
                 }
+                
+                // Detect if the value is exactly YYYY-MM-DD (Date Picker format)
+                $isDateOnly = preg_match('/^\d{4}-\d{2}-\d{2}$/', $value);
 
                 switch ($op) {
-                    case 'eq':         $query->where($field, '=', $value); break;
-                    case 'ne':         $query->where($field, '!=', $value); break;
-                    case 'contains':   $query->where($field, 'like', '%' . $value . '%'); break;
-                    case 'startswith': $query->where($field, 'like', $value . '%'); break;
-                    case 'endswith':   $query->where($field, 'like', '%' . $value); break;
-                    case 'gt':         $query->where($field, '>', $value); break;
-                    case 'ge':         $query->where($field, '>=', $value); break;
-                    case 'lt':         $query->where($field, '<', $value); break;
-                    case 'le':         $query->where($field, '<=', $value); break;
+                    case 'eq':         
+                        if ($isDateOnly) { $query->whereDate($field, '=', $value); } else { $query->where($field, '=', $value); }
+                        break;
+                    case 'ne':         
+                        if ($isDateOnly) { $query->whereDate($field, '!=', $value); } else { $query->where($field, '!=', $value); }
+                        break;
+                    case 'contains':   
+                        $query->where($field, 'like', '%' . $value . '%'); 
+                        break;
+                    case 'startswith': 
+                        $query->where($field, 'like', $value . '%'); 
+                        break;
+                    case 'endswith':   
+                        $query->where($field, 'like', '%' . $value); 
+                        break;
+                    case 'gt':         
+                        if ($isDateOnly) { $query->whereDate($field, '>', $value); } else { $query->where($field, '>', $value); }
+                        break;
+                    case 'ge':         
+                        if ($isDateOnly) { $query->whereDate($field, '>=', $value); } else { $query->where($field, '>=', $value); }
+                        break;
+                    case 'lt':         
+                        if ($isDateOnly) { $query->whereDate($field, '<', $value); } else { $query->where($field, '<', $value); }
+                        break;
+                    case 'le':         
+                        if ($isDateOnly) { $query->whereDate($field, '<=', $value); } else { $query->where($field, '<=', $value); }
+                        break;
                 }
             }
 
