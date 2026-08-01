@@ -39,7 +39,10 @@
                         <span class="material-symbols-outlined shrink-0">warning</span>
                         <div>
                             <p class="font-medium text-label-md">No connected database available.</p>
-                            <p class="text-body-sm mt-1">You need to connect to at least one database in <a href="{{ route('settings.index') }}" class="underline font-semibold text-amber-800 hover:text-amber-900">Settings &gt; Connection Management</a> before building a report.</p>
+                            <p class="text-body-sm mt-1">You need to connect to at least one database in <a
+                                    href="{{ route('settings.index') }}"
+                                    class="underline font-semibold text-amber-800 hover:text-amber-900">Settings &gt; Connection
+                                    Management</a> before building a report.</p>
                         </div>
                     </div>
                 @else
@@ -63,9 +66,8 @@
                         <div>
                             <label class="text-label-md text-surface-700 mb-1.5 block">Table</label>
                             <div class="relative">
-                                <input type="text" id="rbTableSearch" placeholder="Search or select table..."
-                                    autocomplete="off" disabled
-                                    onfocus="document.getElementById('rbTableDropdown').classList.remove('hidden')"
+                                <input type="text" id="rbTableSearch" placeholder="Search or select table..." autocomplete="off"
+                                    disabled onfocus="document.getElementById('rbTableDropdown').classList.remove('hidden')"
                                     onblur="setTimeout(() => { document.getElementById('rbTableDropdown').classList.add('hidden'); }, 200)"
                                     oninput="filterTableList(this)"
                                     class="w-full bg-white border border-surface-300 rounded-xl px-4 py-2.5 text-body-md text-surface-900 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-all cursor-text disabled:bg-surface-50 disabled:text-surface-400">
@@ -177,10 +179,12 @@
                 <div id="rbPrepareProgress" class="hidden mt-4 p-4 bg-surface-50 rounded-xl border border-surface-200">
                     <div class="flex items-center gap-3 mb-3">
                         <span class="material-symbols-outlined text-brand-500 text-[20px] spin">sync</span>
-                        <span id="rbProgressText" class="text-body-sm text-surface-700 font-medium">Preparing your report, please wait...</span>
+                        <span id="rbProgressText" class="text-body-sm text-surface-700 font-medium">Preparing your report,
+                            please wait...</span>
                     </div>
                     <div class="w-full bg-surface-200 rounded-full h-2.5 overflow-hidden">
-                        <div id="rbProgressBar" class="bg-brand-600 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+                        <div id="rbProgressBar" class="bg-brand-600 h-2.5 rounded-full transition-all duration-300"
+                            style="width: 0%"></div>
                     </div>
                 </div>
                 <div id="rbDownloadResult" class="hidden mt-4 p-4 bg-green-50 rounded-xl border border-green-200">
@@ -337,10 +341,10 @@
                     'flex items-center gap-2 py-1.5 px-2 rounded-lg border border-transparent hover:border-surface-200 bg-surface-50 hover:bg-white cursor-pointer transition-all col-item group';
                 label.dataset.colname = col.toLowerCase();
                 label.innerHTML = `
-                    <span class="material-symbols-outlined text-surface-300 text-[16px] cursor-grab drag-handle group-hover:text-surface-500">drag_indicator</span>
-                    <input type="checkbox" class="col-checkbox w-4 h-4 text-brand-600 rounded border-surface-300 focus:ring-brand-500" value="${col}" checked onchange="updateColCount()">
-                    <span class="text-body-sm text-surface-700 truncate select-none flex-1">${col}</span>
-                `;
+                        <span class="material-symbols-outlined text-surface-300 text-[16px] cursor-grab drag-handle group-hover:text-surface-500">drag_indicator</span>
+                        <input type="checkbox" class="col-checkbox w-4 h-4 text-brand-600 rounded border-surface-300 focus:ring-brand-500" value="${col}" checked onchange="updateColCount()">
+                        <span class="text-body-sm text-surface-700 truncate select-none flex-1">${col}</span>
+                    `;
                 container.appendChild(label);
             });
 
@@ -349,7 +353,7 @@
             if (colSortableInstance) {
                 colSortableInstance.destroy();
             }
-            
+
             colSortableInstance = new Sortable(container, {
                 animation: 150,
                 handle: '.drag-handle',
@@ -400,23 +404,23 @@
             row.className = 'flex items-center gap-2 rb-filter-row animate-fade-up';
 
             row.innerHTML = `
-                <input type="text" list="rbFilterFieldDataList" class="rb-filter-field flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Search or select field..." value="${field}" oninput="updateRbFilterType(this)" onchange="updateRbFilterType(this)">
-                <select class="rb-filter-operator w-36 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2">
-                    <option value="eq" ${op === 'eq' ? 'selected' : ''}>Equals (=)</option>
-                    <option value="ne" ${op === 'ne' ? 'selected' : ''}>Not Eq (!=)</option>
-                    <option value="contains" ${op === 'contains' ? 'selected' : ''}>Contains</option>
-                    <option value="startswith" ${op === 'startswith' ? 'selected' : ''}>Starts With</option>
-                    <option value="endswith" ${op === 'endswith' ? 'selected' : ''}>Ends With</option>
-                    <option value="gt" ${op === 'gt' ? 'selected' : ''}>Greater (>)</option>
-                    <option value="ge" ${op === 'ge' ? 'selected' : ''}>Greater Eq (>=)</option>
-                    <option value="lt" ${op === 'lt' ? 'selected' : ''}>Less (<)</option>
-                    <option value="le" ${op === 'le' ? 'selected' : ''}>Less Eq (<=)</option>
-                </select>
-                <input type="text" class="rb-filter-value flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Value..." value="${val}">
-                <button onclick="removeReportFilterRow(this)" class="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all duration-200" title="Remove filter">
-                    <span class="material-symbols-outlined text-[16px]">delete</span>
-                </button>
-            `;
+                    <input type="text" list="rbFilterFieldDataList" class="rb-filter-field flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Search or select field..." value="${field}" oninput="updateRbFilterType(this)" onchange="updateRbFilterType(this)">
+                    <select class="rb-filter-operator w-36 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2">
+                        <option value="eq" ${op === 'eq' ? 'selected' : ''}>Equals (=)</option>
+                        <option value="ne" ${op === 'ne' ? 'selected' : ''}>Not Eq (!=)</option>
+                        <option value="contains" ${op === 'contains' ? 'selected' : ''}>Contains</option>
+                        <option value="startswith" ${op === 'startswith' ? 'selected' : ''}>Starts With</option>
+                        <option value="endswith" ${op === 'endswith' ? 'selected' : ''}>Ends With</option>
+                        <option value="gt" ${op === 'gt' ? 'selected' : ''}>Greater (>)</option>
+                        <option value="ge" ${op === 'ge' ? 'selected' : ''}>Greater Eq (>=)</option>
+                        <option value="lt" ${op === 'lt' ? 'selected' : ''}>Less (<)</option>
+                        <option value="le" ${op === 'le' ? 'selected' : ''}>Less Eq (<=)</option>
+                    </select>
+                    <input type="text" class="rb-filter-value flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Value..." value="${val}">
+                    <button onclick="removeReportFilterRow(this)" class="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all duration-200" title="Remove filter">
+                        <span class="material-symbols-outlined text-[16px]">delete</span>
+                    </button>
+                `;
 
             container.appendChild(row);
             checkEmptyReportFilters();
@@ -435,7 +439,7 @@
         function updateRbFilterType(fieldInput) {
             const valInput = fieldInput.closest('.rb-filter-row').querySelector('.rb-filter-value');
             const fieldName = fieldInput.value.toLowerCase();
-            
+
             // Common keywords indicating a date field
             const dateKeywords = ['date', 'time', '_at', 'dt', 'tgl', 'tanggal'];
             if (dateKeywords.some(kw => fieldName.includes(kw))) {
@@ -550,22 +554,24 @@
                     try {
                         const res = await fetch(`/api/report-builder/progress?download_id=${downloadId}`);
                         const data = await res.json();
-                        
+
                         if (data.done) {
                             clearInterval(pollInterval);
-                            
+
                             document.getElementById('rbProgressBar').style.width = '100%';
                             document.getElementById('rbResultFilename').textContent = table + (format === 'xlsx' ? '.xlsx' : '.csv');
                             document.getElementById('rbResultSize').textContent = 'Streamed directly';
                             document.getElementById('rbResultZipped').classList.add('hidden');
-                            
+
                             document.getElementById('rbDownloadLink').style.display = 'none';
-                            
+
                             result.classList.remove('hidden');
-                            
+
                             btn.disabled = false;
                             btn.innerHTML = '<span class="material-symbols-outlined text-[18px]">download</span> Prepare & Download';
-                            progress.classList.add('hidden');
+
+                            const progressText = document.getElementById('rbProgressText');
+                            progressText.textContent = 'Finishing & downloading... Please wait and check your browser\'s download manager.';
                         } else if (data.success) {
                             progressText.textContent = `Streaming... ${data.percentage}% (${data.current.toLocaleString()} / ${data.total.toLocaleString()} rows)`;
                             document.getElementById('rbProgressBar').style.width = `${data.percentage}%`;
@@ -578,7 +584,7 @@
             } catch (e) {
                 document.getElementById('rbErrorMsg').textContent = 'Error initiating download.';
                 errorEl.classList.remove('hidden');
-                
+
                 btn.disabled = false;
                 btn.innerHTML = '<span class="material-symbols-outlined text-[18px]">download</span> Prepare & Download';
                 progress.classList.add('hidden');
