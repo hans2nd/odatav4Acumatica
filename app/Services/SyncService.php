@@ -280,11 +280,38 @@ class SyncService
                 $fetchTimeMs = (microtime(true) - $chunkStartTime) * 1000;
                 $writeStartTime = microtime(true);
 
-                if ($isIncremental) {
-                    Log::info("STEP ?: Using upsertTableData because \$isIncremental = true");
-                    $inserted = $this->upsertTableData($destConnection, $tableName, $cleanData, $customFilters, $syncJobId, $isFirstChunk, $insertedCount, $totalRecordsCount);
+                $entityConfig = config("acumatica.entities.{$entityKey}");
+                $primaryKeys = $entityConfig['primary_keys'] ?? null;
+                
+                if (empty($primaryKeys)) {
+                    if (isset($cleanData[0]['id'])) {
+                        $primaryKeys = ['id'];
+                    } elseif (isset($cleanData[0]['NoteID'])) {
+                        $primaryKeys = ['NoteID'];
+                    } elseif (isset($cleanData[0]['noteid'])) {
+                        $primaryKeys = ['noteid'];
+                    }
+                }
+                
+                $hasPrimaryKey = !empty($primaryKeys);
+
+                $useUpsert = false;
+                if ($hasPrimaryKey && $isIncremental) {
+                    $useUpsert = true;
+                } elseif (!$hasPrimaryKey && $isIncremental && !empty($customFilters)) {
+                    // Custom filter sync with NO primary key -> use replaceTableData to replace the scope
+                    $useUpsert = false;
+                } elseif (!$hasPrimaryKey && $isIncremental && empty($customFilters)) {
+                    // True incremental sync (LastModifiedDateTime) but NO primary key -> IMPOSSIBLE to safely apply delta
+                    Log::error("Sync [{$entityKey}]: Cannot perform incremental sync without a primary key (id, NoteID, or configured primary_keys).");
+                    throw new \Exception("Cannot perform incremental sync without a primary key. Please configure 'primary_keys' for this entity in Settings, or run a Full Sync.");
+                }
+
+                if ($useUpsert) {
+                    Log::info("STEP ?: Using upsertTableData because primary key exists and isIncremental = true");
+                    $inserted = $this->upsertTableData($destConnection, $tableName, $cleanData, $customFilters, $syncJobId, $isFirstChunk, $insertedCount, $totalRecordsCount, $primaryKeys);
                 } else {
-                    Log::info("STEP ?: Using replaceTableData because \$isIncremental = false");
+                    Log::info("STEP ?: Using replaceTableData because useUpsert = false");
                     $inserted = $this->replaceTableData($destConnection, $writeTableName, $cleanData, $customFilters, $syncJobId, $isFirstChunk, $insertedCount, $totalRecordsCount);
                 }
                 
@@ -623,92 +650,50 @@ class SyncService
         return $inserted;
     }
 
-    private function upsertTableData(?string $destConnection, string $tableName, array $cleanData, array $customFilters = [], ?string $syncJobId = null, bool $isFirstChunk = false, int $baseInserted = 0, ?int $totalRecordsCount = null): int
+    private function upsertTableData(?string $destConnection, string $tableName, array $cleanData, array $customFilters = [], ?string $syncJobId = null, bool $isFirstChunk = false, int $baseInserted = 0, ?int $totalRecordsCount = null, array $primaryKeys = ['id']): int
     {
         $insertedOrUpdated = 0;
         $syncStartTime = microtime(true);
         $lastProgressUpdate = $syncStartTime;
 
-        DB::connection($destConnection)->transaction(function () use ($destConnection, $tableName, $cleanData, &$insertedOrUpdated, $customFilters, $syncJobId, $isFirstChunk, $baseInserted, $totalRecordsCount, $syncStartTime, &$lastProgressUpdate) {
-            $hasId = isset($cleanData[0]['id']);
+        DB::connection($destConnection)->transaction(function () use ($destConnection, $tableName, $cleanData, &$insertedOrUpdated, $customFilters, $syncJobId, $isFirstChunk, $baseInserted, $totalRecordsCount, $syncStartTime, &$lastProgressUpdate, $primaryKeys) {
+            
+            Log::info("STEP ?: Using executeUpsert with primary keys: " . implode(', ', $primaryKeys));
+            
+            $columnsToUpdate = array_keys($cleanData[0]);
+            
+            $exclude = $primaryKeys;
+            $exclude[] = '_sync_id';
+            
+            $lowerExclude = array_map('strtolower', $exclude);
+            $columnsToUpdate = array_filter($columnsToUpdate, function($col) use ($lowerExclude) {
+                return !in_array(strtolower($col), $lowerExclude);
+            });
+            $columnsToUpdate = array_values($columnsToUpdate);
 
-            if ($hasId) {
-                Log::info("STEP ?: Using executeUpsert because primary key 'id' was found.");
-                
-                $uniqueKey = 'id';
-                $columnsToUpdate = array_keys($cleanData[0]);
-                $columnsToUpdate = array_values(array_diff($columnsToUpdate, [$uniqueKey, '_sync_id']));
+            $columnCount = max(count($cleanData[0] ?? []), 1);
+            
+            $batchStrategy = clone $this->batchStrategyFactory->make($destConnection);
+            $chunkSize = $batchStrategy->calculateChunkSize($columnCount);
+            
+            $chunks = array_chunk($cleanData, $chunkSize);
 
-                $columnCount = max(count($cleanData[0] ?? []), 1);
-                
-                $batchStrategy = clone $this->batchStrategyFactory->make($destConnection);
-                $chunkSize = $batchStrategy->calculateChunkSize($columnCount);
-                
-                $chunks = array_chunk($cleanData, $chunkSize);
-
-                foreach ($chunks as $chunk) {
-                    if (isset($chunk[0]['tstamp'])) {
-                        Log::debug('upsertTableData tstamp dump:', ['value' => $chunk[0]['tstamp'], 'type' => gettype($chunk[0]['tstamp'])]);
-                    }
-                    $batchStrategy->executeUpsert($destConnection, $tableName, $chunk, $uniqueKey, $columnsToUpdate);
-                    $insertedOrUpdated += count($chunk);
-                    
-                    if ($syncJobId) {
-                        $now = microtime(true);
-                        if (($now - $lastProgressUpdate) >= 5.0) {
-                            \App\Models\SyncJob::where('id', $syncJobId)->update([
-                                'processed_rows' => $baseInserted + $insertedOrUpdated,
-                                'total_rows' => $totalRecordsCount,
-                                'progress' => $totalRecordsCount > 0 ? min(99, (int) round((($baseInserted + $insertedOrUpdated) / $totalRecordsCount) * 100)) : 0,
-                            ]);
-                            $lastProgressUpdate = $now;
-                        }
-                    }
+            foreach ($chunks as $chunk) {
+                if (isset($chunk[0]['tstamp'])) {
+                    Log::debug('upsertTableData tstamp dump:', ['value' => $chunk[0]['tstamp'], 'type' => gettype($chunk[0]['tstamp'])]);
                 }
-            } else {
-                Log::warning("STEP ?: Using bulkInsertData (executeInsert) because primary key 'id' was NOT found in payload. \$hasId is false.");
+                $batchStrategy->executeUpsert($destConnection, $tableName, $chunk, $primaryKeys, $columnsToUpdate);
+                $insertedOrUpdated += count($chunk);
                 
-                $noteIds = [];
-                if (isset($cleanData[0]['NoteID'])) {
-                    $noteIds = array_filter(array_column($cleanData, 'NoteID'));
-                    $noteIdCol = 'NoteID';
-                } elseif (isset($cleanData[0]['noteid'])) {
-                    $noteIds = array_filter(array_column($cleanData, 'noteid'));
-                    $noteIdCol = 'noteid';
-                }
-
-                if (!empty($noteIds)) {
-                    foreach (array_chunk(array_unique($noteIds), 500) as $chunk) {
-                        DB::connection($destConnection)->table($tableName)->whereIn($noteIdCol, $chunk)->delete();
-                    }
-                } else {
-                    $hashes = array_filter(array_column($cleanData, '_row_hash'));
-                    if (!empty($hashes)) {
-                        foreach (array_chunk($hashes, 500) as $hashChunk) {
-                            DB::connection($destConnection)->table($tableName)->whereIn('_row_hash', $hashChunk)->delete();
-                        }
-                    }
-                }
-
-                $columnCount = max(count($cleanData[0] ?? []), 1);
-                $batchStrategy = clone $this->batchStrategyFactory->make($destConnection);
-                $chunkSize = $batchStrategy->calculateChunkSize($columnCount);
-                $chunks = array_chunk($cleanData, $chunkSize);
-
-                foreach ($chunks as $chunk) {
-                    $batchStrategy->executeInsert($destConnection, $tableName, $chunk);
-                    $insertedOrUpdated += count($chunk);
-                    
-                    if ($syncJobId) {
-                        $now = microtime(true);
-                        if (($now - $lastProgressUpdate) >= 5.0) {
-                            \App\Models\SyncJob::where('id', $syncJobId)->update([
-                                'processed_rows' => $baseInserted + $insertedOrUpdated,
-                                'total_rows' => $totalRecordsCount,
-                                'progress' => $totalRecordsCount > 0 ? min(99, (int) round((($baseInserted + $insertedOrUpdated) / $totalRecordsCount) * 100)) : 0,
-                            ]);
-                            $lastProgressUpdate = $now;
-                        }
+                if ($syncJobId) {
+                    $now = microtime(true);
+                    if (($now - $lastProgressUpdate) >= 5.0) {
+                        \App\Models\SyncJob::where('id', $syncJobId)->update([
+                            'processed_rows' => $baseInserted + $insertedOrUpdated,
+                            'total_rows' => $totalRecordsCount,
+                            'progress' => $totalRecordsCount > 0 ? min(99, (int) round((($baseInserted + $insertedOrUpdated) / $totalRecordsCount) * 100)) : 0,
+                        ]);
+                        $lastProgressUpdate = $now;
                     }
                 }
             }

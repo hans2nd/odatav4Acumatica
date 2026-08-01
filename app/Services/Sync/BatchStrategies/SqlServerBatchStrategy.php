@@ -13,13 +13,13 @@ class SqlServerBatchStrategy implements BatchStrategyInterface
         return max(intdiv($maxParams, max($columnCount, 1)), 1);
     }
 
-    public function executeUpsert(string $connectionName, string $tableName, array $chunk, string $uniqueKey, array $columnsToUpdate): int
+    public function executeUpsert(string $connectionName, string $tableName, array $chunk, array|string $uniqueKey, array $columnsToUpdate): int
     {
         \Illuminate\Support\Facades\Log::info("STEP 4: Entering SqlServerBatchStrategy::executeUpsert()");
         \Illuminate\Support\Facades\Log::info("STEP 5: Upsert Parameters", [
             'Destination Connection' => $connectionName,
             'Destination Table' => $tableName,
-            'Primary Key' => $uniqueKey,
+            'Primary Key' => is_array($uniqueKey) ? implode(', ', $uniqueKey) : $uniqueKey,
             'Update Columns' => $columnsToUpdate,
             'Rows' => count($chunk),
         ]);
@@ -32,7 +32,8 @@ class SqlServerBatchStrategy implements BatchStrategyInterface
         \Illuminate\Support\Facades\Log::info("STEP 8: SELECT COUNT(*) before upsert: {$countBefore}");
 
         try {
-            $affected = $connection->table($tableName)->upsert($chunk, [$uniqueKey], $columnsToUpdate);
+            $upsertKeys = is_string($uniqueKey) ? [$uniqueKey] : $uniqueKey;
+            $affected = $connection->table($tableName)->upsert($chunk, $upsertKeys, $columnsToUpdate);
             
             $queries = $connection->getQueryLog();
             $lastQuery = end($queries);

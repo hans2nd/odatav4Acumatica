@@ -126,7 +126,7 @@ class SchemaManager
         }
 
         if ($lowerName === 'noteid') {
-            $table->string($name, 64)->nullable()->index();
+            $table->string($name, 64)->nullable()->unique();
             return;
         }
 

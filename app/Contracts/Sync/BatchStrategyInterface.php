@@ -12,7 +12,7 @@ interface BatchStrategyInterface
     /**
      * Executes the upsert operation for a given chunk.
      */
-    public function executeUpsert(string $connectionName, string $tableName, array $chunk, string $uniqueKey, array $columnsToUpdate): int;
+    public function executeUpsert(string $connectionName, string $tableName, array $chunk, array|string $uniqueKey, array $columnsToUpdate): int;
 
     /**
      * Executes the bulk insert operation for a given chunk.
