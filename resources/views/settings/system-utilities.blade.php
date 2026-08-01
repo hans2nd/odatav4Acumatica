@@ -120,6 +120,29 @@
             </div>
         </div>
 
+        {{-- Background Web Cron Component --}}
+        <div class="bg-white rounded-2xl border border-surface-200/60 flex flex-col shadow-card overflow-hidden">
+            <div class="px-5 py-4 border-b border-surface-100 flex items-center bg-surface-50/50 gap-3">
+                <div class="p-2 bg-gradient-to-br from-purple-50 to-fuchsia-100 rounded-lg">
+                    <span class="material-symbols-outlined text-purple-600 text-[18px]">language</span>
+                </div>
+                <div>
+                    <h2 class="text-h3 text-surface-800">Background Web Cron</h2>
+                    <p class="text-label-sm text-surface-400 mt-1">Run scheduled tasks via browser</p>
+                </div>
+            </div>
+            <div class="p-5 flex flex-col gap-4">
+                <p class="text-body-sm text-surface-600">If you cannot configure a native VPS Cronjob, enable this feature to allow your browser to automatically trigger scheduled syncs while this app is open.</p>
+                <div class="mt-auto pt-2">
+                    <button id="btnToggleWebCron" onclick="toggleWebCron()"
+                        class="w-full flex justify-center items-center gap-2 px-4 py-2.5 rounded-xl bg-purple-600 text-white text-label-md hover:bg-purple-700 transition-all duration-200 active:scale-[0.98] shadow-sm">
+                        <span class="material-symbols-outlined text-[18px]" id="webCronIcon">toggle_off</span> 
+                        <span id="webCronText">Enable Web Cron</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
         {{-- Cronjob Setup Info Component --}}
         <div
             class="bg-white rounded-2xl border border-surface-200/60 flex flex-col shadow-card overflow-hidden md:col-span-2">
@@ -162,6 +185,39 @@
 @section('scripts')
     <script>
         const token = 'deploy123'; // Matches backend security token
+
+        document.addEventListener('DOMContentLoaded', () => {
+            updateWebCronBtn();
+        });
+
+        function updateWebCronBtn() {
+            const btn = document.getElementById('btnToggleWebCron');
+            const icon = document.getElementById('webCronIcon');
+            const text = document.getElementById('webCronText');
+            
+            if (localStorage.getItem('enable_web_cron') === '1') {
+                btn.classList.remove('bg-purple-600', 'hover:bg-purple-700');
+                btn.classList.add('bg-red-600', 'hover:bg-red-700');
+                icon.innerText = 'toggle_on';
+                text.innerText = 'Disable Web Cron';
+            } else {
+                btn.classList.add('bg-purple-600', 'hover:bg-purple-700');
+                btn.classList.remove('bg-red-600', 'hover:bg-red-700');
+                icon.innerText = 'toggle_off';
+                text.innerText = 'Enable Web Cron';
+            }
+        }
+
+        function toggleWebCron() {
+            if (localStorage.getItem('enable_web_cron') === '1') {
+                localStorage.setItem('enable_web_cron', '0');
+                showToast('Background Web Cron disabled.', 'info');
+            } else {
+                localStorage.setItem('enable_web_cron', '1');
+                showToast('Background Web Cron enabled. Your browser will now process background syncs automatically.', 'success');
+            }
+            updateWebCronBtn();
+        }
 
         async function runCommand(route) {
             const url = `${route}?token=${token}`;

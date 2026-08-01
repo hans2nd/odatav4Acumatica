@@ -514,6 +514,9 @@
             // This eliminates the need to run schedule:work or queue:work manually in Laragon.
             // Checks every 10 seconds, but only fires the HTTP request every 55 seconds across all tabs.
             setInterval(() => {
+                const webCronEnabled = localStorage.getItem('enable_web_cron') === '1';
+                if (!webCronEnabled) return;
+
                 const lastRun = localStorage.getItem('last_web_cron');
                 const now = new Date().getTime();
                 if (!lastRun || now - parseInt(lastRun) > 300000) {
