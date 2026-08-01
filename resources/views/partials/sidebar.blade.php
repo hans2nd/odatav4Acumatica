@@ -1,5 +1,5 @@
 <nav id="sidebar"
-    class="fixed left-0 top-0 h-full flex flex-col overflow-y-auto w-[260px] z-20 transition-transform duration-300 transform translate-x-0"
+    class="fixed left-0 top-0 h-full flex flex-col overflow-y-auto w-[260px] z-20 transition-transform duration-300"
     style="background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);">
 
     {{-- Logo Area --}}

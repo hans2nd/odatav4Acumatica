@@ -63,6 +63,80 @@
         #sidebar::-webkit-scrollbar-thumb:hover {
             background: rgba(255, 255, 255, 0.25);
         }
+
+        /* ── Sidebar Mini/Expand ────────────────────────── */
+        #sidebar {
+            width: 260px;
+            transition: width 0.3s ease-in-out;
+            overflow-x: hidden;
+        }
+        #sidebar.sidebar-mini {
+            width: 64px;
+        }
+        #main-content {
+            transition: margin-left 0.3s ease-in-out;
+        }
+
+        /* Hide text elements when mini */
+        #sidebar.sidebar-mini .sidebar-text,
+        #sidebar.sidebar-mini .sidebar-submenu,
+        #sidebar.sidebar-mini .sidebar-chevron,
+        #sidebar.sidebar-mini .sidebar-user-info {
+            display: none;
+        }
+
+        /* Center icons when mini */
+        #sidebar.sidebar-mini .sidebar-nav-btn,
+        #sidebar.sidebar-mini .sidebar-nav-link {
+            justify-content: center;
+            padding-left: 0;
+            padding-right: 0;
+        }
+        #sidebar.sidebar-mini .sidebar-icon-wrap {
+            margin: 0;
+            gap: 0;
+        }
+
+        /* Center logo when mini */
+        #sidebar.sidebar-mini .sidebar-logo-area {
+            justify-content: center;
+            padding-left: 0;
+            padding-right: 0;
+        }
+
+        /* Center user area when mini */
+        #sidebar.sidebar-mini .sidebar-user-btn {
+            justify-content: center;
+            padding: 0.5rem;
+        }
+
+        /* Tooltip for mini sidebar */
+        #sidebar.sidebar-mini .nav-group,
+        #sidebar.sidebar-mini li {
+            position: relative;
+        }
+        #sidebar.sidebar-mini .sidebar-tooltip {
+            display: none;
+            position: absolute;
+            left: 100%;
+            top: 50%;
+            transform: translateY(-50%);
+            margin-left: 8px;
+            padding: 6px 12px;
+            background: #1e293b;
+            color: #fff;
+            font-size: 13px;
+            font-weight: 500;
+            border-radius: 8px;
+            white-space: nowrap;
+            z-index: 100;
+            pointer-events: none;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        #sidebar.sidebar-mini .sidebar-nav-btn:hover .sidebar-tooltip,
+        #sidebar.sidebar-mini .sidebar-nav-link:hover .sidebar-tooltip {
+            display: block;
+        }
     </style>
 </head>
 
@@ -72,33 +146,33 @@
     @include('partials.sidebar')
 
     {{-- Main Content --}}
-    <div id="main-content" class="flex-1 flex flex-col ml-[260px] min-w-0 transition-all duration-300 ease-in-out">
+    <div id="main-content" class="flex-1 flex flex-col min-w-0 transition-all duration-300 ease-in-out" style="margin-left: 260px;">
         {{-- Top Bar --}}
         <header
-            class="flex justify-between items-center h-16 w-full px-6 bg-white/80 backdrop-blur-xl border-b border-surface-200/80 z-10 sticky top-0">
-            <div class="flex items-center gap-3">
+            class="flex justify-between items-center h-14 sm:h-16 w-full px-3 sm:px-6 bg-white/80 backdrop-blur-xl border-b border-surface-200/80 z-10 sticky top-0">
+            <div class="flex items-center gap-2 sm:gap-3 min-w-0">
                 <button onclick="toggleSidebar()"
-                    class="p-2 rounded-xl text-surface-500 hover:text-surface-800 hover:bg-surface-100 transition-all duration-200 active:scale-95">
+                    class="p-1.5 sm:p-2 rounded-xl text-surface-500 hover:text-surface-800 hover:bg-surface-100 transition-all duration-200 active:scale-95 shrink-0">
                     <span class="material-symbols-outlined text-[20px]">menu</span>
                 </button>
-                <div class="h-5 w-px bg-surface-200"></div>
-                <span class="text-h3 text-surface-800">@yield('page-title', 'Dashboard')</span>
+                <div class="h-5 w-px bg-surface-200 shrink-0 hidden sm:block"></div>
+                <span class="text-h3 text-surface-800 truncate">@yield('page-title', 'Dashboard')</span>
             </div>
-            <div class="flex items-center gap-3">
-                <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 sm:gap-3 shrink-0">
+                <div class="flex items-center gap-1.5 sm:gap-2">
                     {{-- Acumatica status indicator --}}
                     <button id="acumatica-status" onclick="toggleAcumaticaConnection()"
-                        class="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-100 rounded-lg cursor-pointer hover:bg-surface-200 transition-all duration-200 border border-surface-200/60"
+                        class="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 bg-surface-100 rounded-lg cursor-pointer hover:bg-surface-200 transition-all duration-200 border border-surface-200/60"
                         title="Click to connect">
                         <div class="w-2 h-2 rounded-full bg-surface-400"></div>
-                        <span class="text-label-sm text-surface-500">Acumatica</span>
+                        <span class="text-label-sm text-surface-500 hidden sm:inline">Acumatica</span>
                     </button>
                     {{-- SQL status indicator --}}
                     <button id="sql-status" onclick="toggleDatabaseConnection()"
-                        class="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-100 rounded-lg cursor-pointer hover:bg-surface-200 transition-all duration-200 border border-surface-200/60"
+                        class="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 bg-surface-100 rounded-lg cursor-pointer hover:bg-surface-200 transition-all duration-200 border border-surface-200/60"
                         title="Click to connect">
                         <div class="w-2 h-2 rounded-full bg-surface-400"></div>
-                        <span class="text-label-sm text-surface-500">Database</span>
+                        <span class="text-label-sm text-surface-500 hidden sm:inline">Database</span>
                     </button>
                 </div>
                 @auth
@@ -474,19 +548,30 @@
             }
         }
 
-        // Sidebar toggle
+        // Sidebar toggle — icon-only minimize
         function toggleSidebar() {
             const sidebar = document.getElementById('sidebar');
             const mainContent = document.getElementById('main-content');
+            const isMini = sidebar.classList.toggle('sidebar-mini');
 
-            if (sidebar.classList.contains('-translate-x-full')) {
-                sidebar.classList.remove('-translate-x-full');
-                mainContent.style.marginLeft = '260px';
-            } else {
-                sidebar.classList.add('-translate-x-full');
-                mainContent.style.marginLeft = '0px';
-            }
+            mainContent.style.marginLeft = isMini ? '64px' : '260px';
+            localStorage.setItem('sidebar_mini', isMini ? '1' : '0');
         }
+
+        // Restore sidebar state from localStorage & set initial margin
+        (function initSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const mainContent = document.getElementById('main-content');
+            const savedState = localStorage.getItem('sidebar_mini');
+
+            if (savedState === '1') {
+                sidebar.classList.add('sidebar-mini');
+                mainContent.style.marginLeft = '64px';
+            } else {
+                sidebar.classList.remove('sidebar-mini');
+                mainContent.style.marginLeft = '260px';
+            }
+        })();
 
         // ── Init: auto-connect if previously enabled ─────────────────────────
         document.addEventListener('DOMContentLoaded', () => {

@@ -4,21 +4,21 @@
 @section('page-title', 'System Utilities')
 
 @section('content')
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-5 animate-fade-up">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5 animate-fade-up">
 
         {{-- Migrate Component --}}
         <div class="bg-white rounded-2xl border border-surface-200/60 flex flex-col shadow-card overflow-hidden">
-            <div class="px-5 py-4 border-b border-surface-100 flex items-center bg-surface-50/50 gap-3">
-                <div class="p-2 bg-gradient-to-br from-indigo-50 to-blue-100 rounded-lg">
+            <div class="px-4 sm:px-5 py-3 sm:py-4 border-b border-surface-100 flex items-center bg-surface-50/50 gap-3">
+                <div class="p-2 bg-gradient-to-br from-indigo-50 to-blue-100 rounded-lg shrink-0">
                     <span class="material-symbols-outlined text-indigo-600 text-[18px]">database</span>
                 </div>
-                <div>
-                    <h2 class="text-h3 text-surface-800">Database Migration</h2>
-                    <p class="text-label-sm text-surface-400 mt-1">Run pending migrations to update database schema</p>
+                <div class="min-w-0">
+                    <h2 class="text-h3 text-surface-800 truncate">Database Migration</h2>
+                    <p class="text-label-sm text-surface-400 mt-0.5 truncate">Run pending migrations to update database schema</p>
                 </div>
             </div>
-            <div class="p-5 flex flex-col gap-4">
-                <p class="text-body-sm text-surface-600">This will execute `php artisan migrate` on the server. Only new
+            <div class="p-4 sm:p-5 flex flex-col gap-3 flex-1">
+                <p class="text-body-sm text-surface-600">This will execute <code class="text-xs bg-surface-100 px-1.5 py-0.5 rounded">php artisan migrate</code> on the server. Only new
                     migrations will be run. Existing data is preserved.</p>
                 <div class="mt-auto pt-2">
                     <button onclick="runCommand('{{ route('sys.migrate') }}')"
@@ -31,18 +31,18 @@
 
         {{-- Optimize Component --}}
         <div class="bg-white rounded-2xl border border-surface-200/60 flex flex-col shadow-card overflow-hidden">
-            <div class="px-5 py-4 border-b border-surface-100 flex items-center bg-surface-50/50 gap-3">
-                <div class="p-2 bg-gradient-to-br from-emerald-50 to-teal-100 rounded-lg">
+            <div class="px-4 sm:px-5 py-3 sm:py-4 border-b border-surface-100 flex items-center bg-surface-50/50 gap-3">
+                <div class="p-2 bg-gradient-to-br from-emerald-50 to-teal-100 rounded-lg shrink-0">
                     <span class="material-symbols-outlined text-emerald-600 text-[18px]">bolt</span>
                 </div>
-                <div>
-                    <h2 class="text-h3 text-surface-800">Optimize / Clear Cache</h2>
-                    <p class="text-label-sm text-surface-400 mt-1">Clear all cached views, routes, and config</p>
+                <div class="min-w-0">
+                    <h2 class="text-h3 text-surface-800 truncate">Optimize / Clear Cache</h2>
+                    <p class="text-label-sm text-surface-400 mt-0.5 truncate">Clear all cached views, routes, and config</p>
                 </div>
             </div>
-            <div class="p-5 flex flex-col gap-4">
-                <p class="text-body-sm text-surface-600">This will execute `php artisan optimize:clear` on the server.
-                    Useful if you recently deployed new changes or updated `.env`.</p>
+            <div class="p-4 sm:p-5 flex flex-col gap-3 flex-1">
+                <p class="text-body-sm text-surface-600">This will execute <code class="text-xs bg-surface-100 px-1.5 py-0.5 rounded">php artisan optimize:clear</code> on the server.
+                    Useful if you recently deployed new changes or updated <code class="text-xs bg-surface-100 px-1.5 py-0.5 rounded">.env</code>.</p>
                 <div class="mt-auto pt-2">
                     <button onclick="runCommand('{{ route('sys.optimize') }}')"
                         class="w-full flex justify-center items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-label-md hover:bg-emerald-700 transition-all duration-200 active:scale-[0.98] shadow-sm">
@@ -54,16 +54,16 @@
 
         {{-- Clear Logs Component --}}
         <div class="bg-white rounded-2xl border border-surface-200/60 flex flex-col shadow-card overflow-hidden">
-            <div class="px-5 py-4 border-b border-surface-100 flex items-center bg-surface-50/50 gap-3">
-                <div class="p-2 bg-gradient-to-br from-gray-50 to-slate-100 rounded-lg">
+            <div class="px-4 sm:px-5 py-3 sm:py-4 border-b border-surface-100 flex items-center bg-surface-50/50 gap-3">
+                <div class="p-2 bg-gradient-to-br from-gray-50 to-slate-100 rounded-lg shrink-0">
                     <span class="material-symbols-outlined text-slate-600 text-[18px]">delete_sweep</span>
                 </div>
-                <div>
-                    <h2 class="text-h3 text-surface-800">Clear Laravel Logs</h2>
-                    <p class="text-label-sm text-surface-400 mt-1">Empty all .log files in storage/logs</p>
+                <div class="min-w-0">
+                    <h2 class="text-h3 text-surface-800 truncate">Clear Laravel Logs</h2>
+                    <p class="text-label-sm text-surface-400 mt-0.5 truncate">Empty all .log files in storage/logs</p>
                 </div>
             </div>
-            <div class="p-5 flex flex-col gap-4">
+            <div class="p-4 sm:p-5 flex flex-col gap-3 flex-1">
                 <p class="text-body-sm text-surface-600">This will empty the contents of all log files to free up disk space. Use this if your logs are piling up.</p>
                 <div class="mt-auto pt-2">
                     <button onclick="runCommand('{{ route('sys.clear-logs') }}')"
@@ -76,17 +76,17 @@
 
         {{-- Storage Link Component --}}
         <div class="bg-white rounded-2xl border border-surface-200/60 flex flex-col shadow-card overflow-hidden">
-            <div class="px-5 py-4 border-b border-surface-100 flex items-center bg-surface-50/50 gap-3">
-                <div class="p-2 bg-gradient-to-br from-amber-50 to-orange-100 rounded-lg">
+            <div class="px-4 sm:px-5 py-3 sm:py-4 border-b border-surface-100 flex items-center bg-surface-50/50 gap-3">
+                <div class="p-2 bg-gradient-to-br from-amber-50 to-orange-100 rounded-lg shrink-0">
                     <span class="material-symbols-outlined text-amber-600 text-[18px]">folder_special</span>
                 </div>
-                <div>
-                    <h2 class="text-h3 text-surface-800">Storage Link</h2>
-                    <p class="text-label-sm text-surface-400 mt-1">Create a symbolic link for public storage</p>
+                <div class="min-w-0">
+                    <h2 class="text-h3 text-surface-800 truncate">Storage Link</h2>
+                    <p class="text-label-sm text-surface-400 mt-0.5 truncate">Create a symbolic link for public storage</p>
                 </div>
             </div>
-            <div class="p-5 flex flex-col gap-4">
-                <p class="text-body-sm text-surface-600">This will execute `php artisan storage:link` on the server.
+            <div class="p-4 sm:p-5 flex flex-col gap-3 flex-1">
+                <p class="text-body-sm text-surface-600">This will execute <code class="text-xs bg-surface-100 px-1.5 py-0.5 rounded">php artisan storage:link</code> on the server.
                     Required for uploaded files to be publicly accessible.</p>
                 <div class="mt-auto pt-2">
                     <button onclick="runCommand('{{ route('sys.artisan', ['command' => 'storage-link']) }}')"
@@ -99,16 +99,16 @@
 
         {{-- Migrate Fresh Component (DANGER) --}}
         <div class="bg-white rounded-2xl border border-red-200 flex flex-col shadow-card overflow-hidden">
-            <div class="px-5 py-4 border-b border-red-100 flex items-center bg-red-50/50 gap-3">
-                <div class="p-2 bg-gradient-to-br from-red-50 to-rose-100 rounded-lg">
+            <div class="px-4 sm:px-5 py-3 sm:py-4 border-b border-red-100 flex items-center bg-red-50/50 gap-3">
+                <div class="p-2 bg-gradient-to-br from-red-50 to-rose-100 rounded-lg shrink-0">
                     <span class="material-symbols-outlined text-red-600 text-[18px]">warning</span>
                 </div>
-                <div>
-                    <h2 class="text-h3 text-red-700">Migrate Fresh (Danger)</h2>
-                    <p class="text-label-sm text-red-400 mt-1">Drop all tables and re-run all migrations</p>
+                <div class="min-w-0">
+                    <h2 class="text-h3 text-red-700 truncate">Migrate Fresh (Danger)</h2>
+                    <p class="text-label-sm text-red-400 mt-0.5 truncate">Drop all tables and re-run all migrations</p>
                 </div>
             </div>
-            <div class="p-5 flex flex-col gap-4">
+            <div class="p-4 sm:p-5 flex flex-col gap-3 flex-1">
                 <p class="text-body-sm text-red-600 font-medium">WARNING: This will DESTROY ALL DATA in the local database.
                     Only use this during initial setup or development.</p>
                 <div class="mt-auto pt-2">
@@ -122,16 +122,16 @@
 
         {{-- Background Web Cron Component --}}
         <div class="bg-white rounded-2xl border border-surface-200/60 flex flex-col shadow-card overflow-hidden">
-            <div class="px-5 py-4 border-b border-surface-100 flex items-center bg-surface-50/50 gap-3">
-                <div class="p-2 bg-gradient-to-br from-purple-50 to-fuchsia-100 rounded-lg">
+            <div class="px-4 sm:px-5 py-3 sm:py-4 border-b border-surface-100 flex items-center bg-surface-50/50 gap-3">
+                <div class="p-2 bg-gradient-to-br from-purple-50 to-fuchsia-100 rounded-lg shrink-0">
                     <span class="material-symbols-outlined text-purple-600 text-[18px]">language</span>
                 </div>
-                <div>
-                    <h2 class="text-h3 text-surface-800">Background Web Cron</h2>
-                    <p class="text-label-sm text-surface-400 mt-1">Run scheduled tasks via browser</p>
+                <div class="min-w-0">
+                    <h2 class="text-h3 text-surface-800 truncate">Background Web Cron</h2>
+                    <p class="text-label-sm text-surface-400 mt-0.5 truncate">Run scheduled tasks via browser</p>
                 </div>
             </div>
-            <div class="p-5 flex flex-col gap-4">
+            <div class="p-4 sm:p-5 flex flex-col gap-3 flex-1">
                 <p class="text-body-sm text-surface-600">If you cannot configure a native VPS Cronjob, enable this feature to allow your browser to automatically trigger scheduled syncs while this app is open.</p>
                 <div class="mt-auto pt-2">
                     <button id="btnToggleWebCron" onclick="toggleWebCron()"
@@ -144,46 +144,43 @@
         </div>
 
         {{-- Cronjob Setup Info Component --}}
-        <div
-            class="bg-white rounded-2xl border border-surface-200/60 flex flex-col shadow-card overflow-hidden md:col-span-2">
-            <div class="px-5 py-4 border-b border-surface-100 flex items-center bg-surface-50/50 gap-3">
-                <div class="p-2 bg-gradient-to-br from-blue-50 to-cyan-100 rounded-lg">
+        <div class="bg-white rounded-2xl border border-surface-200/60 flex flex-col shadow-card overflow-hidden md:col-span-2">
+            <div class="px-4 sm:px-5 py-3 sm:py-4 border-b border-surface-100 flex items-center bg-surface-50/50 gap-3">
+                <div class="p-2 bg-gradient-to-br from-blue-50 to-cyan-100 rounded-lg shrink-0">
                     <span class="material-symbols-outlined text-cyan-600 text-[18px]">schedule</span>
                 </div>
-                <div>
-                    <h2 class="text-h3 text-surface-800">VPS Cronjob Setup</h2>
-                    <p class="text-label-sm text-surface-400 mt-1">Information for setting up the background scheduler on
+                <div class="min-w-0">
+                    <h2 class="text-h3 text-surface-800 truncate">VPS Cronjob Setup</h2>
+                    <p class="text-label-sm text-surface-400 mt-0.5 truncate">Information for setting up the background scheduler on
                         your server</p>
                 </div>
             </div>
-            <div class="p-5 flex flex-col gap-4">
-                <p class="text-body-sm text-surface-600">To ensure the **Automated Sync Scheduler** runs properly, you must
-                    add the following Cronjob entry on your VPS or hosting panel (e.g. cPanel, aaPanel, or via `crontab
-                    -e`). This allows Laravel to process scheduled tasks every minute.</p>
+            <div class="p-4 sm:p-5 flex flex-col gap-4">
+                <p class="text-body-sm text-surface-600">To ensure the <strong>Automated Sync Scheduler</strong> runs properly, you must
+                    add the following Cronjob entry on your VPS or hosting panel (e.g. cPanel, aaPanel, or via <code class="text-xs bg-surface-100 px-1.5 py-0.5 rounded">crontab -e</code>). This allows Laravel to process scheduled tasks every minute.</p>
 
-                <div class="bg-slate-600 rounded-xl p-4 flex items-center justify-between gap-4">
-                    <code class="text-emerald-400 text-sm font-mono break-all" id="cronCommand">cd {{ base_path() }} && php artisan schedule:run >> /dev/null 2>&1</code>
+                <div class="bg-slate-800 rounded-xl p-3 sm:p-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                    <code class="text-emerald-400 text-xs sm:text-sm font-mono break-all leading-relaxed min-w-0" id="cronCommand">cd {{ base_path() }} && php artisan schedule:run >> /dev/null 2>&1</code>
                     <button onclick="copyCronCommand('cronCommand')"
-                        class="shrink-0 flex justify-center items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-700 text-blue text-label-sm hover:bg-slate-700 transition-all duration-200"
+                        class="shrink-0 self-end sm:self-auto flex justify-center items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-700 text-slate-200 text-label-sm hover:bg-slate-600 transition-all duration-200"
                         title="Copy to clipboard">
                         <span class="material-symbols-outlined text-[16px]">content_copy</span> Copy
                     </button>
                 </div>
 
-                <p class="text-body-sm text-surface-600 mt-4">If your VPS disables background processes (`exec`), you must also add this second command so the server automatically runs the queue worker every minute:</p>
-                <div class="bg-slate-600 rounded-xl p-4 flex items-center justify-between gap-4">
-                    <code class="text-emerald-400 text-sm font-mono break-all" id="workerCronCommand">cd {{ base_path() }} && php artisan queue:work --stop-when-empty --timeout=1800 --memory=1024 >> /dev/null 2>&1</code>
+                <p class="text-body-sm text-surface-600 mt-2">If your VPS disables background processes (<code class="text-xs bg-surface-100 px-1.5 py-0.5 rounded">exec</code>), you must also add this second command so the server automatically runs the queue worker every minute:</p>
+                <div class="bg-slate-800 rounded-xl p-3 sm:p-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                    <code class="text-emerald-400 text-xs sm:text-sm font-mono break-all leading-relaxed min-w-0" id="workerCronCommand">cd {{ base_path() }} && php artisan queue:work --stop-when-empty --timeout=1800 --memory=1024 >> /dev/null 2>&1</code>
                     <button onclick="copyCronCommand('workerCronCommand')"
-                        class="shrink-0 flex justify-center items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-700 text-blue text-label-sm hover:bg-slate-700 transition-all duration-200"
+                        class="shrink-0 self-end sm:self-auto flex justify-center items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-700 text-slate-200 text-label-sm hover:bg-slate-600 transition-all duration-200"
                         title="Copy to clipboard">
                         <span class="material-symbols-outlined text-[16px]">content_copy</span> Copy
                     </button>
                 </div>
 
-                <p class="text-xs text-surface-500 mt-1"><i
-                        class="material-symbols-outlined text-[14px] align-middle mr-1">info</i> Note: Depending on your
-                    server configuration, you may need to specify the full path to PHP (e.g., <code>/usr/bin/php</code> or
-                    <code>/opt/alt/php82/usr/bin/php</code>).
+                <p class="text-xs text-surface-500 mt-1 flex items-start gap-1">
+                    <span class="material-symbols-outlined text-[14px] mt-0.5 shrink-0">info</span>
+                    <span>Note: Depending on your server configuration, you may need to specify the full path to PHP (e.g., <code class="bg-surface-100 px-1 py-0.5 rounded">/usr/bin/php</code> or <code class="bg-surface-100 px-1 py-0.5 rounded">/opt/alt/php82/usr/bin/php</code>).</span>
                 </p>
             </div>
         </div>
