@@ -545,6 +545,13 @@ class SyncService
             ]);
             $this->syncStateService->failSynchronization($schedule->id);
             Log::info("Sync [{$entityKey}]: Stopped safely.");
+            if ($syncJobId) {
+                \App\Models\SyncJob::where('id', $syncJobId)->update([
+                    'status' => \App\Models\SyncJob::STATUS_FAILED,
+                    'error_message' => 'Stopped by user',
+                    'finished_at' => now()
+                ]);
+            }
             return $log;
 
         } catch (\App\Exceptions\SyncCancelException $e) {
@@ -563,6 +570,13 @@ class SyncService
             ]);
             $this->syncStateService->failSynchronization($schedule->id);
             Log::info("Sync [{$entityKey}]: Cancelled forcefully.");
+            if ($syncJobId) {
+                \App\Models\SyncJob::where('id', $syncJobId)->update([
+                    'status' => \App\Models\SyncJob::STATUS_FAILED,
+                    'error_message' => 'Cancelled by user',
+                    'finished_at' => now()
+                ]);
+            }
             return $log;
 
         } catch (\Throwable $e) {

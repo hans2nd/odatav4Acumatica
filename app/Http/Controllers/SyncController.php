@@ -128,6 +128,16 @@ class SyncController extends Controller
                         $syncStateService->failSynchronization($schedule->id);
                         $syncStateService->releaseSynchronizationLock($schedule->id, $log->session_id);
                     }
+                    
+                    // Immediately mark any active SyncJob for this entity as failed
+                    // so the UI allows starting a new sync.
+                    \App\Models\SyncJob::where('entity', $log->entity_key)
+                        ->whereIn('status', [\App\Models\SyncJob::STATUS_PENDING, \App\Models\SyncJob::STATUS_RUNNING])
+                        ->update([
+                            'status' => \App\Models\SyncJob::STATUS_FAILED,
+                            'error_message' => 'Stopped manually by user via UI',
+                            'finished_at' => now()
+                        ]);
                 } catch (\Exception $e) {
                     // Ignore state errors if it's already released or failed
                 }
