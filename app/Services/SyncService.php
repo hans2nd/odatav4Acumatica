@@ -412,13 +412,21 @@ class SyncService
                 $progressCallback(0, $totalRecordsCount);
                 
                 $chunkSize = 1000;
-                // If there's no PK, chunk may fail, we'll use chunkById if 'id' exists, else basic get() chunks if possible
+                
+                $entityConfig = config("acumatica.entities.{$entityKey}");
+                $primaryKeys = $entityConfig['primary_keys'] ?? null;
+                $chunkColumn = 'id';
+                if (!empty($primaryKeys) && is_array($primaryKeys) && count($primaryKeys) > 0) {
+                    $chunkColumn = $primaryKeys[0];
+                }
+                
+                // Use chunkById with the correct primary key to prevent extremely slow OFFSET pagination
                 try {
                     $query->chunkById($chunkSize, function($records) use ($processChunkCallback, &$fetchedCount, $progressCallback, $totalRecordsCount) {
                         $arr = $records->map(fn($record) => (array) $record)->toArray();
                         $processChunkCallback($arr);
                         $progressCallback($fetchedCount, $totalRecordsCount);
-                    });
+                    }, $chunkColumn);
                 } catch (\Exception $e) {
                     // Fallback if no 'id' column. chunk() requires an orderBy clause
                     $firstRow = DB::connection($resolvedSourceConn)->table($odataEntity)->first();
