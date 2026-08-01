@@ -203,6 +203,12 @@
                             <span class="material-symbols-outlined text-[16px]">download</span> Download
                         </a>
                     </div>
+                    <div id="rbDownloadNotice" class="mt-3 pt-3 border-t border-green-200 hidden">
+                        <p class="text-xs text-green-700 font-medium">
+                            <span class="material-symbols-outlined text-[14px] align-middle mr-1">info</span>
+                            Finishing & downloading... Please wait and check your browser's download manager.
+                        </p>
+                    </div>
                 </div>
                 <div id="rbErrorResult" class="hidden mt-4 p-4 bg-red-50 rounded-xl border border-red-200">
                     <div class="flex items-center gap-3">
@@ -566,12 +572,12 @@
                             document.getElementById('rbDownloadLink').style.display = 'none';
 
                             result.classList.remove('hidden');
+                            document.getElementById('rbDownloadNotice').classList.remove('hidden');
 
                             btn.disabled = false;
                             btn.innerHTML = '<span class="material-symbols-outlined text-[18px]">download</span> Prepare & Download';
 
-                            const progressText = document.getElementById('rbProgressText');
-                            progressText.textContent = 'Finishing & downloading... Please wait and check your browser\'s download manager.';
+                            progress.classList.add('hidden');
                         } else if (data.success) {
                             progressText.textContent = `Streaming... ${data.percentage}% (${data.current.toLocaleString()} / ${data.total.toLocaleString()} rows)`;
                             document.getElementById('rbProgressBar').style.width = `${data.percentage}%`;
