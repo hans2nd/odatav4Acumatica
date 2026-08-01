@@ -197,6 +197,7 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/api/report-builder/tables', [ReportBuilderController::class, 'tables']);
         Route::get('/api/report-builder/columns', [ReportBuilderController::class, 'columns']);
         Route::post('/api/report-builder/prepare', [ReportBuilderController::class, 'prepare']);
+        Route::get('/api/report-builder/progress', [ReportBuilderController::class, 'checkProgress']);
         Route::get('/api/report-builder/download/{token}', [ReportBuilderController::class, 'download'])->name('report.builder.download');
     });
 

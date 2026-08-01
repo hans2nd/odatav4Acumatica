@@ -175,9 +175,12 @@
 
                 {{-- Progress / Result --}}
                 <div id="rbPrepareProgress" class="hidden mt-4 p-4 bg-surface-50 rounded-xl border border-surface-200">
-                    <div class="flex items-center gap-3">
+                    <div class="flex items-center gap-3 mb-3">
                         <span class="material-symbols-outlined text-brand-500 text-[20px] spin">sync</span>
-                        <span class="text-body-sm text-surface-700">Preparing your report, please wait...</span>
+                        <span id="rbProgressText" class="text-body-sm text-surface-700 font-medium">Preparing your report, please wait...</span>
+                    </div>
+                    <div class="w-full bg-surface-200 rounded-full h-2.5 overflow-hidden">
+                        <div id="rbProgressBar" class="bg-brand-600 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
                     </div>
                 </div>
                 <div id="rbDownloadResult" class="hidden mt-4 p-4 bg-green-50 rounded-xl border border-green-200">
@@ -434,7 +437,8 @@
             const fieldName = fieldInput.value.toLowerCase();
             
             // Common keywords indicating a date field
-            if (fieldName.includes('date') || fieldName.includes('time') || fieldName.endsWith('_at') || fieldName.endsWith('dt')) {
+            const dateKeywords = ['date', 'time', '_at', 'dt', 'tgl', 'tanggal'];
+            if (dateKeywords.some(kw => fieldName.includes(kw))) {
                 valInput.type = 'date';
             } else {
                 valInput.type = 'text';
@@ -479,10 +483,15 @@
             btn.disabled = true;
             btn.innerHTML = '<span class="material-symbols-outlined text-[18px] spin">sync</span> Preparing...';
             progress.classList.remove('hidden');
+            document.getElementById('rbProgressBar').style.width = '0%';
             result.classList.add('hidden');
             errorEl.classList.add('hidden');
 
             try {
+                const downloadId = Date.now().toString() + Math.floor(Math.random() * 1000);
+                const userLocale = Intl.NumberFormat().resolvedOptions().locale;
+                const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
                 // Ensure hidden iframe exists
                 let iframe = document.getElementById('downloadFrame');
                 if (!iframe) {
@@ -517,6 +526,9 @@
                 addInput('connection', connKey);
                 addInput('table', table);
                 addInput('format', format);
+                addInput('download_id', downloadId);
+                addInput('locale', userLocale);
+                addInput('timezone', userTimezone);
 
                 columns.forEach(col => addInput('columns[]', col));
 
@@ -530,22 +542,38 @@
                 form.submit();
                 document.body.removeChild(form);
 
-                // Because form submission does not return a promise we can await for success/failure
-                // of the download, we will just assume success after a short delay and reset the UI.
-                setTimeout(() => {
-                    document.getElementById('rbResultFilename').textContent = table + (format === 'xlsx' ? '.xlsx' : '.csv');
-                    document.getElementById('rbResultSize').textContent = 'Streamed directly';
-                    document.getElementById('rbResultZipped').classList.add('hidden');
-                    
-                    // We can't provide a direct link anymore as it is streamed dynamically
-                    document.getElementById('rbDownloadLink').style.display = 'none';
-                    
-                    result.classList.remove('hidden');
-                    
-                    btn.disabled = false;
-                    btn.innerHTML = '<span class="material-symbols-outlined text-[18px]">download</span> Prepare & Download';
-                    progress.classList.add('hidden');
-                }, 3000);
+                const progressText = document.getElementById('rbProgressText');
+                progressText.textContent = 'Preparing your report, please wait...';
+
+                // Poll for progress
+                const pollInterval = setInterval(async () => {
+                    try {
+                        const res = await fetch(`/api/report-builder/progress?download_id=${downloadId}`);
+                        const data = await res.json();
+                        
+                        if (data.done) {
+                            clearInterval(pollInterval);
+                            
+                            document.getElementById('rbProgressBar').style.width = '100%';
+                            document.getElementById('rbResultFilename').textContent = table + (format === 'xlsx' ? '.xlsx' : '.csv');
+                            document.getElementById('rbResultSize').textContent = 'Streamed directly';
+                            document.getElementById('rbResultZipped').classList.add('hidden');
+                            
+                            document.getElementById('rbDownloadLink').style.display = 'none';
+                            
+                            result.classList.remove('hidden');
+                            
+                            btn.disabled = false;
+                            btn.innerHTML = '<span class="material-symbols-outlined text-[18px]">download</span> Prepare & Download';
+                            progress.classList.add('hidden');
+                        } else if (data.success) {
+                            progressText.textContent = `Streaming... ${data.percentage}% (${data.current.toLocaleString()} / ${data.total.toLocaleString()} rows)`;
+                            document.getElementById('rbProgressBar').style.width = `${data.percentage}%`;
+                        }
+                    } catch (e) {
+                        // ignore poll errors
+                    }
+                }, 1000);
 
             } catch (e) {
                 document.getElementById('rbErrorMsg').textContent = 'Error initiating download.';

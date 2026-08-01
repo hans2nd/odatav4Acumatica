@@ -90,6 +90,25 @@ class ReportBuilderController extends Controller
         return response()->json(['success' => true, 'connections' => $dbConnections]);
     }
 
+    public function checkProgress(Request $request)
+    {
+        $downloadId = $request->query('download_id');
+        if (!$downloadId) {
+            return response()->json(['success' => false]);
+        }
+        $data = \Illuminate\Support\Facades\Cache::get("report_dl_{$downloadId}");
+        if (!$data) {
+            return response()->json(['success' => true, 'done' => true]);
+        }
+        return response()->json([
+            'success' => true,
+            'done' => false,
+            'total' => $data['total'],
+            'current' => $data['current'],
+            'percentage' => $data['total'] > 0 ? round(($data['current'] / $data['total']) * 100) : 0
+        ]);
+    }
+
     /**
      * List tables for a given connection.
      */
@@ -158,6 +177,10 @@ class ReportBuilderController extends Controller
         $columns = $request->input('columns');
         $format  = $request->input('format');
         $filters = $request->input('filters', []);
+        
+        $downloadId = $request->input('download_id');
+        $locale = $request->input('locale', 'id-ID'); // default to ID
+        $timezone = $request->input('timezone', 'Asia/Jakarta');
 
         try {
             ini_set('memory_limit', '512M');
@@ -228,6 +251,11 @@ class ReportBuilderController extends Controller
             $baseFilename = $table . '_' . now()->format('Ymd_His');
             $downloadName = $baseFilename . ($format === 'xlsx' ? '.xlsx' : '.csv');
 
+            $totalRows = $query->count();
+            if ($downloadId) {
+                \Illuminate\Support\Facades\Cache::put("report_dl_{$downloadId}", ['total' => $totalRows, 'current' => 0], 300);
+            }
+
             $writer = \Spatie\SimpleExcel\SimpleExcelWriter::streamDownload($downloadName);
 
             // For Excel, attempt to set sheet name (spout underlying)
@@ -247,18 +275,62 @@ class ReportBuilderController extends Controller
 
             $writer->addHeader($validColumns);
 
+            // Create formatters based on locale
+            $numFormatter = null;
+            if (extension_loaded('intl')) {
+                try {
+                    $numFormatter = new \NumberFormatter($locale, \NumberFormatter::DECIMAL);
+                    $numFormatter->setAttribute(\NumberFormatter::MAX_FRACTION_DIGITS, 4);
+                } catch (\Throwable $e) {}
+            }
+
             $count = 0;
             foreach ($query->cursor() as $row) {
                 $rowArray = [];
                 foreach ($validColumns as $col) {
-                    $rowArray[$col] = $row->{$col} ?? '';
+                    $val = $row->{$col} ?? '';
+                    
+                    // Format numbers with thousand separator
+                    if (is_numeric($val) && strpos($col, 'ID') === false && strpos($col, 'CD') === false && strpos($col, 'Nbr') === false && strpos(strtolower($col), 'phone') === false) {
+                        if ($format === 'xlsx') {
+                            $val = (float)$val;
+                        } else {
+                            if ($numFormatter) {
+                                $val = $numFormatter->format((float)$val);
+                            } else {
+                                $val = number_format((float)$val, 2, ',', '.'); // Fallback to ID format
+                            }
+                        }
+                    } 
+                    // Format Dates
+                    elseif (is_string($val) && preg_match('/^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2}(\.\d+)?)?$/', $val)) {
+                        if ($format === 'xlsx') {
+                             try {
+                                 $val = \Carbon\Carbon::parse($val)->timezone($timezone)->toDate(); // Return PHP DateTime for OpenSpout
+                             } catch (\Throwable $e) {}
+                        } else {
+                            try {
+                                $carbon = \Carbon\Carbon::parse($val)->timezone($timezone)->locale($locale);
+                                $val = $carbon->translatedFormat(strpos($val, ' ') !== false ? 'd M Y H:i:s' : 'd M Y');
+                            } catch (\Throwable $e) {}
+                        }
+                    }
+
+                    $rowArray[$col] = $val;
                 }
                 $writer->addRow($rowArray);
                 
                 $count++;
-                if ($count % 1000 === 0) {
+                if ($count % 500 === 0) {
+                    if ($downloadId) {
+                        \Illuminate\Support\Facades\Cache::put("report_dl_{$downloadId}", ['total' => $totalRows, 'current' => $count], 300);
+                    }
                     flush();
                 }
+            }
+
+            if ($downloadId) {
+                \Illuminate\Support\Facades\Cache::forget("report_dl_{$downloadId}");
             }
 
             return $writer->toBrowser();
