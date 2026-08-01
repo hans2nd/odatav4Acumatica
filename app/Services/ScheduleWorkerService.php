@@ -18,8 +18,8 @@ class ScheduleWorkerService
 
         if ($lock->get()) {
             // The daemon is not running (we successfully acquired the lock).
-            // Release it immediately so the daemon can acquire it once it starts.
-            $lock->release();
+            // Do NOT release it immediately. Let the daemon's own lock attempt overwrite/renew it.
+            // If the daemon fails to start, this lock will expire naturally in 10 seconds.
             
             Log::info("ScheduleWorkerService: Spawning background scheduler daemon.");
 

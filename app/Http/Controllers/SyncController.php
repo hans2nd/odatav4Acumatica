@@ -246,6 +246,15 @@ class SyncController extends Controller
 
     public function saveFilters(Request $request, string $entity): JsonResponse
     {
+        // Reject completely empty request bodies
+        if (empty($request->getContent()) && empty($request->all())) {
+            \Illuminate\Support\Facades\Log::warning("Rejected empty body request for {$entity}");
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid request: Empty payload.',
+            ], 400);
+        }
+
         $customFilters = $request->input('custom_filters', []);
         
         // DEBUG: Log the incoming request data
