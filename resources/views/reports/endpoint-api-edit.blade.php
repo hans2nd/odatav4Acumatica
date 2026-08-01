@@ -197,16 +197,24 @@
         const ul = document.getElementById('apiTableDropdown');
         
         if (tables.length === 0) {
-            ul.innerHTML = '<li class="px-3 py-2 text-surface-500 text-body-sm text-center">No tables available</li>';
+            ul.innerHTML = '<li class="px-3 py-2 text-surface-500 text-body-sm text-center">No tables available for this connection</li>';
             return;
         }
 
+        const maxTables = 100;
+        const visibleTables = tables.slice(0, maxTables);
+
         let html = '';
-        tables.forEach(table => {
+        visibleTables.forEach(table => {
             // Escape quotes in table name
             const escapedTable = table.replace(/'/g, "\\'");
             html += `<li onclick="window.selectApiTable('${escapedTable}')" class="px-4 py-3 hover:bg-surface-50 cursor-pointer text-body-sm font-medium text-surface-700 transition-colors border-b border-surface-50 last:border-0">${table}</li>`;
         });
+        
+        if (tables.length > maxTables) {
+            html += `<li class="px-4 py-3 text-surface-400 text-[11px] text-center border-t border-surface-50 bg-surface-50 italic">Showing first ${maxTables} tables. Type to search more...</li>`;
+        }
+        
         ul.innerHTML = html;
     }
 

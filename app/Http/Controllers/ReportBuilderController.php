@@ -42,8 +42,20 @@ class ReportBuilderController extends Controller
                 try {
                     $tree = $this->connectionManager->discoverMetadata($key);
                     $tables = [];
+                    $systemTables = [
+                        'migrations', 'users', 'password_reset_tokens', 'personal_access_tokens',
+                        'failed_jobs', 'jobs', 'api_endpoints', 'connections', 
+                        'sync_jobs', 'sync_logs', 'sync_metadata_definitions', 
+                        'sync_metadata_fields', 'sync_metadata_history', 
+                        'sync_metadata_refresh_history', 'permissions', 'roles', 
+                        'model_has_permissions', 'model_has_roles', 'role_has_permissions',
+                        'cache', 'cache_locks', 'sessions'
+                    ];
+                    
                     foreach ($tree->nodes as $node) {
-                        $tables[] = $node->name;
+                        if (!in_array(strtolower($node->name), $systemTables)) {
+                            $tables[] = $node->name;
+                        }
                     }
                     sort($tables);
                     $allTables[$key] = $tables;
@@ -122,8 +134,20 @@ class ReportBuilderController extends Controller
         try {
             $tree = $this->connectionManager->discoverMetadata($connKey);
             $tables = [];
+            $systemTables = [
+                'migrations', 'users', 'password_reset_tokens', 'personal_access_tokens',
+                'failed_jobs', 'jobs', 'api_endpoints', 'connections', 
+                'sync_jobs', 'sync_logs', 'sync_metadata_definitions', 
+                'sync_metadata_fields', 'sync_metadata_history', 
+                'sync_metadata_refresh_history', 'permissions', 'roles', 
+                'model_has_permissions', 'model_has_roles', 'role_has_permissions',
+                'cache', 'cache_locks', 'sessions'
+            ];
+            
             foreach ($tree->nodes as $node) {
-                $tables[] = $node->name;
+                if (!in_array(strtolower($node->name), $systemTables)) {
+                    $tables[] = $node->name;
+                }
             }
             sort($tables);
 

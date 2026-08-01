@@ -275,27 +275,41 @@
                 tableList.innerHTML =
                     '<li class="px-4 py-2 text-sm text-surface-400 italic">-- No tables found --</li>';
             } else {
-                let html = '';
-                tables.forEach(t => {
-                    html +=
-                        `<li onclick="selectTable('${t}')" class="px-4 py-2 hover:bg-surface-100 cursor-pointer text-sm font-mono text-surface-800 transition-colors">${t}</li>`;
-                });
-                tableList.innerHTML = html;
+                renderRbTableDropdown(tables);
             }
 
             tableInput.disabled = false;
             if (!isAutoLoad) showToast('Berhasil dikoneksikan ke database, silakan pilih table.', 'success');
         }
 
+        function renderRbTableDropdown(tables) {
+            const tableList = document.getElementById('rbTableList');
+            const maxTables = 100;
+            const visibleTables = tables.slice(0, maxTables);
+            let html = '';
+            visibleTables.forEach(t => {
+                html +=
+                    `<li onclick="selectTable('${t}')" class="px-4 py-2 hover:bg-surface-100 cursor-pointer text-sm font-mono text-surface-800 transition-colors">${t}</li>`;
+            });
+            
+            if (tables.length > maxTables) {
+                html += `<li class="px-4 py-3 text-surface-400 text-xs text-center border-t border-surface-100 italic">Showing first ${maxTables} tables. Type to search more...</li>`;
+            }
+            tableList.innerHTML = html;
+        }
+
         function filterTableList(input) {
             const filter = input.value.toLowerCase();
-            const lis = document.getElementById('rbTableList').getElementsByTagName('li');
-            for (let i = 0; i < lis.length; i++) {
-                if (lis[i].textContent.toLowerCase().includes(filter)) {
-                    lis[i].style.display = "";
-                } else {
-                    lis[i].style.display = "none";
-                }
+            const connKey = document.getElementById('rbConnection').value;
+            if (!connKey) return;
+            
+            const tables = preloadedTables[connKey] || [];
+            const filtered = tables.filter(t => t.toLowerCase().includes(filter));
+            
+            if (filtered.length === 0) {
+                document.getElementById('rbTableList').innerHTML = '<li class="px-4 py-2 text-sm text-surface-400 italic">-- No matches found --</li>';
+            } else {
+                renderRbTableDropdown(filtered);
             }
         }
 
