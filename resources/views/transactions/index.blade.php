@@ -644,7 +644,12 @@
 
                 if (data.success) {
                     showToast(data.message || 'Filters saved successfully', 'success');
-                    setTimeout(() => location.reload(), 1000);
+                    
+                    // Update the data-filters attribute on the original button so reopening modal uses the new data
+                    const triggerBtn = document.querySelector(`button[data-key="${currentSyncEntity}"]`);
+                    if (triggerBtn) {
+                        triggerBtn.dataset.filters = JSON.stringify(custom_filters);
+                    }
                 } else {
                     showToast(data.message || 'Failed to save filters', 'error');
                 }
