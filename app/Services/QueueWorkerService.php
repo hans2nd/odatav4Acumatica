@@ -33,7 +33,7 @@ class QueueWorkerService
                     $WshShell = new \COM("WScript.Shell");
                     $WshShell->Run("cmd /c {$command}", 0, false);
                 } else {
-                    pclose(popen("start /B " . $command, "r"));
+                    pclose(popen("start /B " . $command . " > NUL 2>&1", "r"));
                 }
             } else {
                 // Detached process in Linux/Unix

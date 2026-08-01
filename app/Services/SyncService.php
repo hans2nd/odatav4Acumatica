@@ -411,7 +411,7 @@ class SyncService
                 $totalRecordsCount = $query->count();
                 $progressCallback(0, $totalRecordsCount);
                 
-                $chunkSize = 1000;
+                $chunkSize = 5000;
                 
                 $entityConfig = config("acumatica.entities.{$entityKey}");
                 $primaryKeys = $entityConfig['primary_keys'] ?? null;
