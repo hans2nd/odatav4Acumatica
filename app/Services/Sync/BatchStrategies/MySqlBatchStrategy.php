@@ -46,7 +46,7 @@ class MySqlBatchStrategy implements BatchStrategyInterface
         $connection = DB::connection($connectionName);
 
         try {
-            $affected = $connection->table($tableName)->insert($chunk) ? count($chunk) : 0;
+            $affected = $connection->table($tableName)->insertOrIgnore($chunk);
             return $affected;
         } catch (\PDOException $e) {
             \Illuminate\Support\Facades\Log::error("STEP 7 (Insert): Execute SQL (Failed with PDOException)", [

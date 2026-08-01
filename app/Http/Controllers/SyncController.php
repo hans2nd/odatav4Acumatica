@@ -56,6 +56,15 @@ class SyncController extends Controller
         $jobIds = [];
 
         foreach ($sorted as $key => $config) {
+            // Check if already running or pending for this entity
+            $activeJob = \App\Models\SyncJob::where('entity', $key)
+                ->whereIn('status', [\App\Models\SyncJob::STATUS_PENDING, \App\Models\SyncJob::STATUS_RUNNING])
+                ->first();
+
+            if ($activeJob) {
+                continue; // Skip queuing duplicate job
+            }
+
             $jobRecord = \App\Models\SyncJob::create([
                 'entity' => $key,
                 'status' => \App\Models\SyncJob::STATUS_PENDING,
@@ -172,6 +181,19 @@ class SyncController extends Controller
                     'message' => "Koneksi tidak ditemukan! Data koneksi ({$sourceConnKey}) mungkin telah dihapus atau belum dikonfigurasi. Harap periksa menu Connection Management.",
                     'error_type' => 'connection_missing'
                 ], 400);
+            }
+
+            // Check if already running or pending for this entity
+            $activeJob = \App\Models\SyncJob::where('entity', $entity)
+                ->whereIn('status', [\App\Models\SyncJob::STATUS_PENDING, \App\Models\SyncJob::STATUS_RUNNING])
+                ->first();
+
+            if ($activeJob) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Proses sinkronisasi untuk entitas ini sedang mengantre (pending) atau sedang berjalan. Harap tunggu hingga selesai.',
+                    'job_id' => $activeJob->id
+                ], 429);
             }
 
             $jobRecord = \App\Models\SyncJob::create([
