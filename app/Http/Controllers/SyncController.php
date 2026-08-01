@@ -156,7 +156,7 @@ class SyncController extends Controller
         if ($request->boolean('save_filters')) {
             \App\Models\SyncSchedule::updateOrCreate(
                 ['entity_key' => $entity],
-                ['custom_filters' => empty($customFilters) ? null : $customFilters]
+                ['custom_filters' => $customFilters]
             );
         }
 
@@ -239,7 +239,7 @@ class SyncController extends Controller
 
         \App\Models\SyncSchedule::updateOrCreate(
             ['entity_key' => $entity],
-            ['custom_filters' => empty($customFilters) ? null : $customFilters]
+            ['custom_filters' => $customFilters]
         );
 
         return response()->json([
