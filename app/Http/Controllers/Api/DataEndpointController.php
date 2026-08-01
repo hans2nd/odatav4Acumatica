@@ -76,13 +76,24 @@ class DataEndpointController extends Controller
                 $query->limit($limit);
             }
             
-            $items = $query->get();
-
-            return response()->json([
-                'data' => $items
+            // Stream the JSON response to prevent memory exhaustion (500 errors) on large tables
+            return response()->stream(function () use ($query) {
+                echo '{"data":[';
+                $first = true;
+                foreach ($query->cursor() as $row) {
+                    if (!$first) {
+                        echo ',';
+                    }
+                    echo json_encode($row);
+                    $first = false;
+                }
+                echo ']}';
+            }, 200, [
+                'Content-Type' => 'application/json',
+                'Cache-Control' => 'no-cache, must-revalidate'
             ]);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to fetch data: ' . $e->getMessage()
