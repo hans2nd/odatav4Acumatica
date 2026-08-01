@@ -164,7 +164,18 @@
                 <div class="bg-slate-600 rounded-xl p-4 flex items-center justify-between gap-4">
                     <code class="text-emerald-400 text-sm font-mono break-all" id="cronCommand">* * * * * cd
                         {{ base_path() }} && php artisan schedule:run >> /dev/null 2>&1</code>
-                    <button onclick="copyCronCommand()"
+                    <button onclick="copyCronCommand('cronCommand')"
+                        class="shrink-0 flex justify-center items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-700 text-blue text-label-sm hover:bg-slate-700 transition-all duration-200"
+                        title="Copy to clipboard">
+                        <span class="material-symbols-outlined text-[16px]">content_copy</span> Copy
+                    </button>
+                </div>
+
+                <p class="text-body-sm text-surface-600 mt-4">If your VPS disables background processes (`exec`), you must also add this second command so the server automatically runs the queue worker every minute:</p>
+                <div class="bg-slate-600 rounded-xl p-4 flex items-center justify-between gap-4">
+                    <code class="text-emerald-400 text-sm font-mono break-all" id="workerCronCommand">* * * * * cd
+                        {{ base_path() }} && php artisan queue:work --stop-when-empty --timeout=1800 --memory=1024 >> /dev/null 2>&1</code>
+                    <button onclick="copyCronCommand('workerCronCommand')"
                         class="shrink-0 flex justify-center items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-700 text-blue text-label-sm hover:bg-slate-700 transition-all duration-200"
                         title="Copy to clipboard">
                         <span class="material-symbols-outlined text-[16px]">content_copy</span> Copy
@@ -281,8 +292,8 @@
             });
         }
 
-        function copyCronCommand() {
-            const cmd = document.getElementById('cronCommand').innerText;
+        function copyCronCommand(elementId) {
+            const cmd = document.getElementById(elementId).innerText;
             navigator.clipboard.writeText(cmd).then(() => {
                 showToast('Cron command copied to clipboard!', 'success');
             }).catch(err => {
