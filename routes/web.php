@@ -24,6 +24,24 @@ Route::get('/debug-sync/{entity}', function($entity) {
     return response()->json(['success' => true, 'message' => 'Caches cleared.']);
 });
 
+Route::get('/test-save-filter', function() {
+    $entity = 'vdatamentahsalesorder';
+    $customFilters = [
+        ['field' => 'OrderDate', 'operator' => 'ge', 'value' => '2026-06-30T00:00:00.000Z']
+    ];
+
+    \App\Models\SyncSchedule::updateOrCreate(
+        ['entity_key' => $entity],
+        ['custom_filters' => $customFilters]
+    );
+
+    $sched = \App\Models\SyncSchedule::where('entity_key', $entity)->first();
+    return response()->json([
+        'raw' => $sched->getRawOriginal('custom_filters'),
+        'casted' => $sched->custom_filters
+    ]);
+});
+
 Route::get('/debug-odata/{entity}', function($entity) {
     try {
         $entityConfig = config("acumatica.entities.{$entity}");

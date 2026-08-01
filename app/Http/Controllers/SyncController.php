@@ -247,6 +247,12 @@ class SyncController extends Controller
     public function saveFilters(Request $request, string $entity): JsonResponse
     {
         $customFilters = $request->input('custom_filters', []);
+        
+        // DEBUG: Log the incoming request data
+        \Illuminate\Support\Facades\Log::info("Saving filters for {$entity}", [
+            'raw_content' => $request->getContent(),
+            'parsed_custom_filters' => $customFilters
+        ]);
 
         \App\Models\SyncSchedule::updateOrCreate(
             ['entity_key' => $entity],
