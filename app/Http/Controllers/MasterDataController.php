@@ -24,12 +24,21 @@ class MasterDataController extends Controller
         foreach ($entities as $key => $entity) {
             $connName = $entity['destination_connection'] ?? 'database_default';
             $schedule = \App\Models\SyncSchedule::where('entity_key', $key)->first();
+            $customFilters = $schedule ? $schedule->custom_filters : [];
+            while (is_string($customFilters)) {
+                $decoded = json_decode($customFilters, true);
+                if ($decoded === null && json_last_error() !== JSON_ERROR_NONE) {
+                    break;
+                }
+                $customFilters = $decoded;
+            }
+
             $entityData[$key] = [
                 'config'       => $entity,
                 'schedule'     => $schedule,
                 'table_exists' => $schemaManager->tableExists($connName, $entity['table']),
                 'records'      => $schemaManager->getRowCount($connName, $entity['table']),
-                'custom_filters' => $schedule ? $schedule->custom_filters : [],
+                'custom_filters' => $customFilters ?: [],
             ];
         }
 
