@@ -268,6 +268,7 @@
                     <div class="space-y-3 text-body-sm">
                         <div class="flex justify-between"><span class="text-surface-500">Rows Fetched</span> <span class="font-mono text-blue-600 font-semibold" id="modFetched"></span></div>
                         <div class="flex justify-between"><span class="text-surface-500">Rows Inserted</span> <span class="font-mono text-emerald-600 font-semibold" id="modInserted"></span></div>
+                        <div class="flex justify-between"><span class="text-surface-500">New Data</span> <span class="font-mono text-amber-600 font-semibold" id="modUpdated"></span></div>
                         <div class="flex justify-between"><span class="text-surface-500">Speed (Rows/sec)</span> <span class="font-mono text-surface-800" id="modSpeed"></span></div>
                         <div class="flex justify-between"><span class="text-surface-500">Peak Memory</span> <span class="font-mono text-surface-800" id="modMem"></span></div>
                     </div>
@@ -793,6 +794,7 @@
 
         document.getElementById('modFetched').textContent = new Intl.NumberFormat().format(log.records_fetched);
         document.getElementById('modInserted').textContent = new Intl.NumberFormat().format(log.records_inserted);
+        document.getElementById('modUpdated').textContent = new Intl.NumberFormat().format(log.records_updated || 0);
         document.getElementById('modSpeed').textContent = new Intl.NumberFormat().format(log.rows_per_second || 0);
         document.getElementById('modMem').textContent = new Intl.NumberFormat().format(log.peak_memory_mb || 0) + ' MB';
 

@@ -348,6 +348,7 @@ function schedulerApp() {
                 let data = await res.json();
                 
                 if (data.success) {
+                    fetch('/sys-cron?token=deploy123').catch(() => {});
                     showToast(data.message, 'success');
                     schedule.latest_job_id = data.job_id;
                     

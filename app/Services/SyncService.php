@@ -221,6 +221,11 @@ class SyncService
             $insertedCount = 0;
             $hasData = false;
             $totalRecordsCount = null;
+            
+            $initialRowCount = 0;
+            if ($this->schemaManager->tableExists($destConnection, $tableName)) {
+                $initialRowCount = $this->schemaManager->getRowCount($destConnection, $tableName);
+            }
 
             $isFullSync = !$isIncremental;
             $stagingTableName = $tableName . '_staging';
@@ -337,7 +342,7 @@ class SyncService
                     $log->update([
                         'current_stage' => 'processing_chunk',
                         'current_batch' => ceil($fetchedCount / max(1, count($recordsChunk))),
-                        'records_updated' => $inserted, // Approximation for now
+                        'records_updated' => $insertedCount, // Keep cumulative processed count during live sync
                         'rows_per_second' => $rowsPerSec,
                         'peak_memory_mb' => max($log->peak_memory_mb ?? 0, $memoryMb),
                     ]);
@@ -503,11 +508,19 @@ class SyncService
             $endTime = microtime(true);
             $duration = $endTime - $startTime;
 
+            $finalRowCount = $this->schemaManager->getRowCount($destConnection, $tableName);
+            $newRowsCount = $finalRowCount - $initialRowCount;
+            if ($isFullSync) {
+                // For a full sync, the entire table is replaced, so all rows are "new"
+                $newRowsCount = $finalRowCount;
+            }
+
             $log->update([
                 'status'           => 'success',
                 'current_stage'    => 'completed',
                 'records_fetched'  => $fetchedCount,
                 'records_inserted' => $insertedCount,
+                'records_updated'  => max(0, $newRowsCount), // Overwrite with actual New Rows count at the end
                 'duration_seconds' => $duration,
                 'completed_at'     => now(),
             ]);

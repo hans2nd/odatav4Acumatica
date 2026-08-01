@@ -280,6 +280,9 @@
             if (data.success && data.job_id) {
                 showToast(`${showEntityKey}: Synchronization has been queued.`, 'info');
                 
+                // Instantly kickstart the queue worker via Web Cron (max 50s) to avoid waiting for VPS cron
+                fetch('/sys-cron?token=deploy123').catch(() => {});
+                
                 window.pollSyncJob(data.job_id, showEntityKey, {
                     onProgress: (job) => {
                         document.getElementById('showSyncProgressBar').style.width = `${job.progress}%`;

@@ -221,8 +221,7 @@ class SyncController extends Controller
 
             return response()->json([
                 'success' => true,
-                'status' => 'queued',
-                'message' => 'Synchronization has been queued.',
+                'message' => 'Sync task dispatched to queue.',
                 'job_id' => $jobRecord->id,
             ]);
         } catch (\Throwable $e) {
