@@ -111,12 +111,14 @@
         }
 
         /* Tooltip for mini sidebar */
+        .sidebar-tooltip {
+            display: none;
+        }
         #sidebar.sidebar-mini .nav-group,
         #sidebar.sidebar-mini li {
             position: relative;
         }
         #sidebar.sidebar-mini .sidebar-tooltip {
-            display: none;
             position: absolute;
             left: 100%;
             top: 50%;
@@ -134,7 +136,8 @@
             box-shadow: 0 4px 12px rgba(0,0,0,0.3);
         }
         #sidebar.sidebar-mini .sidebar-nav-btn:hover .sidebar-tooltip,
-        #sidebar.sidebar-mini .sidebar-nav-link:hover .sidebar-tooltip {
+        #sidebar.sidebar-mini .sidebar-nav-link:hover .sidebar-tooltip,
+        #sidebar.sidebar-mini .sidebar-user-btn:hover .sidebar-tooltip {
             display: block;
         }
     </style>
