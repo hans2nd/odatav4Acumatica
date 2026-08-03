@@ -74,7 +74,7 @@
                     space. Use this if your logs are piling up.</p>
                 <div class="mt-auto pt-2">
                     <button onclick="runCommand('{{ route('sys.clear-logs') }}')"
-                        class="w-full flex justify-center items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-600 text-white text-label-md hover:bg-slate-700 transition-all duration-200 active:scale-[0.98] shadow-sm">
+                        class="w-full flex justify-center items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-600 text-white text-label-md hover:bg-amber-700 transition-all duration-200 active:scale-[0.98] shadow-sm">
                         <span class="material-symbols-outlined text-[18px]">delete_sweep</span> Clear Logs
                     </button>
                 </div>
@@ -144,7 +144,7 @@
                     to allow your browser to automatically trigger scheduled syncs while this app is open.</p>
                 <div class="mt-auto pt-2">
                     <button id="btnToggleWebCron" onclick="toggleWebCron()"
-                        class="w-full flex justify-center items-center gap-2 px-4 py-2.5 rounded-xl bg-purple-600 text-white text-label-md hover:bg-purple-700 transition-all duration-200 active:scale-[0.98] shadow-sm">
+                        class="w-full flex justify-center items-center gap-2 px-4 py-2.5 rounded-xl bg-red-600 text-black text-label-md hover:bg-red-700 transition-all duration-200 active:scale-[0.98] shadow-sm">
                         <span class="material-symbols-outlined text-[18px]" id="webCronIcon">toggle_off</span>
                         <span id="webCronText">Enable Web Cron</span>
                     </button>
