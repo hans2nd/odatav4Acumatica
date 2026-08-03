@@ -14,11 +14,14 @@
                 </div>
                 <div class="min-w-0">
                     <h2 class="text-h3 text-surface-800 truncate">Database Migration</h2>
-                    <p class="text-label-sm text-surface-400 mt-0.5 truncate">Run pending migrations to update database schema</p>
+                    <p class="text-label-sm text-surface-400 mt-0.5 truncate">Run pending migrations to update database
+                        schema</p>
                 </div>
             </div>
             <div class="p-4 sm:p-5 flex flex-col gap-3 flex-1">
-                <p class="text-body-sm text-surface-600">This will execute <code class="text-xs bg-surface-100 px-1.5 py-0.5 rounded">php artisan migrate</code> on the server. Only new
+                <p class="text-body-sm text-surface-600">This will execute <code
+                        class="text-xs bg-surface-100 px-1.5 py-0.5 rounded">php artisan migrate</code> on the server. Only
+                    new
                     migrations will be run. Existing data is preserved.</p>
                 <div class="mt-auto pt-2">
                     <button onclick="runCommand('{{ route('sys.migrate') }}')"
@@ -41,8 +44,11 @@
                 </div>
             </div>
             <div class="p-4 sm:p-5 flex flex-col gap-3 flex-1">
-                <p class="text-body-sm text-surface-600">This will execute <code class="text-xs bg-surface-100 px-1.5 py-0.5 rounded">php artisan optimize:clear</code> on the server.
-                    Useful if you recently deployed new changes or updated <code class="text-xs bg-surface-100 px-1.5 py-0.5 rounded">.env</code>.</p>
+                <p class="text-body-sm text-surface-600">This will execute <code
+                        class="text-xs bg-surface-100 px-1.5 py-0.5 rounded">php artisan optimize:clear</code> on the
+                    server.
+                    Useful if you recently deployed new changes or updated <code
+                        class="text-xs bg-surface-100 px-1.5 py-0.5 rounded">.env</code>.</p>
                 <div class="mt-auto pt-2">
                     <button onclick="runCommand('{{ route('sys.optimize') }}')"
                         class="w-full flex justify-center items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-label-md hover:bg-emerald-700 transition-all duration-200 active:scale-[0.98] shadow-sm">
@@ -64,7 +70,8 @@
                 </div>
             </div>
             <div class="p-4 sm:p-5 flex flex-col gap-3 flex-1">
-                <p class="text-body-sm text-surface-600">This will empty the contents of all log files to free up disk space. Use this if your logs are piling up.</p>
+                <p class="text-body-sm text-surface-600">This will empty the contents of all log files to free up disk
+                    space. Use this if your logs are piling up.</p>
                 <div class="mt-auto pt-2">
                     <button onclick="runCommand('{{ route('sys.clear-logs') }}')"
                         class="w-full flex justify-center items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-600 text-white text-label-md hover:bg-slate-700 transition-all duration-200 active:scale-[0.98] shadow-sm">
@@ -86,7 +93,8 @@
                 </div>
             </div>
             <div class="p-4 sm:p-5 flex flex-col gap-3 flex-1">
-                <p class="text-body-sm text-surface-600">This will execute <code class="text-xs bg-surface-100 px-1.5 py-0.5 rounded">php artisan storage:link</code> on the server.
+                <p class="text-body-sm text-surface-600">This will execute <code
+                        class="text-xs bg-surface-100 px-1.5 py-0.5 rounded">php artisan storage:link</code> on the server.
                     Required for uploaded files to be publicly accessible.</p>
                 <div class="mt-auto pt-2">
                     <button onclick="runCommand('{{ route('sys.artisan', ['command' => 'storage-link']) }}')"
@@ -132,11 +140,12 @@
                 </div>
             </div>
             <div class="p-4 sm:p-5 flex flex-col gap-3 flex-1">
-                <p class="text-body-sm text-surface-600">If you cannot configure a native VPS Cronjob, enable this feature to allow your browser to automatically trigger scheduled syncs while this app is open.</p>
+                <p class="text-body-sm text-surface-600">If you cannot configure a native VPS Cronjob, enable this feature
+                    to allow your browser to automatically trigger scheduled syncs while this app is open.</p>
                 <div class="mt-auto pt-2">
                     <button id="btnToggleWebCron" onclick="toggleWebCron()"
                         class="w-full flex justify-center items-center gap-2 px-4 py-2.5 rounded-xl bg-purple-600 text-white text-label-md hover:bg-purple-700 transition-all duration-200 active:scale-[0.98] shadow-sm">
-                        <span class="material-symbols-outlined text-[18px]" id="webCronIcon">toggle_off</span> 
+                        <span class="material-symbols-outlined text-[18px]" id="webCronIcon">toggle_off</span>
                         <span id="webCronText">Enable Web Cron</span>
                     </button>
                 </div>
@@ -144,35 +153,65 @@
         </div>
 
         {{-- Cronjob Setup Info Component --}}
-        <div class="bg-white rounded-2xl border border-surface-200/60 flex flex-col shadow-card overflow-hidden md:col-span-2">
-            <div class="px-4 sm:px-5 py-3 sm:py-4 border-b border-surface-100 flex items-center bg-surface-50/50 gap-3">
-                <div class="p-2 bg-gradient-to-br from-blue-50 to-cyan-100 rounded-lg shrink-0">
-                    <span class="material-symbols-outlined text-cyan-600 text-[18px]">schedule</span>
+        <div
+            class="bg-white rounded-2xl border border-surface-200/60 flex flex-col shadow-card overflow-hidden md:col-span-2">
+            <div
+                class="px-4 sm:px-5 py-3 sm:py-4 border-b border-surface-100 flex flex-col sm:flex-row sm:items-center justify-between bg-surface-50/50 gap-4 sm:gap-3">
+                <div class="flex items-center gap-3 min-w-0">
+                    <div class="p-2 bg-gradient-to-br from-blue-50 to-cyan-100 rounded-lg shrink-0">
+                        <span class="material-symbols-outlined text-cyan-600 text-[18px]">schedule</span>
+                    </div>
+                    <div class="min-w-0">
+                        <h2 class="text-h3 text-surface-800 truncate">VPS Cronjob Setup</h2>
+                        <p class="text-label-sm text-surface-400 mt-0.5 truncate">Background scheduler commands for your
+                            server</p>
+                    </div>
                 </div>
-                <div class="min-w-0">
-                    <h2 class="text-h3 text-surface-800 truncate">VPS Cronjob Setup</h2>
-                    <p class="text-label-sm text-surface-400 mt-0.5 truncate">Information for setting up the background scheduler on
-                        your server</p>
+
+                {{-- PHP Path Selector --}}
+                <div
+                    class="shrink-0 flex items-center gap-2 bg-white px-2 py-1.5 rounded-lg border border-surface-200 shadow-sm">
+                    <span class="text-xs text-surface-500 font-medium ml-1">PHP:</span>
+                    <select id="phpPathSelector" onchange="updateCronCommands()"
+                        class="text-sm border-none bg-transparent text-surface-700 focus:outline-none focus:ring-0 cursor-pointer font-medium py-0 pl-1 pr-6">
+                        <option value="php">Default (php)</option>
+                        <option value="/usr/local/bin/ea-php81">ea-php81 (cPanel)</option>
+                        <option value="/usr/local/bin/ea-php82">ea-php82 (cPanel)</option>
+                        <option value="/usr/local/bin/ea-php83" selected>ea-php83 (cPanel)</option>
+                        <option value="/opt/alt/php81/usr/bin/php">alt-php81 (cPanel)</option>
+                        <option value="/opt/alt/php82/usr/bin/php">alt-php82 (cPanel)</option>
+                        <option value="/opt/alt/php83/usr/bin/php">alt-php83 (cPanel)</option>
+                    </select>
                 </div>
             </div>
             <div class="p-4 sm:p-5 flex flex-col gap-4">
-                <p class="text-body-sm text-surface-600">To ensure the <strong>Automated Sync Scheduler</strong> runs properly, you must
-                    add the following Cronjob entry on your VPS or hosting panel (e.g. cPanel, aaPanel, or via <code class="text-xs bg-surface-100 px-1.5 py-0.5 rounded">crontab -e</code>). This allows Laravel to process scheduled tasks every minute.</p>
+                <p class="text-body-sm text-surface-600">To ensure the <strong>Automated Sync Scheduler</strong> runs
+                    properly, you must
+                    add the following Cronjob entry on your VPS or hosting panel (e.g. cPanel, aaPanel, or via <code
+                        class="text-xs bg-surface-100 px-1.5 py-0.5 rounded">crontab -e</code>). This allows Laravel to
+                    process scheduled tasks every minute.</p>
 
-                <div class="bg-slate-800 rounded-xl p-3 sm:p-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-                    <code class="text-emerald-400 text-xs sm:text-sm font-mono break-all leading-relaxed min-w-0" id="cronCommand">cd {{ base_path() }} && php artisan schedule:run >> /dev/null 2>&1</code>
+                <div
+                    class="bg-slate-100 rounded-xl p-3 sm:p-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                    <code class="text-emerald-400 text-xs sm:text-sm font-mono break-all leading-relaxed min-w-0"
+                        id="cronCommand">cd {{ base_path() }} && php artisan schedule:run >> /dev/null 2>&1</code>
                     <button onclick="copyCronCommand('cronCommand')"
-                        class="shrink-0 self-end sm:self-auto flex justify-center items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-700 text-slate-200 text-label-sm hover:bg-slate-600 transition-all duration-200"
+                        class="shrink-0 self-end sm:self-auto flex justify-center items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-100 text-slate-200 text-label-sm hover:bg-slate-600 transition-all duration-200"
                         title="Copy to clipboard">
                         <span class="material-symbols-outlined text-[16px]">content_copy</span> Copy
                     </button>
                 </div>
 
-                <p class="text-body-sm text-surface-600 mt-2">If your VPS disables background processes (<code class="text-xs bg-surface-100 px-1.5 py-0.5 rounded">exec</code>), you must also add this second command so the server automatically runs the queue worker every minute:</p>
-                <div class="bg-slate-800 rounded-xl p-3 sm:p-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-                    <code class="text-emerald-400 text-xs sm:text-sm font-mono break-all leading-relaxed min-w-0" id="workerCronCommand">cd {{ base_path() }} && php artisan queue:work --stop-when-empty --timeout=1800 --memory=1024 >> /dev/null 2>&1</code>
+                <p class="text-body-sm text-surface-600 mt-2">If your VPS disables background processes (<code
+                        class="text-xs bg-surface-100 px-1.5 py-0.5 rounded">exec</code>), you must also add this second
+                    command so the server automatically runs the queue worker every minute:</p>
+                <div
+                    class="bg-slate-100 rounded-xl p-3 sm:p-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                    <code class="text-emerald-400 text-xs sm:text-sm font-mono break-all leading-relaxed min-w-0"
+                        id="workerCronCommand">cd {{ base_path() }} && php artisan queue:work --stop-when-empty
+                        --timeout=1800 --memory=1024 >> /dev/null 2>&1</code>
                     <button onclick="copyCronCommand('workerCronCommand')"
-                        class="shrink-0 self-end sm:self-auto flex justify-center items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-700 text-slate-200 text-label-sm hover:bg-slate-600 transition-all duration-200"
+                        class="shrink-0 self-end sm:self-auto flex justify-center items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-100 text-slate-200 text-label-sm hover:bg-slate-600 transition-all duration-200"
                         title="Copy to clipboard">
                         <span class="material-symbols-outlined text-[16px]">content_copy</span> Copy
                     </button>
@@ -180,7 +219,9 @@
 
                 <p class="text-xs text-surface-500 mt-1 flex items-start gap-1">
                     <span class="material-symbols-outlined text-[14px] mt-0.5 shrink-0">info</span>
-                    <span>Note: Depending on your server configuration, you may need to specify the full path to PHP (e.g., <code class="bg-surface-100 px-1 py-0.5 rounded">/usr/bin/php</code> or <code class="bg-surface-100 px-1 py-0.5 rounded">/opt/alt/php82/usr/bin/php</code>).</span>
+                    <span>Note: Depending on your server configuration, you may need to specify the full path to PHP (e.g.,
+                        <code class="bg-surface-100 px-1 py-0.5 rounded">/usr/bin/php</code> or <code
+                            class="bg-surface-100 px-1 py-0.5 rounded">/opt/alt/php82/usr/bin/php</code>).</span>
                 </p>
             </div>
         </div>
@@ -191,16 +232,26 @@
 @section('scripts')
     <script>
         const token = 'deploy123'; // Matches backend security token
+        const appBasePath = @json(base_path());
 
         document.addEventListener('DOMContentLoaded', () => {
             updateWebCronBtn();
+            updateCronCommands();
         });
+
+        function updateCronCommands() {
+            const phpPath = document.getElementById('phpPathSelector').value;
+            document.getElementById('cronCommand').innerText =
+                `cd ${appBasePath} && ${phpPath} artisan schedule:run >> /dev/null 2>&1`;
+            document.getElementById('workerCronCommand').innerText =
+                `cd ${appBasePath} && ${phpPath} artisan queue:work --stop-when-empty --timeout=1800 --memory=1024 >> /dev/null 2>&1`;
+        }
 
         function updateWebCronBtn() {
             const btn = document.getElementById('btnToggleWebCron');
             const icon = document.getElementById('webCronIcon');
             const text = document.getElementById('webCronText');
-            
+
             if (localStorage.getItem('enable_web_cron') === '1') {
                 btn.classList.remove('bg-purple-600', 'hover:bg-purple-700');
                 btn.classList.add('bg-red-600', 'hover:bg-red-700');
@@ -220,7 +271,8 @@
                 showToast('Background Web Cron disabled.', 'info');
             } else {
                 localStorage.setItem('enable_web_cron', '1');
-                showToast('Background Web Cron enabled. Your browser will now process background syncs automatically.', 'success');
+                showToast('Background Web Cron enabled. Your browser will now process background syncs automatically.',
+                    'success');
             }
             updateWebCronBtn();
         }
