@@ -196,13 +196,13 @@ class SyncService
             }
 
             $finalFilters = [];
+            if ($filter) {
+                $finalFilters[] = "({$filter})";
+            }
             if (!empty($customFilterStrings)) {
                 $customCombined = implode(' and ', $customFilterStrings);
                 $finalFilters[] = "({$customCombined})";
-                $isIncremental = true;
-                Log::info("Sync [{$entityKey}] Session [{$workerId}]: Custom filters applied -> {$customCombined}. Auto-incremental filter is disabled to allow fetching historical data.");
-            } else if ($filter) {
-                $finalFilters[] = "({$filter})";
+                Log::info("Sync [{$entityKey}] Session [{$workerId}]: Custom filters applied -> {$customCombined}.");
             }
 
             $finalFilterString = implode(' and ', $finalFilters);
@@ -736,9 +736,6 @@ class SyncService
             $chunks = array_chunk($cleanData, $chunkSize);
 
             foreach ($chunks as $chunk) {
-                if (isset($chunk[0]['tstamp'])) {
-                    Log::debug('upsertTableData tstamp dump:', ['value' => $chunk[0]['tstamp'], 'type' => gettype($chunk[0]['tstamp'])]);
-                }
                 $batchStrategy->executeUpsert($destConnection, $tableName, $chunk, $primaryKeys, $columnsToUpdate);
                 $insertedOrUpdated += count($chunk);
 

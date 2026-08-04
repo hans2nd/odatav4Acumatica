@@ -15,7 +15,7 @@ class MySqlBatchStrategy implements BatchStrategyInterface
 
     public function executeUpsert(string $connectionName, string $tableName, array $chunk, array|string $uniqueKey, array $columnsToUpdate): int
     {
-        \Illuminate\Support\Facades\Log::info("STEP 4: Entering MySqlBatchStrategy::executeUpsert() for {$tableName} with " . count($chunk) . " rows");
+        \Illuminate\Support\Facades\Log::info("STEP 4: Upserting chunk of " . count($chunk) . " rows to {$tableName}");
 
         $connection = DB::connection($connectionName);
 
@@ -41,7 +41,7 @@ class MySqlBatchStrategy implements BatchStrategyInterface
 
     public function executeInsert(string $connectionName, string $tableName, array $chunk): int
     {
-        \Illuminate\Support\Facades\Log::info("STEP 4 (Insert): Entering MySqlBatchStrategy::executeInsert() for {$tableName} with " . count($chunk) . " rows");
+        \Illuminate\Support\Facades\Log::info("STEP 4: Inserting chunk of " . count($chunk) . " rows to {$tableName}");
 
         $connection = DB::connection($connectionName);
 
