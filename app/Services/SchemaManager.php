@@ -274,7 +274,10 @@ class SchemaManager
         $hashData = $clean;
         unset($hashData['_synced_at'], $hashData['_row_hash'], $hashData['_sync_id']);
         ksort($hashData);
-        $hashString = implode('|', array_map(function ($v) { return (string)($v ?? ''); }, $hashData));
+        $hashString = '';
+        foreach ($hashData as $v) {
+            $hashString .= '|' . (string)($v ?? '');
+        }
         $clean['_row_hash'] = md5($hashString);
 
         return $clean;

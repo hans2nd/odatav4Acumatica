@@ -46,7 +46,7 @@ class SyncStateService implements SyncStateServiceInterface
 
     public function startSynchronization(int $scheduleId): bool
     {
-        $this->validateSyncState($scheduleId, ['Idle', 'Completed', 'Failed', 'Paused']);
+        $this->validateSyncState($scheduleId, ['Idle', 'Completed', 'Failed', 'Paused', 'Running']);
         return $this->repository->markStarted($scheduleId);
     }
 
