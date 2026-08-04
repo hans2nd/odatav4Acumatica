@@ -25,7 +25,8 @@ class TimestampWatermark implements WatermarkInterface
     public function toFilterString(string $operator = 'gt'): string
     {
         try {
-            $utcString = Carbon::parse($this->value)->timezone('UTC')->format('Y-m-d\TH:i:s.v\Z');
+            // Treat the database value as UTC if Acumatica 25R1 always returns UTC
+            $utcString = Carbon::parse($this->value, 'UTC')->format('Y-m-d\TH:i:s.v\Z');
             return "{$this->column} {$operator} {$utcString}";
         } catch (\Exception $e) {
             return "{$this->column} {$operator} {$this->value}";
