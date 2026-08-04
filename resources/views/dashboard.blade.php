@@ -14,13 +14,20 @@
             </div>
             <div>
                 <h3 class="text-label-md text-surface-500 uppercase tracking-wider">{{ $conn['name'] ?? $key }}</h3>
-                <p class="text-body-lg font-semibold text-surface-800 mt-0.5" id="conn-label-{{ $key }}">Checking…</p>
+                <p class="text-body-lg font-semibold text-surface-800 mt-0.5" id="conn-label-{{ $key }}">{{ $conn['is_connected'] ? 'Connected' : 'Disconnected' }}</p>
             </div>
         </div>
-        <div id="conn-badge-{{ $key }}" class="flex items-center gap-1.5 px-3 py-1.5 bg-surface-100 rounded-lg border border-surface-200/60">
-            <div class="w-2 h-2 rounded-full bg-surface-400 animate-pulse"></div>
-            <span class="text-label-sm text-surface-500">…</span>
-        </div>
+        @if($conn['is_connected'])
+            <div id="conn-badge-{{ $key }}" class="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 rounded-lg border border-emerald-200/60">
+                <div class="w-2 h-2 rounded-full bg-emerald-500"></div>
+                <span class="text-label-sm text-emerald-700">Online</span>
+            </div>
+        @else
+            <div id="conn-badge-{{ $key }}" class="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 rounded-lg border border-red-200/60">
+                <div class="w-2 h-2 rounded-full bg-red-500"></div>
+                <span class="text-label-sm text-red-700">Offline</span>
+            </div>
+        @endif
     </div>
     @endforeach
 </div>

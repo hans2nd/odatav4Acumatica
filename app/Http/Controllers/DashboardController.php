@@ -23,9 +23,9 @@ class DashboardController extends Controller
             ->get() : collect();
 
         return view('dashboard', [
-            'activeConnections'  => $activeConnections,
-            'recentLogs'         => $recentLogs,
-            'activeTab'          => 'overview',
+            'activeConnections' => $activeConnections,
+            'recentLogs' => $recentLogs,
+            'activeTab' => 'overview',
         ]);
     }
 
@@ -39,13 +39,13 @@ class DashboardController extends Controller
             $conn = $connModel->toArray();
 
             $status = [
-                'connected' => false, 
-                'ping_ms' => 0, 
-                'message' => 'Not tested', 
-                'type' => $conn['type'], 
+                'connected' => false,
+                'ping_ms' => 0,
+                'message' => 'Not tested',
+                'type' => $conn['type'],
                 'name' => $conn['name'] ?? $key
             ];
-            
+
             $start = microtime(true);
             try {
                 if (in_array($conn['type'], \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes())) {
@@ -69,7 +69,7 @@ class DashboardController extends Controller
             } catch (\Exception $e) {
                 $status['message'] = $e->getMessage();
             }
-            
+
             $statuses[$key] = $status;
         }
 

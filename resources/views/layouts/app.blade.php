@@ -8,7 +8,8 @@
     <title>@yield('title', 'PL Sync — Data Warehouse')</title>
 
     <!-- Google Fonts & Material Symbols (Loaded via CDN to prevent path issues on VPS) -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap"
+        rel="stylesheet" />
     <link
         href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL,GRAD,opsz@100..700,0..1,0,24&display=swap"
         rel="stylesheet" />
@@ -70,9 +71,11 @@
             transition: width 0.3s ease-in-out;
             overflow-x: hidden;
         }
+
         #sidebar.sidebar-mini {
             width: 64px;
         }
+
         #main-content {
             transition: margin-left 0.3s ease-in-out;
         }
@@ -92,6 +95,7 @@
             padding-left: 0;
             padding-right: 0;
         }
+
         #sidebar.sidebar-mini .sidebar-icon-wrap {
             margin: 0;
             gap: 0;
@@ -114,10 +118,12 @@
         .sidebar-tooltip {
             display: none;
         }
+
         #sidebar.sidebar-mini .nav-group,
         #sidebar.sidebar-mini li {
             position: relative;
         }
+
         #sidebar.sidebar-mini .sidebar-tooltip {
             position: absolute;
             left: 100%;
@@ -133,8 +139,9 @@
             white-space: nowrap;
             z-index: 100;
             pointer-events: none;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
         }
+
         #sidebar.sidebar-mini .sidebar-nav-btn:hover .sidebar-tooltip,
         #sidebar.sidebar-mini .sidebar-nav-link:hover .sidebar-tooltip,
         #sidebar.sidebar-mini .sidebar-user-btn:hover .sidebar-tooltip {
@@ -149,7 +156,8 @@
     @include('partials.sidebar')
 
     {{-- Main Content --}}
-    <div id="main-content" class="flex-1 flex flex-col min-w-0 transition-all duration-300 ease-in-out" style="margin-left: 260px;">
+    <div id="main-content" class="flex-1 flex flex-col min-w-0 transition-all duration-300 ease-in-out"
+        style="margin-left: 260px;">
         {{-- Top Bar --}}
         <header
             class="flex justify-between items-center h-14 sm:h-16 w-full px-3 sm:px-6 bg-white/80 backdrop-blur-xl border-b border-surface-200/80 z-10 sticky top-0">
@@ -162,22 +170,20 @@
                 <span class="text-h3 text-surface-800 truncate">@yield('page-title', 'Dashboard')</span>
             </div>
             <div class="flex items-center gap-2 sm:gap-3 shrink-0">
-                <div class="flex items-center gap-1.5 sm:gap-2">
-                    {{-- Acumatica status indicator --}}
-                    <button id="acumatica-status" onclick="toggleAcumaticaConnection()"
-                        class="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 bg-surface-100 rounded-lg cursor-pointer hover:bg-surface-200 transition-all duration-200 border border-surface-200/60"
-                        title="Click to connect">
+                <!-- <div class="flex items-center gap-1.5 sm:gap-2"> -->
+                {{-- Acumatica status indicator --}}
+                <!-- <button id="acumatica-status" onclick="toggleAcumaticaConnection()"
+                        class="flex items-center px-2 py-1.5 bg-surface-100 rounded-lg cursor-pointer hover:bg-surface-200 transition-all duration-200 border border-surface-200/60"
+                        title="Acumatica: Click to connect">
                         <div class="w-2 h-2 rounded-full bg-surface-400"></div>
-                        <span class="text-label-sm text-surface-500 hidden sm:inline">Acumatica</span>
-                    </button>
-                    {{-- SQL status indicator --}}
-                    <button id="sql-status" onclick="toggleDatabaseConnection()"
-                        class="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 bg-surface-100 rounded-lg cursor-pointer hover:bg-surface-200 transition-all duration-200 border border-surface-200/60"
-                        title="Click to connect">
+                    </button> -->
+                {{-- SQL status indicator --}}
+                <!-- <button id="sql-status" onclick="toggleDatabaseConnection()"
+                        class="flex items-center px-2 py-1.5 bg-surface-100 rounded-lg cursor-pointer hover:bg-surface-200 transition-all duration-200 border border-surface-200/60"
+                        title="Database: Click to connect">
                         <div class="w-2 h-2 rounded-full bg-surface-400"></div>
-                        <span class="text-label-sm text-surface-500 hidden sm:inline">Database</span>
-                    </button>
-                </div>
+                    </button> -->
+                <!-- </div> -->
                 @auth
                     <div class="h-5 w-px bg-surface-200"></div>
                     <div class="relative" id="user-dropdown-container">
@@ -265,10 +271,10 @@
         // ── Check Acumatica (ping server) ────────────────────────────────────
         async function checkAcumaticaConnection(silent = false) {
             const acmEl = document.getElementById('acumatica-status');
-            acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-amber-500 animate-pulse-dot"></div>
-                <span class="text-label-sm text-amber-600">Connecting…</span>`;
+            acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-amber-500 animate-pulse-dot"></div>`;
             acmEl.className =
-                'flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-50 rounded-lg cursor-pointer hover:bg-amber-100 transition-all duration-200 border border-amber-200/60';
+                'flex items-center px-2 py-1.5 bg-amber-50 rounded-lg cursor-pointer hover:bg-amber-100 transition-all duration-200 border border-amber-200/60';
+            acmEl.title = 'Acumatica: Connecting...';
 
             try {
                 const res = await fetch('/api/connection-status');
@@ -276,19 +282,17 @@
 
                 if (data.acumatica && data.acumatica.connected) {
                     acumaticaConnected = true;
-                    acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-emerald-500"></div>
-                        <span class="text-label-sm text-emerald-700">Acumatica ${data.acumatica.ping_ms}ms</span>`;
+                    acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-emerald-500"></div>`;
                     acmEl.className =
-                        'flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 rounded-lg cursor-pointer hover:bg-emerald-100 transition-all duration-200 border border-emerald-200/60';
-                    acmEl.title = 'Connected — Click to disconnect';
+                        'flex items-center px-2 py-1.5 bg-emerald-50 rounded-lg cursor-pointer hover:bg-emerald-100 transition-all duration-200 border border-emerald-200/60';
+                    acmEl.title = `Acumatica: Connected (${data.acumatica.ping_ms}ms) — Click to disconnect`;
                     if (!silent) showToast('Acumatica connected successfully', 'success');
                 } else {
                     acumaticaConnected = false;
-                    acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-500"></div>
-                        <span class="text-label-sm text-red-700">Acumatica Offline</span>`;
+                    acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-500"></div>`;
                     acmEl.className =
-                        'flex items-center gap-1.5 px-2.5 py-1.5 bg-red-50 rounded-lg cursor-pointer hover:bg-red-100 transition-all duration-200 border border-red-200/60';
-                    acmEl.title = 'Connection failed — Click to retry';
+                        'flex items-center px-2 py-1.5 bg-red-50 rounded-lg cursor-pointer hover:bg-red-100 transition-all duration-200 border border-red-200/60';
+                    acmEl.title = 'Acumatica: Connection failed — Click to retry';
                     if (!silent) showToast('Acumatica connection failed', 'error');
                 }
 
@@ -297,10 +301,10 @@
                 }
             } catch (e) {
                 acumaticaConnected = false;
-                acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-500"></div>
-                    <span class="text-label-sm text-red-700">Error</span>`;
+                acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-500"></div>`;
                 acmEl.className =
-                    'flex items-center gap-1.5 px-2.5 py-1.5 bg-red-50 rounded-lg cursor-pointer hover:bg-red-100 transition-all duration-200 border border-red-200/60';
+                    'flex items-center px-2 py-1.5 bg-red-50 rounded-lg cursor-pointer hover:bg-red-100 transition-all duration-200 border border-red-200/60';
+                acmEl.title = 'Acumatica: Error';
                 if (!silent) showToast('Connection check failed: ' + e.message, 'error');
             }
         }
@@ -308,10 +312,10 @@
         // ── Check Database (ping server) ─────────────────────────────────────
         async function checkDatabaseConnection(silent = false) {
             const sqlEl = document.getElementById('sql-status');
-            sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-amber-500 animate-pulse-dot"></div>
-                <span class="text-label-sm text-amber-600">Connecting…</span>`;
+            sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-amber-500 animate-pulse-dot"></div>`;
             sqlEl.className =
-                'flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-50 rounded-lg cursor-pointer hover:bg-amber-100 transition-all duration-200 border border-amber-200/60';
+                'flex items-center px-2 py-1.5 bg-amber-50 rounded-lg cursor-pointer hover:bg-amber-100 transition-all duration-200 border border-amber-200/60';
+            sqlEl.title = 'Database: Connecting...';
 
             try {
                 const res = await fetch('/api/connection-status');
@@ -330,10 +334,10 @@
                 }
             } catch (e) {
                 databaseConnected = false;
-                sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-500"></div>
-                    <span class="text-label-sm text-red-700">Error</span>`;
+                sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-500"></div>`;
                 sqlEl.className =
-                    'flex items-center gap-1.5 px-2.5 py-1.5 bg-red-50 rounded-lg cursor-pointer hover:bg-red-100 transition-all duration-200 border border-red-200/60';
+                    'flex items-center px-2 py-1.5 bg-red-50 rounded-lg cursor-pointer hover:bg-red-100 transition-all duration-200 border border-red-200/60';
+                sqlEl.title = 'Database: Error';
                 if (!silent) showToast('Connection check failed: ' + e.message, 'error');
             }
         }
@@ -341,38 +345,34 @@
         // ── Render helpers ───────────────────────────────────────────────────
         function renderAcumaticaDisconnected() {
             const el = document.getElementById('acumatica-status');
-            el.innerHTML = `<div class="w-2 h-2 rounded-full bg-surface-400"></div>
-                <span class="text-label-sm text-surface-500">Acumatica</span>`;
+            el.innerHTML = `<div class="w-2 h-2 rounded-full bg-surface-400"></div>`;
             el.className =
-                'flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-100 rounded-lg cursor-pointer hover:bg-surface-200 transition-all duration-200 border border-surface-200/60';
-            el.title = 'Click to connect';
+                'flex items-center px-2 py-1.5 bg-surface-100 rounded-lg cursor-pointer hover:bg-surface-200 transition-all duration-200 border border-surface-200/60';
+            el.title = 'Acumatica: Click to connect';
         }
 
         function renderDatabaseDisconnected() {
             const el = document.getElementById('sql-status');
-            el.innerHTML = `<div class="w-2 h-2 rounded-full bg-surface-400"></div>
-                <span class="text-label-sm text-surface-500">Database</span>`;
+            el.innerHTML = `<div class="w-2 h-2 rounded-full bg-surface-400"></div>`;
             el.className =
-                'flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-100 rounded-lg cursor-pointer hover:bg-surface-200 transition-all duration-200 border border-surface-200/60';
-            el.title = 'Click to connect';
+                'flex items-center px-2 py-1.5 bg-surface-100 rounded-lg cursor-pointer hover:bg-surface-200 transition-all duration-200 border border-surface-200/60';
+            el.title = 'Database: Click to connect';
         }
 
         function renderAcumaticaFromData(data) {
             const acmEl = document.getElementById('acumatica-status');
             if (data.acumatica && data.acumatica.connected) {
                 acumaticaConnected = true;
-                acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-emerald-500"></div>
-                    <span class="text-label-sm text-emerald-700">Acumatica ${data.acumatica.ping_ms}ms</span>`;
+                acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-emerald-500"></div>`;
                 acmEl.className =
-                    'flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 rounded-lg cursor-pointer hover:bg-emerald-100 transition-all duration-200 border border-emerald-200/60';
-                acmEl.title = 'Connected — Click to disconnect';
+                    'flex items-center px-2 py-1.5 bg-emerald-50 rounded-lg cursor-pointer hover:bg-emerald-100 transition-all duration-200 border border-emerald-200/60';
+                acmEl.title = `Acumatica: Connected (${data.acumatica.ping_ms}ms) — Click to disconnect`;
             } else if (data.acumatica) {
                 acumaticaConnected = false;
-                acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-500"></div>
-                    <span class="text-label-sm text-red-700">Acumatica Offline</span>`;
+                acmEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-500"></div>`;
                 acmEl.className =
-                    'flex items-center gap-1.5 px-2.5 py-1.5 bg-red-50 rounded-lg cursor-pointer hover:bg-red-100 transition-all duration-200 border border-red-200/60';
-                acmEl.title = 'Connection failed — Click to retry';
+                    'flex items-center px-2 py-1.5 bg-red-50 rounded-lg cursor-pointer hover:bg-red-100 transition-all duration-200 border border-red-200/60';
+                acmEl.title = 'Acumatica: Connection failed — Click to retry';
             }
         }
 
@@ -380,19 +380,16 @@
             const sqlEl = document.getElementById('sql-status');
             if (data.database && data.database.connected) {
                 databaseConnected = true;
-                sqlEl.innerHTML =
-                    `<div class="w-2 h-2 rounded-full bg-emerald-500"></div>
-                    <span class="text-label-sm text-emerald-700">${data.database.type} ${data.database.ping_ms}ms</span>`;
+                sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-emerald-500"></div>`;
                 sqlEl.className =
-                    'flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 rounded-lg cursor-pointer hover:bg-emerald-100 transition-all duration-200 border border-emerald-200/60';
-                sqlEl.title = 'Connected — Click to disconnect';
+                    'flex items-center px-2 py-1.5 bg-emerald-50 rounded-lg cursor-pointer hover:bg-emerald-100 transition-all duration-200 border border-emerald-200/60';
+                sqlEl.title = `${data.database.type}: Connected (${data.database.ping_ms}ms) — Click to disconnect`;
             } else if (data.database) {
                 databaseConnected = false;
-                sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-500"></div>
-                    <span class="text-label-sm text-red-700">${data.database.type} Offline</span>`;
+                sqlEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-500"></div>`;
                 sqlEl.className =
-                    'flex items-center gap-1.5 px-2.5 py-1.5 bg-red-50 rounded-lg cursor-pointer hover:bg-red-100 transition-all duration-200 border border-red-200/60';
-                sqlEl.title = 'Connection failed — Click to retry';
+                    'flex items-center px-2 py-1.5 bg-red-50 rounded-lg cursor-pointer hover:bg-red-100 transition-all duration-200 border border-red-200/60';
+                sqlEl.title = `${data.database.type}: Connection failed — Click to retry`;
             }
         }
 
@@ -432,7 +429,7 @@
         }
 
         // Global Async Polling Helpers
-        window.pollSyncJob = async function(jobId, entityKey, callbacks = {}) {
+        window.pollSyncJob = async function (jobId, entityKey, callbacks = {}) {
             try {
                 const res = await fetch(`/api/sync-jobs/${jobId}`);
                 const data = await res.json();
@@ -609,7 +606,7 @@
                 const now = new Date().getTime();
                 if (!lastRun || now - parseInt(lastRun) > 300000) {
                     localStorage.setItem('last_web_cron', now.toString());
-                    fetch('/sys-cron?token=deploy123').catch(() => {});
+                    fetch('/sys-cron?token=deploy123').catch(() => { });
                 }
             }, 10000);
         });

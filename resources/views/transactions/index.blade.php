@@ -41,13 +41,13 @@
                 </div>
             </div>
 
-            <div class="flex items-end justify-between mt-auto">
+            <div class="flex flex-wrap items-end justify-between mt-auto gap-4 pt-2">
                 <div>
-                    <span class="text-[28px] font-extrabold text-surface-900 leading-none tracking-tight">{{ number_format($info['records']) }}</span>
+                    <span class="text-[28px] font-extrabold text-surface-900 leading-none tracking-tight truncate block">{{ number_format($info['records']) }}</span>
                     <p class="text-label-sm text-surface-400 mt-1">records</p>
                 </div>
 
-                <div class="flex items-center gap-2">
+                <div class="flex flex-wrap items-center justify-end gap-1.5">
                     @if($info['table_exists'])
                         <a href="{{ route('transactions.show', $key) }}"
                            class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-100 text-surface-600 hover:bg-surface-200 hover:text-surface-800 text-label-md transition-all duration-200">
