@@ -39,7 +39,7 @@ class DashboardController extends Controller
             $conn = $connModel->toArray();
 
             $status = [
-                'connected' => false,
+                'connected' => (bool) $conn['is_connected'],
                 'ping_ms' => 0,
                 'message' => 'Not tested',
                 'type' => $conn['type'],
@@ -52,7 +52,6 @@ class DashboardController extends Controller
                     if (config()->has("database.connections.{$key}")) {
                         DB::connection($key)->getPdo();
                         $elapsed = round((microtime(true) - $start) * 1000);
-                        $status['connected'] = true;
                         $status['ping_ms'] = $elapsed;
                         $status['message'] = 'Connected';
                     } else {
@@ -62,7 +61,6 @@ class DashboardController extends Controller
                     $odataService = app(\App\Services\AcumaticaODataService::class);
                     $odataService->setConnectionConfig($conn);
                     $testResult = $odataService->testConnection();
-                    $status['connected'] = $testResult['connected'] ?? false;
                     $status['ping_ms'] = $testResult['ping_ms'] ?? 0;
                     $status['message'] = $testResult['message'] ?? 'Tested';
                 }
