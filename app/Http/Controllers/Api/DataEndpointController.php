@@ -37,58 +37,91 @@ class DataEndpointController extends Controller
         }
 
         try {
+            // Mencegah timeout dan memory limit saat streaming jutaan data ke Power BI
+            set_time_limit(0);
+            ini_set('memory_limit', '2048M'); // Atau '-1' untuk unlimited
+
             $connName = $this->connectionService->resolveConnectionName($endpoint->connection_key);
-            
+
             // Allow dynamic per_page from query, default to 1000
             $perPage = $request->query('per_page', 1000);
-            if ($perPage > 5000) $perPage = 5000; // Cap it
+            if ($perPage > 5000)
+                $perPage = 5000; // Cap it
 
             $query = DB::connection($connName)->table($endpoint->table_name);
-            
+
             if (!empty($endpoint->columns) && is_array($endpoint->columns)) {
                 $query->select($endpoint->columns);
             }
-            
+
             if (!empty($endpoint->filters) && is_array($endpoint->filters)) {
                 foreach ($endpoint->filters as $filter) {
                     $field = $filter['field'] ?? null;
                     $op = $filter['operator'] ?? 'eq';
                     $val = $filter['value'] ?? '';
-                    
+
                     if ($field) {
                         $isDateField = preg_match('/date|time|_at|dt|tgl|tanggal/i', $field);
                         if ($isDateField && preg_match('/^\d{4}-\d{2}-\d{2}$/', $val)) {
                             switch ($op) {
-                                case 'eq': $query->whereDate($field, '=', $val); break;
-                                case 'ne': $query->whereDate($field, '!=', $val); break;
-                                case 'lt': $query->whereDate($field, '<', $val); break;
-                                case 'le': $query->whereDate($field, '<=', $val); break;
-                                case 'gt': $query->whereDate($field, '>', $val); break;
-                                case 'ge': $query->whereDate($field, '>=', $val); break;
-                                default: $query->whereDate($field, '=', $val); break;
+                                case 'eq':
+                                    $query->whereDate($field, '=', $val);
+                                    break;
+                                case 'ne':
+                                    $query->whereDate($field, '!=', $val);
+                                    break;
+                                case 'lt':
+                                    $query->whereDate($field, '<', $val);
+                                    break;
+                                case 'le':
+                                    $query->whereDate($field, '<=', $val);
+                                    break;
+                                case 'gt':
+                                    $query->whereDate($field, '>', $val);
+                                    break;
+                                case 'ge':
+                                    $query->whereDate($field, '>=', $val);
+                                    break;
+                                default:
+                                    $query->whereDate($field, '=', $val);
+                                    break;
                             }
                         } else {
                             switch ($op) {
-                                case 'eq': $query->where($field, '=', $val); break;
-                                case 'ne': $query->where($field, '!=', $val); break;
-                                case 'contains': $query->where($field, 'LIKE', '%' . $val . '%'); break;
-                                case 'lt': $query->where($field, '<', $val); break;
-                                case 'le': $query->where($field, '<=', $val); break;
-                                case 'gt': $query->where($field, '>', $val); break;
-                                case 'ge': $query->where($field, '>=', $val); break;
+                                case 'eq':
+                                    $query->where($field, '=', $val);
+                                    break;
+                                case 'ne':
+                                    $query->where($field, '!=', $val);
+                                    break;
+                                case 'contains':
+                                    $query->where($field, 'LIKE', '%' . $val . '%');
+                                    break;
+                                case 'lt':
+                                    $query->where($field, '<', $val);
+                                    break;
+                                case 'le':
+                                    $query->where($field, '<=', $val);
+                                    break;
+                                case 'gt':
+                                    $query->where($field, '>', $val);
+                                    break;
+                                case 'ge':
+                                    $query->where($field, '>=', $val);
+                                    break;
                             }
                         }
                     }
                 }
             }
-            
+
             // Execute the query
             // If user requests a limit, apply it to prevent huge memory spikes, otherwise get all.
             $limit = $request->query('limit');
             if ($limit) {
                 $query->limit($limit);
             }
-            
+
             // Stream the JSON response to prevent memory exhaustion (500 errors) on large tables
             return response()->stream(function () use ($query) {
                 echo '{"data":[';
@@ -97,16 +130,17 @@ class DataEndpointController extends Controller
                     if (!$first) {
                         echo ',';
                     }
-                    
+
                     // Convert numeric strings to actual floats and dates to ISO 8601 
                     // so Power BI / Excel treats them as native Numbers/Dates and formats them by the user's Region.
-                    foreach ((array)$row as $col => $val) {
+                    foreach ((array) $row as $col => $val) {
                         if (is_numeric($val) && strpos($col, 'ID') === false && strpos($col, 'CD') === false && strpos($col, 'Nbr') === false && strpos(strtolower($col), 'phone') === false) {
-                            $row->{$col} = (float)$val;
+                            $row->{$col} = (float) $val;
                         } elseif (is_string($val) && preg_match('/^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2}(\.\d+)?)?$/', $val)) {
                             try {
                                 $row->{$col} = \Carbon\Carbon::parse($val)->format('Y-m-d\TH:i:s');
-                            } catch (\Throwable $e) {}
+                            } catch (\Throwable $e) {
+                            }
                         }
                     }
 

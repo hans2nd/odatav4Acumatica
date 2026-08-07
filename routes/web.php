@@ -207,6 +207,7 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/api/query-builder/columns', [QueryBuilderController::class, 'columns']);
         Route::post('/api/query-builder/execute', [QueryBuilderController::class, 'execute']);
         Route::post('/api/query-builder/export', [QueryBuilderController::class, 'export']);
+        Route::post('/api/query-builder/save', [QueryBuilderController::class, 'save']);
         Route::get('/api/query-builder/download/{token}', [QueryBuilderController::class, 'download'])->name('query.builder.download');
     });
 
@@ -309,5 +310,10 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/api/menus/permission-matrix', [App\Http\Controllers\MenuManagementController::class, 'getPermissionMatrix'])->name('api.menus.permission-matrix');
         Route::post('/api/menus/toggle-role-permission', [App\Http\Controllers\MenuManagementController::class, 'toggleRolePermission'])->name('api.menus.toggle-role-permission');
         Route::post('/api/menus/publish', [App\Http\Controllers\MenuManagementController::class, 'publish'])->name('api.menus.publish');
+        Route::post('/menu-management/refresh-files/{route_name}', [App\Http\Controllers\MenuManagementController::class, 'refreshGeneratedFiles'])->name('menu-management.refresh-files');
     });
+    // Auto-generated route for Receivables
+    Route::get('/receivables/index', [\App\Http\Controllers\ReceivablesIndexController::class, 'index'])->name('receivables.index');
+    // Auto-generated route for Master Warehouse
+    Route::get('/master-warehouse/index', [\App\Http\Controllers\MasterWarehouseIndexController::class, 'index'])->name('master-warehouse.index');
 });

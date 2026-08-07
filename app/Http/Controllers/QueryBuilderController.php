@@ -421,4 +421,64 @@ class QueryBuilderController extends Controller
         if ($bytes >= 1024) return number_format($bytes / 1024, 2) . ' KB';
         return $bytes . ' bytes';
     }
+
+    /**
+     * Save the query into the repository.
+     */
+    public function save(Request $request): JsonResponse
+    {
+        $request->validate([
+            'connection'   => 'required|string',
+            'name'         => 'required|string|max:255',
+            'category'     => 'nullable|string|max:100',
+            'description'  => 'nullable|string',
+            'sql_text'     => 'required|string',
+            'state'        => 'nullable|array',
+            'columns'      => 'nullable|array',
+        ]);
+
+        try {
+            $connKey = $request->input('connection');
+            $conn = \App\Models\Connection::where('key', $connKey)->first();
+
+            if (!$conn) {
+                throw new \Exception("Connection not found.");
+            }
+
+            $repository = \App\Models\QueryRepository::create([
+                'uuid'                   => (string) \Illuminate\Support\Str::uuid(),
+                'database_connection_id' => $conn->id,
+                'name'                   => $request->input('name'),
+                'category'               => $request->input('category'),
+                'description'            => $request->input('description'),
+                'sql_text'               => $request->input('sql_text'),
+                'query_type'             => 'read_only',
+                'parameter_json'         => $request->input('state') ?: [],
+                'output_column_json'     => $request->input('columns') ?: [],
+                'created_by'             => auth()->id(),
+                'updated_by'             => auth()->id(),
+                'version'                => 1,
+                'is_active'              => true,
+            ]);
+
+            \App\Models\QueryRepositoryLog::create([
+                'query_repository_id' => $repository->id,
+                'user_id'             => auth()->id(),
+                'executed_at'         => now(),
+                'duration'            => 0,
+                'success'             => true,
+                'error_message'       => 'Query saved from Query Builder',
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Query saved successfully',
+                'uuid'    => $repository->uuid
+            ]);
+
+        } catch (\Throwable $e) {
+            Log::error('Query Builder save failed', ['error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => 'Failed to save query: ' . $e->getMessage()], 500);
+        }
+    }
 }

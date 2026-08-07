@@ -4,6 +4,42 @@
 @section('page-title', 'Query Builder')
 
 @section('content')
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/theme/dracula.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/addon/hint/show-hint.min.css">
+<style>
+    .CodeMirror { height: auto; min-height: 320px; border-radius: 0.75rem; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 0.875rem; }
+    .CodeMirror-scroll { min-height: 320px; }
+    .cm-s-dracula.CodeMirror, .cm-s-dracula .CodeMirror-gutters { background-color: #0f172a !important; border: none; }
+</style>
+<link href="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/css/tom-select.default.min.css" rel="stylesheet">
+<style>
+    /* Tom Select Overrides */
+    .ts-wrapper.qb-join-select .ts-control {
+        border-radius: 0.5rem; 
+        border-color: #e2e8f0; 
+        padding-top: 0.375rem; 
+        padding-bottom: 0.375rem;
+        min-height: 34px;
+        font-size: 0.875rem; 
+        background-color: white;
+        box-shadow: none;
+    }
+    .ts-wrapper.qb-join-select.focus .ts-control {
+        border-color: #7dd3fc; 
+        box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.5);
+    }
+    .ts-wrapper.qb-join-select .ts-dropdown {
+        border-radius: 0.5rem;
+        font-size: 0.875rem;
+    }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/sql/sql.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/addon/hint/show-hint.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/addon/hint/sql-hint.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/js/tom-select.complete.min.js"></script>
+
 <div class="space-y-5">
 
     {{-- Header --}}
@@ -138,7 +174,10 @@
                         <span class="material-symbols-outlined text-[14px]">add</span> Add Filter
                     </button>
                 </div>
-                <div id="qbWhereContainer" class="p-4 space-y-2">
+                <div id="qbWhereContainer" class="p-4 space-y-2 min-h-[100px] transition-colors"
+                     ondragover="event.preventDefault(); this.classList.add('bg-emerald-50')"
+                     ondragleave="this.classList.remove('bg-emerald-50')"
+                     ondrop="handleWhereDrop(event, this)">
                     <div id="qbWherePlaceholder" class="text-center py-4 border-2 border-dashed border-surface-200 rounded-xl text-surface-400">
                         <p class="text-body-sm">No filters. All rows will be returned.</p>
                     </div>
@@ -157,7 +196,10 @@
                             <span class="material-symbols-outlined text-[14px]">add</span> Add
                         </button>
                     </div>
-                    <div id="qbOrderByContainer" class="p-4 space-y-2">
+                    <div id="qbOrderByContainer" class="p-4 space-y-2 min-h-[100px] transition-colors"
+                         ondragover="event.preventDefault(); this.classList.add('bg-indigo-50')"
+                         ondragleave="this.classList.remove('bg-indigo-50')"
+                         ondrop="handleOrderByDrop(event, this)">
                         <div id="qbOrderByPlaceholder" class="text-center py-3 text-surface-400 text-body-sm">No sorting applied</div>
                     </div>
                 </div>
@@ -206,6 +248,10 @@
                     class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white text-sky-700 border border-sky-200 text-label-md font-medium hover:bg-sky-50 hover:border-sky-300 hover:shadow-md hover:shadow-sky-500/10 hover:-translate-y-0.5 transition-all duration-300 active:scale-[0.97] disabled:opacity-50 disabled:hover:-translate-y-0 disabled:hover:shadow-none disabled:cursor-not-allowed" disabled>
                     <span class="material-symbols-outlined text-[20px]">csv</span> Export CSV
                 </button>
+                <button onclick="openSaveModal()" id="btnSaveQuery"
+                    class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white text-indigo-700 border border-indigo-200 text-label-md font-medium hover:bg-indigo-50 hover:border-indigo-300 hover:shadow-md hover:shadow-indigo-500/10 hover:-translate-y-0.5 transition-all duration-300 active:scale-[0.97] disabled:opacity-50 disabled:hover:-translate-y-0 disabled:hover:shadow-none disabled:cursor-not-allowed" disabled>
+                    <span class="material-symbols-outlined text-[20px]">save</span> Save Query
+                </button>
             </div>
 
             {{-- Results --}}
@@ -231,6 +277,42 @@
     @endif
 </div>
 
+{{-- Save Query Modal --}}
+<div id="saveQueryModal" class="fixed inset-0 z-[100] hidden">
+    <div class="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onclick="closeSaveModal()"></div>
+    <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white rounded-2xl shadow-xl border border-surface-200 p-6">
+        <div class="flex items-center justify-between mb-5">
+            <h3 class="text-h4 text-surface-900 flex items-center gap-2">
+                <span class="material-symbols-outlined text-indigo-600">save</span>
+                Save Query
+            </h3>
+            <button onclick="closeSaveModal()" class="text-surface-400 hover:text-surface-700 transition-colors">
+                <span class="material-symbols-outlined">close</span>
+            </button>
+        </div>
+        
+        <div class="space-y-4">
+            <div>
+                <label class="text-label-sm text-surface-700 mb-1.5 block">Query Name <span class="text-red-500">*</span></label>
+                <input type="text" id="saveQueryName" placeholder="e.g. Daily Sales Summary" class="w-full rounded-xl border-surface-200 bg-surface-50 text-surface-800 focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2.5 px-3">
+            </div>
+            <div>
+                <label class="text-label-sm text-surface-700 mb-1.5 block">Category</label>
+                <input type="text" id="saveQueryCategory" placeholder="e.g. Sales, Inventory" class="w-full rounded-xl border-surface-200 bg-surface-50 text-surface-800 focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2.5 px-3">
+            </div>
+            <div>
+                <label class="text-label-sm text-surface-700 mb-1.5 block">Description</label>
+                <textarea id="saveQueryDesc" rows="3" placeholder="Brief description..." class="w-full rounded-xl border-surface-200 bg-surface-50 text-surface-800 focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2 px-3 resize-y"></textarea>
+            </div>
+        </div>
+
+        <div class="mt-6 flex items-center justify-end gap-3">
+            <button onclick="closeSaveModal()" class="px-5 py-2.5 rounded-xl bg-surface-100 text-surface-700 text-label-md font-medium hover:bg-surface-200 transition-colors">Cancel</button>
+            <button onclick="submitSaveQuery()" id="btnSubmitSave" class="px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-label-md font-medium hover:bg-indigo-700 shadow-sm hover:shadow-indigo-500/25 transition-all">Save</button>
+        </div>
+    </div>
+</div>
+
 <script>
     // csrfToken is already declared globally in app.blade.php
     let qbTables = [];
@@ -239,6 +321,41 @@
     let qbJoins = []; // [{type, table, on_left, on_right}]
     let qbUsedTables = new Set();
     let lastExecutedSql = '';
+    
+    // CodeMirror instance
+    let sqlEditor;
+    document.addEventListener('DOMContentLoaded', () => {
+        const textarea = document.getElementById('qbSqlPreview');
+        if (textarea) {
+            sqlEditor = CodeMirror.fromTextArea(textarea, {
+                mode: 'text/x-sql',
+                theme: 'dracula',
+                lineNumbers: true,
+                lineWrapping: true,
+                extraKeys: {"Ctrl-Space": "autocomplete"},
+                hintOptions: {
+                    tables: {}
+                }
+            });
+            sqlEditor.on('change', function(cm, changeObj) {
+                if (changeObj.origin !== 'setValue') {
+                    markSqlManuallyEdited();
+                    textarea.value = cm.getValue(); // Keep textarea in sync
+                }
+            });
+        }
+    });
+
+    function updateCodeMirrorHints() {
+        if (!sqlEditor) return;
+        let tablesHint = {};
+        for (const [table, cols] of Object.entries(qbTableColumns)) {
+            tablesHint[table] = cols.map(c => c.name);
+        }
+        sqlEditor.setOption("hintOptions", {
+            tables: tablesHint
+        });
+    }
 
     function showToast(msg, type = 'success') {
         Swal.fire({
@@ -483,6 +600,41 @@
         } catch (e) {}
     }
 
+    function handleJoinDrop(event, inputEl, idx, key) {
+        event.preventDefault();
+        inputEl.classList.remove('bg-blue-50', 'border-blue-300');
+        try {
+            const data = JSON.parse(event.dataTransfer.getData('text/plain'));
+            if (data.type === 'addField') {
+                const val = data.table + '.' + data.field;
+                inputEl.value = val;
+                updateJoin(idx, key, val);
+            }
+        } catch(e) {}
+    }
+
+    function handleWhereDrop(event, container) {
+        event.preventDefault();
+        container.classList.remove('bg-emerald-50');
+        try {
+            const data = JSON.parse(event.dataTransfer.getData('text/plain'));
+            if (data.type === 'addField') {
+                addWhereRow(data.table + '.' + data.field);
+            }
+        } catch(e) {}
+    }
+
+    function handleOrderByDrop(event, container) {
+        event.preventDefault();
+        container.classList.remove('bg-indigo-50');
+        try {
+            const data = JSON.parse(event.dataTransfer.getData('text/plain'));
+            if (data.type === 'addField') {
+                addOrderByRow(data.table + '.' + data.field);
+            }
+        } catch(e) {}
+    }
+
     function toggleField(table, field) {
         const idx = qbSelectedColumns.findIndex(c => c.table === table && c.field === field);
         if (idx >= 0) {
@@ -623,7 +775,7 @@
         }
         
         // Fallback
-        return { left: tableA + '.', right: tableB + '.' };
+        return { left: '', right: '' };
     }
 
     function renderJoinArea() {
@@ -659,10 +811,51 @@
             html += buildJoinRowHtml(join, i, tables);
         });
         container.innerHTML = html;
+
+        container.querySelectorAll('.qb-join-select').forEach(el => {
+            const ts = new TomSelect(el, {
+                create: false,
+                dropdownParent: 'body',
+                maxOptions: null
+            });
+            
+            const wrapper = ts.wrapper;
+            wrapper.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                wrapper.classList.add('bg-blue-50', 'border-blue-300');
+            });
+            wrapper.addEventListener('dragleave', (e) => {
+                wrapper.classList.remove('bg-blue-50', 'border-blue-300');
+            });
+            wrapper.addEventListener('drop', (e) => {
+                e.preventDefault();
+                wrapper.classList.remove('bg-blue-50', 'border-blue-300');
+                try {
+                    const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+                    if (data.type === 'addField') {
+                        const val = data.table + '.' + data.field;
+                        ts.setValue(val);
+                        const idx = el.getAttribute('data-idx');
+                        const key = el.getAttribute('data-key');
+                        if (idx !== null && key) {
+                            updateJoin(idx, key, val);
+                        }
+                    }
+                } catch(err) {}
+            });
+        });
     }
 
     function buildJoinRowHtml(join, idx, tables) {
         const allFields = getAllFieldOptions();
+        let optionsLeftHtml = '<option value="">-- Select Field --</option>';
+        let optionsRightHtml = '<option value="">-- Select Field --</option>';
+        
+        allFields.forEach(f => {
+            optionsLeftHtml += `<option value="${f}" ${f === join.on_left ? 'selected' : ''}>${f}</option>`;
+            optionsRightHtml += `<option value="${f}" ${f === join.on_right ? 'selected' : ''}>${f}</option>`;
+        });
+
         return `
         <div class="flex flex-wrap items-center gap-2 p-3 bg-amber-50/50 rounded-xl border border-amber-100">
             <select onchange="updateJoin(${idx}, 'type', this.value)" class="rounded-lg border-amber-200 bg-white text-label-sm py-1.5 px-2 focus:ring-amber-300">
@@ -672,13 +865,19 @@
             </select>
             <span class="text-label-sm text-surface-500 font-semibold">${join.table}</span>
             <span class="text-label-sm text-surface-400">ON</span>
-            <input type="text" value="${join.on_left}" onchange="updateJoin(${idx}, 'on_left', this.value)"
-                placeholder="table.field" list="qb-fields-list"
-                class="rounded-lg border-surface-200 bg-white text-label-sm py-1.5 px-2 w-[180px] focus:ring-brand-300">
+            
+            <select data-idx="${idx}" data-key="on_left" onchange="updateJoin(${idx}, 'on_left', this.value)"
+                class="qb-join-select rounded-lg border-surface-200 bg-white text-label-sm py-1.5 px-2 w-[240px] max-w-full focus:ring-brand-300 transition-colors">
+                ${optionsLeftHtml}
+            </select>
+            
             <span class="text-label-sm text-surface-400">=</span>
-            <input type="text" value="${join.on_right}" onchange="updateJoin(${idx}, 'on_right', this.value)"
-                placeholder="table.field" list="qb-fields-list"
-                class="rounded-lg border-surface-200 bg-white text-label-sm py-1.5 px-2 w-[180px] focus:ring-brand-300">
+            
+            <select data-idx="${idx}" data-key="on_right" onchange="updateJoin(${idx}, 'on_right', this.value)"
+                class="qb-join-select rounded-lg border-surface-200 bg-white text-label-sm py-1.5 px-2 w-[240px] max-w-full focus:ring-brand-300 transition-colors">
+                ${optionsRightHtml}
+            </select>
+
             <button onclick="removeJoin(${idx})" class="text-surface-400 hover:text-red-500 transition-colors ml-auto">
                 <span class="material-symbols-outlined text-[16px]">delete</span>
             </button>
@@ -724,11 +923,13 @@
         }
         dl.innerHTML = dataListHtml;
         
+        if (typeof updateCodeMirrorHints === 'function') updateCodeMirrorHints();
+        
         return options;
     }
 
     // ─── WHERE ────────────────────────────────────────────────
-    function addWhereRow() {
+    function addWhereRow(defaultField = null) {
         const container = document.getElementById('qbWhereContainer');
         const placeholder = document.getElementById('qbWherePlaceholder');
         if (placeholder) placeholder.remove();
@@ -761,6 +962,11 @@
             <button onclick="this.closest('.qb-where-row').remove(); updateSqlPreview(); checkWherePlaceholder();" class="text-surface-400 hover:text-red-500 transition-colors">
                 <span class="material-symbols-outlined text-[16px]">delete</span>
             </button>`;
+            
+        if (defaultField) {
+            div.querySelector('.qb-where-field').value = defaultField;
+        }
+        
         container.appendChild(div);
         updateSqlPreview();
     }
@@ -773,7 +979,7 @@
     }
 
     // ─── ORDER BY ─────────────────────────────────────────────
-    function addOrderByRow() {
+    function addOrderByRow(defaultField = null) {
         const container = document.getElementById('qbOrderByContainer');
         const placeholder = document.getElementById('qbOrderByPlaceholder');
         if (placeholder) placeholder.remove();
@@ -795,6 +1001,11 @@
             <button onclick="this.closest('.qb-orderby-row').remove(); updateSqlPreview(); checkOrderByPlaceholder();" class="text-surface-400 hover:text-red-500 transition-colors">
                 <span class="material-symbols-outlined text-[16px]">delete</span>
             </button>`;
+            
+        if (defaultField) {
+            div.querySelector('.qb-ob-field').value = defaultField;
+        }
+        
         container.appendChild(div);
         updateSqlPreview();
     }
@@ -897,7 +1108,12 @@
 
         sql += '\nLIMIT ' + limit;
 
-        previewEl.value = sql;
+        if (typeof sqlEditor !== 'undefined' && sqlEditor) {
+            sqlEditor.setValue(sql);
+            previewEl.value = sql;
+        } else {
+            previewEl.value = sql;
+        }
     }
 
     function copySql() {
@@ -913,6 +1129,7 @@
         document.getElementById('btnExecute').disabled = !enabled;
         document.getElementById('btnExportXlsx').disabled = !enabled;
         document.getElementById('btnExportCsv').disabled = !enabled;
+        if(document.getElementById('btnSaveQuery')) document.getElementById('btnSaveQuery').disabled = !enabled;
     }
 
     // ─── Execute ──────────────────────────────────────────────
@@ -1057,6 +1274,102 @@
         } finally {
             btn.disabled = false;
             btn.innerHTML = origHtml;
+        }
+    }
+
+    // ─── Save Query ───────────────────────────────────────────
+    function openSaveModal() {
+        document.getElementById('saveQueryName').value = '';
+        document.getElementById('saveQueryCategory').value = '';
+        document.getElementById('saveQueryDesc').value = '';
+        document.getElementById('saveQueryModal').classList.remove('hidden');
+    }
+
+    function closeSaveModal() {
+        document.getElementById('saveQueryModal').classList.add('hidden');
+    }
+
+    async function submitSaveQuery() {
+        const name = document.getElementById('saveQueryName').value.trim();
+        const category = document.getElementById('saveQueryCategory').value.trim();
+        const desc = document.getElementById('saveQueryDesc').value.trim();
+        const connKey = document.getElementById('qbConnection').value;
+        const rawSql = document.getElementById('qbSqlPreview').value.trim();
+
+        if (!name) {
+            showToast('Query Name is required', 'error');
+            return;
+        }
+        if (!connKey || !rawSql || rawSql === '-- Your query will appear here') {
+            showToast('No query to save', 'error');
+            return;
+        }
+
+        const btn = document.getElementById('btnSubmitSave');
+        const origText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="material-symbols-outlined spin text-[16px] align-middle">sync</span> Saving...';
+
+        const filters = [];
+        document.querySelectorAll('.qb-where-row').forEach(row => {
+            const field = row.querySelector('.qb-where-field')?.value;
+            const op = row.querySelector('.qb-where-op')?.value;
+            const val = row.querySelector('.qb-where-val')?.value;
+            if (field) filters.push({ field, operator: op, value: val });
+        });
+        
+        const orderBy = [];
+        document.querySelectorAll('.qb-orderby-row').forEach(row => {
+            const field = row.querySelector('.qb-ob-field')?.value;
+            const dir = row.querySelector('.qb-ob-dir')?.value || 'ASC';
+            if (field) orderBy.push({ field, direction: dir });
+        });
+
+        const state = {
+            columns: qbSelectedColumns,
+            joins: qbJoins,
+            tables: [...qbUsedTables],
+            filters,
+            orderBy,
+            limit: parseInt(document.getElementById('qbLimit').value) || 500,
+            isSqlManuallyEdited
+        };
+        
+        let outColumns = [];
+        const thead = document.getElementById('qbResultHead');
+        if (thead) {
+            thead.querySelectorAll('th').forEach(th => outColumns.push(th.innerText.trim()));
+        }
+
+        const payload = {
+            connection: connKey,
+            name: name,
+            category: category,
+            description: desc,
+            sql_text: rawSql,
+            state: state,
+            columns: outColumns
+        };
+
+        try {
+            const res = await fetch('/api/query-builder/save', {
+                method: 'POST',
+                headers: { 'X-CSRF-TOKEN': csrfToken, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                showToast('Query saved successfully!');
+                closeSaveModal();
+            } else {
+                throw new Error(data.message);
+            }
+        } catch (err) {
+            showToast(err.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = origText;
         }
     }
 

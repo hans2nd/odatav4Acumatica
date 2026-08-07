@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class Menu extends Model
 {
     protected $fillable = [
-        'parent_id', 'module_id', 'title', 'icon', 'route_name',
+        'parent_id', 'module_id', 'query_repository_id', 'title', 'icon', 'route_name',
         'route_params', 'sort_order', 'is_active', 'is_visible',
         'permission_key', 'type', 'badge', 'open_in_new_tab',
     ];
@@ -24,6 +24,11 @@ class Menu extends Model
     public function module()
     {
         return $this->belongsTo(Module::class);
+    }
+
+    public function queryRepository()
+    {
+        return $this->belongsTo(QueryRepository::class, 'query_repository_id');
     }
 
     public function parent()

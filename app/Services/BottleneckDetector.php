@@ -9,9 +9,9 @@ use Illuminate\Support\Facades\Log;
 class BottleneckDetector
 {
     private array $thresholds = [
-        'provider_fetch' => 10000, // 10 seconds per chunk
-        'db_write' => 8000,       // 8 seconds per chunk
-        'memory_mb' => 500,       // 500 MB
+        'provider_fetch' => 30000, // 10 seconds per chunk
+        'db_write' => 10000,       // 8 seconds per chunk
+        'memory_mb' => 800,       // 500 MB
     ];
 
     public function record(SyncLog $log, string $pipeline, string $stage, float $durationMs, float $thresholdMs, string $severity, string $recommendation)

@@ -24,10 +24,12 @@ class MenuManagementController extends Controller
     {
         $roles = Role::orderBy('name')->get();
         $permissions = Permission::orderBy('permission_key')->get();
+        $queryRepositories = \App\Models\QueryRepository::where('is_active', true)->orderBy('name')->get();
 
         return view('menu-management.index', [
             'roles' => $roles,
             'permissions' => $permissions,
+            'queryRepositories' => $queryRepositories,
             'activeTab' => 'menu-management',
         ]);
     }
@@ -61,6 +63,7 @@ class MenuManagementController extends Controller
             'is_visible' => 'nullable|boolean',
             'open_in_new_tab' => 'nullable|boolean',
             'generate_files' => 'nullable|boolean',
+            'query_repository_id' => 'nullable|integer|exists:query_repositories,id',
         ]);
 
         // Determine sort_order (append to end)
@@ -119,7 +122,7 @@ class MenuManagementController extends Controller
         }
 
         if ($request->generate_files && $menu->type === 'link' && !empty($menu->route_name)) {
-            $this->generateRouteAndFiles($menu->route_name, $menu->title);
+            $this->generateRouteAndFiles($menu->route_name, $menu->title, $menu->query_repository_id);
         }
 
         Cache::forget('sidebar_menus');
@@ -155,6 +158,7 @@ class MenuManagementController extends Controller
             'is_visible' => 'nullable|boolean',
             'open_in_new_tab' => 'nullable|boolean',
             'generate_files' => 'nullable|boolean',
+            'query_repository_id' => 'nullable|integer|exists:query_repositories,id',
         ]);
 
         // Prevent menu from being its own parent
@@ -211,7 +215,7 @@ class MenuManagementController extends Controller
             $this->deleteRouteAndFiles($oldRouteName);
         }
         if (!empty($menu->route_name)) {
-            $this->generateRouteAndFiles($menu->route_name, $menu->title);
+            $this->generateRouteAndFiles($menu->route_name, $menu->title, $menu->query_repository_id);
         }
 
 
@@ -558,7 +562,7 @@ class MenuManagementController extends Controller
         }
 
         $menuPermIds = $menu->permissions->pluck('id')->toArray();
-        
+
         // If the menu has a permission_key but no permissions attached in menu_permissions, we should try to find the permission by key.
         if (empty($menuPermIds)) {
             $permission = Permission::where('permission_key', $menu->permission_key)->first();
@@ -594,10 +598,10 @@ class MenuManagementController extends Controller
     /**
      * Auto-generate controller, view, and web.php route entry.
      */
-    private function generateRouteAndFiles(string $routeName, string $title)
+    private function generateRouteAndFiles(string $routeName, string $title, ?int $queryRepositoryId = null, bool $forceOverwrite = false)
     {
-        // Validate if route already exists in Laravel's loaded routes
-        if (Route::has($routeName)) {
+        // Validate if route already exists in Laravel's loaded routes and we're not forcing overwrite
+        if (Route::has($routeName) && !$forceOverwrite) {
             return; // Route already exists, do not generate
         }
 
@@ -619,9 +623,73 @@ class MenuManagementController extends Controller
         $controllerFile = app_path("Http/Controllers/{$controllerName}.php");
         $viewFile = resource_path("views/{$viewPath}/index.blade.php");
 
-        // Generate Controller if not exists
-        if (!\Illuminate\Support\Facades\File::exists($controllerFile)) {
-            $stub = <<<PHP
+        // Generate Controller if not exists or if force overwriting
+        if ($forceOverwrite || !\Illuminate\Support\Facades\File::exists($controllerFile)) {
+            if ($queryRepositoryId) {
+                $stub = <<<PHP
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use App\Models\QueryRepository;
+use App\Models\Connection;
+use Illuminate\Support\Facades\DB;
+
+class {$controllerName} extends Controller
+{
+    public function index(Request \$request)
+    {
+        \$queryId = {$queryRepositoryId};
+        \$queryRepo = QueryRepository::find(\$queryId);
+        
+        if (!\$queryRepo) {
+            return view('{$routeName}.index', ['error' => 'Query repository not found.']);
+        }
+        
+        \$conn = Connection::find(\$queryRepo->database_connection_id);
+        if (!\$conn) {
+            return view('{$routeName}.index', ['error' => 'Database connection not found.']);
+        }
+        
+        \$config = [
+            'driver'   => \$conn->db_connection,
+            'host'     => \$conn->db_host,
+            'port'     => \$conn->db_port,
+            'database' => \$conn->db_database,
+            'username' => \$conn->db_username,
+            'password' => \$conn->db_password,
+        ];
+        config(['database.connections.dynamic_query_view' => \$config]);
+        
+        \$rawSql = \$queryRepo->sql_text;
+        \$columns = is_array(\$queryRepo->output_column_json) ? \$queryRepo->output_column_json : json_decode(\$queryRepo->output_column_json, true) ?? [];
+        
+        \$query = DB::connection('dynamic_query_view')->query()->fromSub(\$rawSql, 'subquery');
+        
+        foreach (\$columns as \$col) {
+            \$field = is_array(\$col) ? (\$col['field'] ?? null) : \$col;
+            if (\$field && \$request->filled(\$field)) {
+                \$query->where(\$field, 'LIKE', '%' . \$request->input(\$field) . '%');
+            }
+        }
+        
+        try {
+            // Using simplePaginate or paginate based on needs, paginate is standard
+            \$results = \$query->paginate(20);
+        } catch (\Exception \$e) {
+            return view('{$routeName}.index', ['error' => \$e->getMessage()]);
+        }
+        
+        return view('{$routeName}.index', [
+            'results' => \$results,
+            'columns' => \$columns,
+        ]);
+    }
+}
+PHP;
+            } else {
+                $stub = <<<PHP
 <?php
 
 namespace App\Http\Controllers;
@@ -636,13 +704,107 @@ class {$controllerName} extends Controller
     }
 }
 PHP;
+            }
             \Illuminate\Support\Facades\File::put($controllerFile, $stub);
         }
 
-        // Generate View if not exists
-        if (!\Illuminate\Support\Facades\File::exists($viewFile)) {
+        // Generate View if not exists or if force overwriting
+        if ($forceOverwrite || !\Illuminate\Support\Facades\File::exists($viewFile)) {
             \Illuminate\Support\Facades\File::makeDirectory(dirname($viewFile), 0755, true, true);
-            $viewStub = <<<BLADE
+
+            if ($queryRepositoryId) {
+                $viewStub = <<<BLADE
+@extends('layouts.app')
+
+@section('content')
+<div class="space-y-6">
+    <div class="flex items-center justify-between animate-fade-up">
+        <div>
+            <h2 class="text-h2 text-surface-900">{\$title}</h2>
+            <p class="text-body-md text-surface-500 mt-0.5">Data generated from Query Builder</p>
+        </div>
+        <form method="POST" action="{{ route('menu-management.refresh-files', ['route_name' => '{\$routeName}']) }}" onsubmit="return confirm('Regenerate files to pull latest columns from Query Builder?');">
+            @csrf
+            <button type="submit" class="flex items-center gap-2 px-4 py-2.5 bg-white border border-surface-200 text-surface-700 hover:bg-surface-50 hover:text-surface-900 rounded-xl text-label-md transition-all shadow-sm">
+                <span class="material-symbols-outlined text-[18px]">refresh</span> Refresh Columns
+            </button>
+        </form>
+    </div>
+
+    @if(isset(\$error))
+        <div class="p-4 bg-red-50 text-red-600 rounded-xl border border-red-200 animate-fade-up">
+            {{ \$error }}
+        </div>
+    @else
+        <!-- Filter Form -->
+        <div class="bg-white rounded-2xl shadow-sm border border-surface-200/80 p-5 animate-fade-up" style="animation-delay: 0.1s">
+            <form method="GET" action="{{ url()->current() }}" class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                @foreach(\$columns as \$col)
+                    @php \$field = is_array(\$col) ? (\$col['field'] ?? null) : \$col; @endphp
+                    @if(\$field)
+                    <div>
+                        <label class="block text-label-sm text-surface-700 mb-1.5">{{ Str::title(str_replace('_', ' ', \$field)) }}</label>
+                        <input type="text" name="{{ \$field }}" value="{{ request(\$field) }}" placeholder="Search..." class="w-full bg-white border border-surface-300 rounded-xl px-3 py-2 text-body-sm text-surface-900 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-all">
+                    </div>
+                    @endif
+                @endforeach
+                <div class="md:col-span-3 lg:col-span-4 flex justify-end gap-3 mt-2">
+                    <a href="{{ url()->current() }}" class="px-5 py-2.5 bg-white border border-surface-200 text-surface-700 hover:bg-surface-50 rounded-xl text-label-md transition-all">Clear</a>
+                    <button type="submit" class="px-5 py-2.5 bg-brand-600 text-white hover:bg-brand-700 rounded-xl text-label-md transition-all shadow-sm shadow-brand-500/20">Apply Filters</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Data Table -->
+        <div class="bg-white rounded-2xl shadow-sm border border-surface-200/80 overflow-hidden animate-fade-up" style="animation-delay: 0.2s">
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-surface-50/50 border-b border-surface-200">
+                            @foreach(\$columns as \$col)
+                                @php \$field = is_array(\$col) ? (\$col['field'] ?? null) : \$col; @endphp
+                                @if(\$field)
+                                <th class="px-6 py-4 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">{{ Str::title(str_replace('_', ' ', \$field)) }}</th>
+                                @endif
+                            @endforeach
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-surface-100 text-body-sm text-surface-700">
+                        @forelse(\$results as \$row)
+                            <tr class="hover:bg-surface-50/80 transition-colors">
+                                @foreach(\$columns as \$col)
+                                    @php \$field = is_array(\$col) ? (\$col['field'] ?? null) : \$col; @endphp
+                                    @if(\$field)
+                                    <td class="px-6 py-4 whitespace-nowrap">{{ \$row->{\$field} ?? '-' }}</td>
+                                    @endif
+                                @endforeach
+                            </tr>
+                        @empty
+                            <tr>
+                                <td colspan="{{ count(\$columns) }}" class="px-6 py-12 text-center text-surface-500">
+                                    <div class="flex flex-col items-center justify-center">
+                                        <span class="material-symbols-outlined text-[48px] text-surface-300 mb-2">database</span>
+                                        <p class="text-label-md text-surface-600">No data found matching your filters.</p>
+                                    </div>
+                                </td>
+                            </tr>
+                        @endforelse
+                    </tbody>
+                </table>
+            </div>
+            
+            @if(method_exists(\$results, 'links'))
+                <div class="p-4 border-t border-surface-200/80 bg-surface-50/30">
+                    {{ \$results->links() }}
+                </div>
+            @endif
+        </div>
+    @endif
+</div>
+@endsection
+BLADE;
+            } else {
+                $viewStub = <<<BLADE
 @extends('layouts.app')
 
 @section('content')
@@ -654,6 +816,7 @@ PHP;
 </div>
 @endsection
 BLADE;
+            }
             // Replace the dummy $title and $routeName vars to actual strings in the stub above.
             $viewStub = str_replace(['{\$title}', '{\$routeName}'], [$title, $routeName], $viewStub);
             \Illuminate\Support\Facades\File::put($viewFile, $viewStub);
@@ -710,7 +873,7 @@ BLADE;
         // 3. Cleanup empty directories upwards
         $currentDir = $viewDir;
         $baseViewsDir = resource_path('views');
-        
+
         while ($currentDir && str_starts_with($currentDir, $baseViewsDir) && $currentDir !== $baseViewsDir) {
             if (\Illuminate\Support\Facades\File::isDirectory($currentDir)) {
                 $contents = @scandir($currentDir);
@@ -739,5 +902,25 @@ BLADE;
                 \Illuminate\Support\Facades\File::put($routesFile, $newRoutesContent);
             }
         }
+    }
+
+
+    /**
+     * Refresh the generated files for a menu to update columns from query builder.
+     */
+    public function refreshGeneratedFiles(Request $request, string $routeName)
+    {
+        $menu = Menu::where('route_name', $routeName)->first();
+        if (!$menu) {
+            return redirect()->back()->with('error', 'Menu not found.');
+        }
+
+        if (!$menu->query_repository_id) {
+            return redirect()->back()->with('error', 'Menu is not linked to a Query Repository.');
+        }
+
+        $this->generateRouteAndFiles($menu->route_name, $menu->title, $menu->query_repository_id, true);
+
+        return redirect()->back()->with('success', 'Columns and UI successfully refreshed!');
     }
 }

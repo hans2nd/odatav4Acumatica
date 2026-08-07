@@ -184,6 +184,18 @@
                                 <p id="routePreviewUri" class="text-[11px] text-surface-400 mt-1 hidden"></p>
                             </div>
 
+                            {{-- Query Repository Selection --}}
+                            <div id="queryRepoGroup">
+                                <label class="block text-xs font-medium text-surface-700 mb-1">Link to Saved Query (Auto UI)</label>
+                                <select id="editQueryRepositoryId" class="w-full px-3.5 py-2 bg-surface-50 border border-surface-200 rounded-xl text-surface-900 text-xs outline-none">
+                                    <option value="">-- No Query (Blank Page) --</option>
+                                    @foreach($queryRepositories as $query)
+                                        <option value="{{ $query->id }}">{{ $query->name }}</option>
+                                    @endforeach
+                                </select>
+                                <p class="text-[11px] text-surface-400 mt-1">If selected, the system will auto-generate a data table and filter UI.</p>
+                            </div>
+
                             {{-- Permission Key --}}
                             <div>
                                 <label class="block text-xs font-medium text-surface-700 mb-1">Permission Key</label>
@@ -673,6 +685,7 @@
         document.getElementById('editIsActive').checked = item.is_active !== false;
         document.getElementById('editIsVisible').checked = item.is_visible !== false;
         document.getElementById('editOpenNewTab').checked = item.open_in_new_tab === true;
+        document.getElementById('editQueryRepositoryId').value = item.query_repository_id || '';
 
         // Update icon preview
         const iconPreview = document.getElementById('iconPreview');
@@ -718,6 +731,7 @@
         const type = document.getElementById('editType').value;
         const isLink = type === 'link';
         document.getElementById('routePickerGroup').classList.toggle('hidden', !isLink);
+        document.getElementById('queryRepoGroup').classList.toggle('hidden', !isLink);
         document.getElementById('iconPickerGroup').classList.toggle('hidden', type === 'divider');
     }
 
@@ -738,6 +752,7 @@
             is_visible: document.getElementById('editIsVisible').checked,
             open_in_new_tab: document.getElementById('editOpenNewTab').checked,
             generate_files: document.getElementById('editGenerateFiles')?.checked || false,
+            query_repository_id: document.getElementById('editQueryRepositoryId').value || null,
         };
 
         // Include parent_id when creating a new child menu
