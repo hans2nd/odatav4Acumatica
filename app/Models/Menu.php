@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class Menu extends Model
 {
     protected $fillable = [
-        'parent_id', 'module_id', 'query_repository_id', 'title', 'icon', 'route_name',
+        'parent_id', 'module_id', 'query_repository_id', 'filter_config', 'title', 'icon', 'route_name',
         'route_params', 'sort_order', 'is_active', 'is_visible',
         'permission_key', 'type', 'badge', 'open_in_new_tab',
     ];
@@ -17,6 +17,7 @@ class Menu extends Model
         'is_visible' => 'boolean',
         'open_in_new_tab' => 'boolean',
         'route_params' => 'array',
+        'filter_config' => 'array',
     ];
 
     // --- Relationships ---

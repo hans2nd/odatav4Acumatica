@@ -4,10 +4,10 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 
-class ReceivablesIndexController extends Controller
+class PiutangIndexController extends Controller
 {
     public function index()
     {
-        return view('receivables.index.index');
+        return view('piutang.index.index');
     }
 }

@@ -180,20 +180,41 @@
                             {{-- Route Name Manual Override --}}
                             <div id="routePickerGroup">
                                 <label class="block text-xs font-medium text-surface-700 mb-1">Custom Route Name</label>
-                                <input type="text" id="editRouteNameManual" oninput="document.getElementById('editRouteName').value = this.value" class="w-full px-3.5 py-2 bg-surface-50 border border-surface-200 rounded-xl text-surface-900 text-xs outline-none" placeholder="laporan-penjualan.index">
+                                <input type="text" id="editRouteNameManual" list="routeDataList" oninput="document.getElementById('editRouteName').value = this.value" class="w-full px-3.5 py-2 bg-surface-50 border border-surface-200 rounded-xl text-surface-900 text-xs outline-none" placeholder="laporan-penjualan.index">
+                                <datalist id="routeDataList"></datalist>
                                 <p id="routePreviewUri" class="text-[11px] text-surface-400 mt-1 hidden"></p>
                             </div>
 
                             {{-- Query Repository Selection --}}
                             <div id="queryRepoGroup">
                                 <label class="block text-xs font-medium text-surface-700 mb-1">Link to Saved Query (Auto UI)</label>
-                                <select id="editQueryRepositoryId" class="w-full px-3.5 py-2 bg-surface-50 border border-surface-200 rounded-xl text-surface-900 text-xs outline-none">
+                                <select id="editQueryRepositoryId" onchange="loadQueryColumns(this.value)" class="w-full px-3.5 py-2 bg-surface-50 border border-surface-200 rounded-xl text-surface-900 text-xs outline-none">
                                     <option value="">-- No Query (Blank Page) --</option>
                                     @foreach($queryRepositories as $query)
                                         <option value="{{ $query->id }}">{{ $query->name }}</option>
                                     @endforeach
                                 </select>
                                 <p class="text-[11px] text-surface-400 mt-1">If selected, the system will auto-generate a data table and filter UI.</p>
+                            </div>
+
+                            {{-- Filter Configuration --}}
+                            <div id="filterConfigGroup" class="hidden border border-surface-200 rounded-xl bg-surface-50/50 overflow-hidden mt-3">
+                                <div class="px-3.5 py-2 bg-surface-100/50 border-b border-surface-200 flex justify-between items-center cursor-pointer" onclick="document.getElementById('filterConfigContent').classList.toggle('hidden')">
+                                    <span class="text-xs font-semibold text-surface-700 flex items-center gap-1.5"><span class="material-symbols-outlined text-[16px]">filter_list</span> UI Filters Configuration</span>
+                                    <span class="text-[10px] text-surface-500">Click to expand</span>
+                                </div>
+                                <div id="filterConfigContent" class="hidden p-3 space-y-3">
+                                    <div class="flex gap-2">
+                                        <select id="availableColumnsSelect" class="flex-1 px-3 py-1.5 bg-white border border-surface-200 rounded-lg text-xs outline-none">
+                                            <option value="">-- Select Column --</option>
+                                        </select>
+                                        <button type="button" onclick="addFilterConfig()" class="px-3 py-1.5 bg-brand-600 text-white text-xs font-medium rounded-lg hover:bg-brand-700 transition-colors">Add Filter</button>
+                                    </div>
+                                    <div id="activeFiltersList" class="space-y-2">
+                                        <!-- Filter Items will be rendered here -->
+                                    </div>
+                                    <p class="text-[10px] text-surface-400 mt-1">Leave empty to use all columns (legacy behavior).</p>
+                                </div>
                             </div>
 
                             {{-- Permission Key --}}
@@ -687,6 +708,14 @@
         document.getElementById('editOpenNewTab').checked = item.open_in_new_tab === true;
         document.getElementById('editQueryRepositoryId').value = item.query_repository_id || '';
 
+        // Reset and Load Filter Config
+        activeFilterConfig = Array.isArray(item.filter_config) ? item.filter_config : (item.filter_config === null ? null : []);
+        if (item.query_repository_id) {
+            loadQueryColumns(item.query_repository_id);
+        } else {
+            document.getElementById('filterConfigGroup').classList.add('hidden');
+        }
+
         // Update icon preview
         const iconPreview = document.getElementById('iconPreview');
         iconPreview.textContent = item.icon || 'help';
@@ -753,6 +782,7 @@
             open_in_new_tab: document.getElementById('editOpenNewTab').checked,
             generate_files: document.getElementById('editGenerateFiles')?.checked || false,
             query_repository_id: document.getElementById('editQueryRepositoryId').value || null,
+            filter_config: activeFilterConfig, // Can be null, [], or array of filters
         };
 
         // Include parent_id when creating a new child menu
@@ -811,9 +841,12 @@
         document.getElementById('editIsActive').checked = true;
         document.getElementById('editIsVisible').checked = true;
         document.getElementById('editOpenNewTab').checked = false;
+        document.getElementById('editQueryRepositoryId').value = '';
         document.getElementById('iconPreview').textContent = 'link';
         document.getElementById('routePreviewUri').classList.add('hidden');
         document.getElementById('editMenuId').dataset.parentId = '';
+        document.getElementById('filterConfigGroup').classList.add('hidden');
+        activeFilterConfig = null;
 
         const btnDelete = document.getElementById('btnDeleteMenu');
         if (btnDelete) btnDelete.classList.add('hidden');
@@ -1026,10 +1059,12 @@
         document.getElementById('editPermissionKey').value = '';
         document.getElementById('editBadge').value = '';
         document.getElementById('editIsActive').checked = true;
-        document.getElementById('editIsVisible').checked = true;
         document.getElementById('editOpenNewTab').checked = false;
+        document.getElementById('editQueryRepositoryId').value = '';
         document.getElementById('iconPreview').textContent = 'link';
         document.getElementById('editMenuId').dataset.parentId = parentId;
+        document.getElementById('filterConfigGroup').classList.add('hidden');
+        activeFilterConfig = null;
 
         const btnDelete = document.getElementById('btnDeleteMenu');
         if (btnDelete) btnDelete.classList.add('hidden');
@@ -1380,5 +1415,169 @@
             checkbox.disabled = false;
         }
     }
+    
+    // ========== FILTER CONFIG LOGIC ==========
+    let availableQueryColumns = [];
+    let activeFilterConfig = null; // null = legacy (all columns), [] = empty, [...] = explicit
+
+    async function loadQueryColumns(queryId) {
+        const group = document.getElementById('filterConfigGroup');
+        const select = document.getElementById('availableColumnsSelect');
+        
+        if (!queryId) {
+            group.classList.add('hidden');
+            availableQueryColumns = [];
+            return;
+        }
+        
+        group.classList.remove('hidden');
+        select.innerHTML = '<option value="">Loading...</option>';
+        select.disabled = true;
+
+        try {
+            const res = await fetch(`/api/report/query-repository/${queryId}/columns`);
+            const data = await res.json();
+            
+            if (data.success) {
+                availableQueryColumns = data.columns;
+                populateColumnsSelect();
+                renderActiveFilters();
+            } else {
+                select.innerHTML = '<option value="">Error loading columns</option>';
+            }
+        } catch (e) {
+            console.error(e);
+            select.innerHTML = '<option value="">Error loading columns</option>';
+        } finally {
+            select.disabled = false;
+        }
+    }
+
+    function populateColumnsSelect() {
+        const select = document.getElementById('availableColumnsSelect');
+        select.innerHTML = '<option value="">-- Select Column --</option>';
+        
+        availableQueryColumns.forEach(col => {
+            const opt = document.createElement('option');
+            opt.value = col.field;
+            opt.textContent = col.field;
+            select.appendChild(opt);
+        });
+    }
+
+    function renderActiveFilters() {
+        const container = document.getElementById('activeFiltersList');
+        container.innerHTML = '';
+        
+        if (!activeFilterConfig || activeFilterConfig.length === 0) {
+            container.innerHTML = '<p class="text-[10px] text-surface-400 italic">No explicit filters added.</p>';
+            return;
+        }
+
+        activeFilterConfig.forEach((filter, index) => {
+            const operators = [
+                {val: 'contains', label: 'Contains'},
+                {val: 'starts_with', label: 'Starts With'},
+                {val: 'ends_with', label: 'Ends With'},
+                {val: 'equals', label: 'Equals'},
+                {val: 'greater_than', label: '>'},
+                {val: 'greater_than_or_equal', label: '>='},
+                {val: 'less_than', label: '<'},
+                {val: 'less_than_or_equal', label: '<='},
+                {val: 'before', label: 'Before'},
+                {val: 'after', label: 'After'},
+                {val: 'between', label: 'Between'}
+            ];
+            
+            const types = [
+                {val: 'text', label: 'Text'},
+                {val: 'number', label: 'Number'},
+                {val: 'date', label: 'Date'},
+                {val: 'date_range', label: 'Date Range'}
+            ];
+
+            const html = `
+                <div class="p-2 border border-surface-200 bg-white rounded-lg flex flex-col gap-2">
+                    <div class="flex justify-between items-center">
+                        <span class="text-xs font-semibold text-brand-600">${filter.field}</span>
+                        <button type="button" onclick="removeFilterConfig(${index})" class="text-red-500 hover:text-red-700 transition-colors"><span class="material-symbols-outlined text-[16px]">close</span></button>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="text-[9px] text-surface-500 uppercase">Label</label>
+                            <input type="text" value="${filter.label || ''}" onchange="updateFilterConfig(${index}, 'label', this.value)" class="w-full px-2 py-1 text-[11px] border border-surface-200 rounded">
+                        </div>
+                        <div>
+                            <label class="text-[9px] text-surface-500 uppercase">Placeholder</label>
+                            <input type="text" value="${filter.placeholder || ''}" onchange="updateFilterConfig(${index}, 'placeholder', this.value)" class="w-full px-2 py-1 text-[11px] border border-surface-200 rounded">
+                        </div>
+                        <div>
+                            <label class="text-[9px] text-surface-500 uppercase">Type</label>
+                            <select onchange="updateFilterConfig(${index}, 'type', this.value)" class="w-full px-2 py-1 text-[11px] border border-surface-200 rounded">
+                                ${types.map(t => `<option value="${t.val}" ${t.val === filter.type ? 'selected' : ''}>${t.label}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div>
+                            <label class="text-[9px] text-surface-500 uppercase">Operator</label>
+                            <select onchange="updateFilterConfig(${index}, 'operator', this.value)" class="w-full px-2 py-1 text-[11px] border border-surface-200 rounded">
+                                ${operators.map(t => `<option value="${t.val}" ${t.val === filter.operator ? 'selected' : ''}>${t.label}</option>`).join('')}
+                            </select>
+                        </div>
+                    </div>
+                    <label class="flex items-center gap-1.5 mt-1 cursor-pointer">
+                        <input type="checkbox" onchange="updateFilterConfig(${index}, 'required', this.checked)" ${filter.required ? 'checked' : ''} class="w-3 h-3 text-brand-600 rounded">
+                        <span class="text-[10px] font-medium text-surface-600">Required</span>
+                    </label>
+                </div>
+            `;
+            container.innerHTML += html;
+        });
+    }
+
+    function addFilterConfig() {
+        const select = document.getElementById('availableColumnsSelect');
+        const field = select.value;
+        
+        if (!field) return;
+
+        if (activeFilterConfig === null) {
+            activeFilterConfig = [];
+        }
+
+        if (activeFilterConfig.some(f => f.field === field)) {
+            showToast('Filter for this column already exists', 'error');
+            return;
+        }
+
+        activeFilterConfig.push({
+            field: field,
+            label: field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+            type: 'text',
+            operator: 'contains',
+            placeholder: '',
+            required: false
+        });
+
+        select.value = ''; // reset
+        renderActiveFilters();
+    }
+
+    function updateFilterConfig(index, key, value) {
+        if (activeFilterConfig && activeFilterConfig[index]) {
+            activeFilterConfig[index][key] = value;
+        }
+    }
+
+    function removeFilterConfig(index) {
+        if (activeFilterConfig) {
+            activeFilterConfig.splice(index, 1);
+            if (activeFilterConfig.length === 0) {
+                // If the user explicitly removed all filters, it stays as [] to denote "no filters".
+                // We do not revert it to null (legacy).
+            }
+            renderActiveFilters();
+        }
+    }
+
 </script>
 @endsection

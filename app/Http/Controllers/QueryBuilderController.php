@@ -31,10 +31,18 @@ class QueryBuilderController extends Controller
 
         foreach ($all as $key => $conn) {
             if (in_array($conn['type'] ?? '', \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes()) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
+                try {
+                    $connName = $this->connectionService->resolveConnectionName($key);
+                    $driver = DB::connection($connName)->getDriverName();
+                } catch (\Throwable $e) {
+                    $driver = $conn['type'];
+                }
+
                 $dbConnections[] = [
-                    'key'  => $key,
-                    'name' => $conn['name'] ?? $key,
-                    'type' => $conn['type'],
+                    'key'    => $key,
+                    'name'   => $conn['name'] ?? $key,
+                    'type'   => $conn['type'],
+                    'driver' => $driver,
                 ];
             }
         }
@@ -56,6 +64,9 @@ class QueryBuilderController extends Controller
         }
 
         try {
+            $connName = $this->connectionService->resolveConnectionName($connKey);
+            $driver = DB::connection($connName)->getDriverName();
+
             $tree = $this->connectionManager->discoverMetadata($connKey);
             $tables = [];
             foreach ($tree->nodes as $node) {
@@ -63,7 +74,7 @@ class QueryBuilderController extends Controller
             }
             sort($tables);
 
-            return response()->json(['success' => true, 'tables' => $tables]);
+            return response()->json(['success' => true, 'driver' => $driver, 'tables' => $tables]);
         } catch (\Throwable $e) {
             return response()->json(['success' => false, 'message' => 'Failed to fetch tables: ' . $e->getMessage()], 500);
         }
@@ -134,7 +145,7 @@ class QueryBuilderController extends Controller
             $driver = DB::connection($connName)->getDriverName();
             
             if (!empty($rawSql)) {
-                $sql = $rawSql;
+                $sql = $this->normalizeSqlForDriver($rawSql, $driver);
                 $bindings = [];
             } else {
                 if (empty($tables) || empty($columns)) {
@@ -145,129 +156,127 @@ class QueryBuilderController extends Controller
                 $qe = $driver === 'mysql' ? '`' : ($driver === 'firebird' ? '' : ']');
 
                 // Build the SELECT clause
-            $selectParts = [];
-            foreach ($columns as $col) {
-                $table = $col['table'] ?? $tables[0];
-                $field = $col['field'];
-                $alias = $col['alias'] ?? null;
-                $aggregate = $col['aggregate'] ?? null;
+                $selectParts = [];
+                foreach ($columns as $col) {
+                    $table = $col['table'] ?? $tables[0];
+                    $field = $col['field'];
+                    $alias = $col['alias'] ?? null;
+                    $aggregate = $col['aggregate'] ?? null;
 
-                $colRef = "{$q}{$table}{$qe}.{$q}{$field}{$qe}";
+                    $colRef = "{$q}{$table}{$qe}.{$q}{$field}{$qe}";
 
-                if ($aggregate && in_array(strtoupper($aggregate), ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX'])) {
-                    $colRef = strtoupper($aggregate) . "({$colRef})";
-                    $alias = $alias ?: strtolower($aggregate) . '_' . $field;
+                    if ($aggregate && in_array(strtoupper($aggregate), ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX'])) {
+                        $colRef = strtoupper($aggregate) . "({$colRef})";
+                        $alias = $alias ?: strtolower($aggregate) . '_' . $field;
+                    }
+
+                    if ($alias) {
+                        $selectParts[] = "{$colRef} AS {$q}{$alias}{$qe}";
+                    } else {
+                        $selectParts[] = $colRef;
+                    }
                 }
 
-                if ($alias) {
-                    $selectParts[] = "{$colRef} AS {$q}{$alias}{$qe}";
-                } else {
-                    $selectParts[] = $colRef;
+                $selectClause = implode(', ', $selectParts);
+                if ($driver === 'sqlsrv') {
+                    $selectClause = "TOP {$limit} " . $selectClause;
                 }
-            }
 
-            $selectClause = implode(', ', $selectParts);
+                // Build FROM clause
+                $primaryTable = $tables[0];
+                $fromClause = "{$q}{$primaryTable}{$qe}";
 
-            // Build FROM clause
-            $primaryTable = $tables[0];
-            $fromClause = "{$q}{$primaryTable}{$qe}";
+                // Build JOINs
+                $joinClause = '';
+                foreach ($joins as $join) {
+                    $joinType = strtoupper($join['type'] ?? 'INNER') . ' JOIN';
+                    $joinTable = $join['table'];
+                    $onLeft = $join['on_left'];
+                    $onRight = $join['on_right'];
 
-            // Build JOINs
-            $joinClause = '';
-            foreach ($joins as $join) {
-                $joinType = strtoupper($join['type'] ?? 'INNER') . ' JOIN';
-                $joinTable = $join['table'];
-                $onLeft = $join['on_left'];
-                $onRight = $join['on_right'];
+                    $leftParts = explode('.', $onLeft);
+                    $rightParts = explode('.', $onRight);
 
-                $leftParts = explode('.', $onLeft);
-                $rightParts = explode('.', $onRight);
+                    $leftRef = "{$q}{$leftParts[0]}{$qe}.{$q}{$leftParts[1]}{$qe}";
+                    $rightRef = "{$q}{$rightParts[0]}{$qe}.{$q}{$rightParts[1]}{$qe}";
 
-                $leftRef = "{$q}{$leftParts[0]}{$qe}.{$q}{$leftParts[1]}{$qe}";
-                $rightRef = "{$q}{$rightParts[0]}{$qe}.{$q}{$rightParts[1]}{$qe}";
-
-                $joinClause .= " {$joinType} {$q}{$joinTable}{$qe} ON {$leftRef} = {$rightRef}";
-            }
-
-            // Build WHERE clause
-            $whereClause = '';
-            $bindings = [];
-            $filterIdx = 0;
-            foreach ($filters as $filter) {
-                $field = $filter['field'] ?? null;
-                $op    = $filter['operator'] ?? 'eq';
-                $value = $filter['value'] ?? null;
-
-                if (!$field) continue;
-                if (!in_array($op, ['is_null', 'not_null']) && ($value === null || $value === '')) continue;
-
-                $parts = explode('.', $field);
-                $fieldRef = count($parts) === 2
-                    ? "{$q}{$parts[0]}{$qe}.{$q}{$parts[1]}{$qe}"
-                    : "{$q}{$field}{$qe}";
-
-                $connector = $filterIdx === 0 ? 'WHERE' : 'AND';
-
-                switch ($op) {
-                    case 'eq':         $whereClause .= " {$connector} {$fieldRef} = ?"; $bindings[] = $value; break;
-                    case 'ne':         $whereClause .= " {$connector} {$fieldRef} != ?"; $bindings[] = $value; break;
-                    case 'contains':   $whereClause .= " {$connector} {$fieldRef} LIKE ?"; $bindings[] = "%{$value}%"; break;
-                    case 'startswith': $whereClause .= " {$connector} {$fieldRef} LIKE ?"; $bindings[] = "{$value}%"; break;
-                    case 'endswith':   $whereClause .= " {$connector} {$fieldRef} LIKE ?"; $bindings[] = "%{$value}"; break;
-                    case 'gt':         $whereClause .= " {$connector} {$fieldRef} > ?"; $bindings[] = $value; break;
-                    case 'ge':         $whereClause .= " {$connector} {$fieldRef} >= ?"; $bindings[] = $value; break;
-                    case 'lt':         $whereClause .= " {$connector} {$fieldRef} < ?"; $bindings[] = $value; break;
-                    case 'le':         $whereClause .= " {$connector} {$fieldRef} <= ?"; $bindings[] = $value; break;
-                    case 'is_null':    $whereClause .= " {$connector} {$fieldRef} IS NULL"; break;
-                    case 'not_null':   $whereClause .= " {$connector} {$fieldRef} IS NOT NULL"; break;
+                    $joinClause .= " {$joinType} {$q}{$joinTable}{$qe} ON {$leftRef} = {$rightRef}";
                 }
-                $filterIdx++;
-            }
 
-            // Build GROUP BY clause
-            $groupByClause = '';
-            if (!empty($groupBy)) {
-                $gbParts = [];
-                foreach ($groupBy as $gb) {
-                    $parts = explode('.', $gb);
-                    $gbParts[] = count($parts) === 2
-                        ? "{$q}{$parts[0]}{$qe}.{$q}{$parts[1]}{$qe}"
-                        : "{$q}{$gb}{$qe}";
-                }
-                $groupByClause = ' GROUP BY ' . implode(', ', $gbParts);
-            }
+                // Build WHERE clause
+                $whereClause = '';
+                $bindings = [];
+                $filterIdx = 0;
+                foreach ($filters as $filter) {
+                    $field = $filter['field'] ?? null;
+                    $op    = $filter['operator'] ?? 'eq';
+                    $value = $filter['value'] ?? null;
 
-            // Build ORDER BY clause
-            $orderByClause = '';
-            if (!empty($orderBy)) {
-                $obParts = [];
-                foreach ($orderBy as $ob) {
-                    $field = $ob['field'];
-                    $dir   = strtoupper($ob['direction'] ?? 'ASC') === 'DESC' ? 'DESC' : 'ASC';
+                    if (!$field) continue;
+                    if (!in_array($op, ['is_null', 'not_null']) && ($value === null || $value === '')) continue;
+
                     $parts = explode('.', $field);
                     $fieldRef = count($parts) === 2
                         ? "{$q}{$parts[0]}{$qe}.{$q}{$parts[1]}{$qe}"
                         : "{$q}{$field}{$qe}";
-                    $obParts[] = "{$fieldRef} {$dir}";
-                }
-                $orderByClause = ' ORDER BY ' . implode(', ', $obParts);
-            }
 
-            // Build LIMIT
-            $limitClause = '';
-            if ($driver === 'mysql') {
-                $limitClause = " LIMIT {$limit}";
-            } elseif ($driver === 'sqlsrv') {
-                if (empty($orderByClause)) {
-                    $orderByClause = " ORDER BY (SELECT NULL)";
-                }
-                $limitClause = " OFFSET 0 ROWS FETCH NEXT {$limit} ROWS ONLY";
-            } elseif ($driver === 'firebird') {
-                $limitClause = " ROWS 1 TO {$limit}";
-            }
+                    $connector = $filterIdx === 0 ? 'WHERE' : 'AND';
 
-            $sql = "SELECT {$selectClause} FROM {$fromClause}{$joinClause}{$whereClause}{$groupByClause}{$orderByClause}{$limitClause}";
-            } // end else for rawSql
+                    switch ($op) {
+                        case 'eq':         $whereClause .= " {$connector} {$fieldRef} = ?"; $bindings[] = $value; break;
+                        case 'ne':         $whereClause .= " {$connector} {$fieldRef} != ?"; $bindings[] = $value; break;
+                        case 'contains':   $whereClause .= " {$connector} {$fieldRef} LIKE ?"; $bindings[] = "%{$value}%"; break;
+                        case 'startswith': $whereClause .= " {$connector} {$fieldRef} LIKE ?"; $bindings[] = "{$value}%"; break;
+                        case 'endswith':   $whereClause .= " {$connector} {$fieldRef} LIKE ?"; $bindings[] = "%{$value}"; break;
+                        case 'gt':         $whereClause .= " {$connector} {$fieldRef} > ?"; $bindings[] = $value; break;
+                        case 'ge':         $whereClause .= " {$connector} {$fieldRef} >= ?"; $bindings[] = $value; break;
+                        case 'lt':         $whereClause .= " {$connector} {$fieldRef} < ?"; $bindings[] = $value; break;
+                        case 'le':         $whereClause .= " {$connector} {$fieldRef} <= ?"; $bindings[] = $value; break;
+                        case 'is_null':    $whereClause .= " {$connector} {$fieldRef} IS NULL"; break;
+                        case 'not_null':   $whereClause .= " {$connector} {$fieldRef} IS NOT NULL"; break;
+                    }
+                    $filterIdx++;
+                }
+
+                // Build GROUP BY clause
+                $groupByClause = '';
+                if (!empty($groupBy)) {
+                    $gbParts = [];
+                    foreach ($groupBy as $gb) {
+                        $parts = explode('.', $gb);
+                        $gbParts[] = count($parts) === 2
+                            ? "{$q}{$parts[0]}{$qe}.{$q}{$parts[1]}{$qe}"
+                            : "{$q}{$gb}{$qe}";
+                    }
+                    $groupByClause = ' GROUP BY ' . implode(', ', $gbParts);
+                }
+
+                // Build ORDER BY clause
+                $orderByClause = '';
+                if (!empty($orderBy)) {
+                    $obParts = [];
+                    foreach ($orderBy as $ob) {
+                        $field = $ob['field'];
+                        $dir   = strtoupper($ob['direction'] ?? 'ASC') === 'DESC' ? 'DESC' : 'ASC';
+                        $parts = explode('.', $field);
+                        $fieldRef = count($parts) === 2
+                            ? "{$q}{$parts[0]}{$qe}.{$q}{$parts[1]}{$qe}"
+                            : "{$q}{$field}{$qe}";
+                        $obParts[] = "{$fieldRef} {$dir}";
+                    }
+                    $orderByClause = ' ORDER BY ' . implode(', ', $obParts);
+                }
+
+                // Build LIMIT
+                $limitClause = '';
+                if ($driver === 'mysql') {
+                    $limitClause = " LIMIT {$limit}";
+                } elseif ($driver === 'firebird') {
+                    $limitClause = " ROWS 1 TO {$limit}";
+                }
+
+                $sql = "SELECT {$selectClause} FROM {$fromClause}{$joinClause}{$whereClause}{$groupByClause}{$orderByClause}{$limitClause}";
+            }
 
             $startTime = microtime(true);
             $results = DB::connection($connName)->select($sql, $bindings);
@@ -291,6 +300,55 @@ class QueryBuilderController extends Controller
     }
 
     /**
+     * Normalize SQL query according to target database driver syntax.
+     * Fixes LIMIT syntax for SQL Server (sqlsrv).
+     */
+    public function normalizeSqlForDriver(string $sql, string $driver): string
+    {
+        $trimmedSql = trim($sql);
+
+        if ($driver === 'sqlsrv') {
+            // Pattern 1: LIMIT <count> OFFSET <offset>
+            if (preg_match('/\bLIMIT\s+(\d+)\s+OFFSET\s+(\d+)\b/i', $trimmedSql, $m)) {
+                $count = $m[1];
+                $offset = $m[2];
+                $trimmedSql = preg_replace('/\bLIMIT\s+\d+\s+OFFSET\s+\d+\b/i', '', $trimmedSql);
+                $trimmedSql = trim($trimmedSql);
+                if (!preg_match('/\bORDER\s+BY\b/i', $trimmedSql)) {
+                    $trimmedSql .= " ORDER BY (SELECT NULL)";
+                }
+                $trimmedSql .= " OFFSET {$offset} ROWS FETCH NEXT {$count} ROWS ONLY";
+            }
+            // Pattern 2: LIMIT <offset>, <count>
+            elseif (preg_match('/\bLIMIT\s+(\d+)\s*,\s*(\d+)\b/i', $trimmedSql, $m)) {
+                $offset = $m[1];
+                $count = $m[2];
+                $trimmedSql = preg_replace('/\bLIMIT\s+\d+\s*,\s*\d+\b/i', '', $trimmedSql);
+                $trimmedSql = trim($trimmedSql);
+                if (!preg_match('/\bORDER\s+BY\b/i', $trimmedSql)) {
+                    $trimmedSql .= " ORDER BY (SELECT NULL)";
+                }
+                $trimmedSql .= " OFFSET {$offset} ROWS FETCH NEXT {$count} ROWS ONLY";
+            }
+            // Pattern 3: Trailing LIMIT <count> or standalone LIMIT <count>
+            elseif (preg_match('/\bLIMIT\s+(\d+)\s*$/i', $trimmedSql, $m) || preg_match('/\bLIMIT\s+(\d+)\b/i', $trimmedSql, $m)) {
+                $count = $m[1];
+                $trimmedSql = preg_replace('/\bLIMIT\s+\d+\b/i', '', $trimmedSql);
+                $trimmedSql = trim($trimmedSql);
+                if (!preg_match('/\bTOP\s+\d+\b/i', $trimmedSql) && !preg_match('/\bOFFSET\b/i', $trimmedSql)) {
+                    if (preg_match('/^\s*SELECT\s+DISTINCT\s+/i', $trimmedSql)) {
+                        $trimmedSql = preg_replace('/^\s*SELECT\s+DISTINCT\s+/i', "SELECT DISTINCT TOP {$count} ", $trimmedSql, 1);
+                    } elseif (preg_match('/^\s*SELECT\s+/i', $trimmedSql)) {
+                        $trimmedSql = preg_replace('/^\s*SELECT\s+/i', "SELECT TOP {$count} ", $trimmedSql, 1);
+                    }
+                }
+            }
+        }
+
+        return $trimmedSql;
+    }
+
+    /**
      * Export query results to CSV/XLSX.
      */
     public function export(Request $request): JsonResponse
@@ -310,10 +368,13 @@ class QueryBuilderController extends Controller
             ini_set('max_execution_time', '300'); // 5 minutes
 
             $connName = $this->connectionService->resolveConnectionName($connKey);
+            $driver   = DB::connection($connName)->getDriverName();
 
             if (!preg_match('/^\s*SELECT\s/i', $sql)) {
                 return response()->json(['success' => false, 'message' => 'Only SELECT queries are allowed.'], 400);
             }
+
+            $sql = $this->normalizeSqlForDriver($sql, $driver);
 
             $results = DB::connection($connName)->select($sql);
             $rows = array_map(fn($r) => (array) $r, $results);
@@ -453,7 +514,8 @@ class QueryBuilderController extends Controller
                 'description'            => $request->input('description'),
                 'sql_text'               => $request->input('sql_text'),
                 'query_type'             => 'read_only',
-                'parameter_json'         => $request->input('state') ?: [],
+                'ui_state_json'          => $request->input('state') ?: [],
+                'parameter_json'         => [], // no parameters from pure builder
                 'output_column_json'     => $request->input('columns') ?: [],
                 'created_by'             => auth()->id(),
                 'updated_by'             => auth()->id(),

@@ -46,9 +46,14 @@ class QueryRepositoryController extends Controller
         $this->queryService->validateSql($validated['sql_text']);
         $parameters = $this->queryService->extractParameters($validated['sql_text']);
 
+        $uiState = $request->input('ui_state_json') ? json_decode($request->input('ui_state_json'), true) : null;
+        $outputColumns = $request->input('output_column_json') ? json_decode($request->input('output_column_json'), true) : [];
+
         $queryRepo = QueryRepository::create(array_merge($validated, [
             'uuid' => (string) Str::uuid(),
             'parameter_json' => $parameters,
+            'ui_state_json' => $uiState,
+            'output_column_json' => $outputColumns,
             'created_by' => Auth::id(),
             'updated_by' => Auth::id(),
             'version' => 1
@@ -85,9 +90,13 @@ class QueryRepositoryController extends Controller
         }
 
         $parameters = $this->queryService->extractParameters($validated['sql_text']);
+        $uiState = $request->input('ui_state_json') ? json_decode($request->input('ui_state_json'), true) : null;
+        $outputColumns = $request->input('output_column_json') ? json_decode($request->input('output_column_json'), true) : [];
 
         $queryRepo->update(array_merge($validated, [
             'parameter_json' => $parameters,
+            'ui_state_json' => $uiState,
+            'output_column_json' => $outputColumns,
             'updated_by' => Auth::id(),
             'version' => $newVersion,
             'is_active' => $request->has('is_active')
@@ -189,7 +198,7 @@ class QueryRepositoryController extends Controller
 
             $baseFilename = 'query_export_' . now()->format('Ymd_His');
 
-            if ($request->format === 'xlsx') {
+            if ($request->input('format') === 'xlsx') {
                 $filePath = $exportDir . '/' . $baseFilename . '.xlsx';
                 $this->generateExcel($rows, $columns, $filePath);
                 $downloadName = $baseFilename . '.xlsx';
@@ -225,6 +234,42 @@ class QueryRepositoryController extends Controller
         }
 
         return response()->download($info['path'], $info['filename'])->deleteFileAfterSend(true);
+    }
+
+    public function getColumns($id)
+    {
+        $queryRepo = QueryRepository::findOrFail($id);
+        $columns = is_array($queryRepo->output_column_json) ? $queryRepo->output_column_json : json_decode($queryRepo->output_column_json, true) ?? [];
+        
+        $normalized = [];
+        foreach ($columns as $col) {
+            if (is_array($col)) {
+                $field = $col['field'] ?? null;
+                $label = $col['label'] ?? \Illuminate\Support\Str::title(str_replace('_', ' ', $field));
+                $type = $col['type'] ?? 'text';
+            } else {
+                $field = $col;
+                $label = \Illuminate\Support\Str::title(str_replace('_', ' ', $field));
+                $type = 'text';
+            }
+            
+            if ($field) {
+                $normalized[] = [
+                    'field' => $field,
+                    'label' => $label,
+                    'type' => $type
+                ];
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'query' => [
+                'id' => $queryRepo->id,
+                'name' => $queryRepo->name
+            ],
+            'columns' => $normalized
+        ]);
     }
 
     // --- Private Helpers ---

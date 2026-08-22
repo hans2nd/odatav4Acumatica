@@ -71,7 +71,7 @@
                 class="w-full bg-white border border-surface-300 rounded-xl px-4 py-2.5 text-body-md text-surface-900 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-all cursor-pointer">
                 <option value="">-- Select Connection --</option>
                 @foreach ($connections as $conn)
-                    <option value="{{ $conn['key'] }}">{{ $conn['name'] }} ({{ strtoupper($conn['type']) }})</option>
+                    <option value="{{ $conn['key'] }}" data-driver="{{ $conn['driver'] ?? $conn['type'] }}">{{ $conn['name'] }} ({{ strtoupper($conn['type']) }})</option>
                 @endforeach
             </select>
         </div>
@@ -321,6 +321,7 @@
     let qbJoins = []; // [{type, table, on_left, on_right}]
     let qbUsedTables = new Set();
     let lastExecutedSql = '';
+    let currentDriver = 'mysql';
     
     // CodeMirror instance
     let sqlEditor;
@@ -367,7 +368,12 @@
 
     // ─── Connection ───────────────────────────────────────────
     async function onQbConnectionChange() {
-        const connKey = document.getElementById('qbConnection').value;
+        const selectEl = document.getElementById('qbConnection');
+        const connKey = selectEl.value;
+        const selectedOpt = selectEl.options[selectEl.selectedIndex];
+        if (selectedOpt && selectedOpt.dataset.driver) {
+            currentDriver = selectedOpt.dataset.driver;
+        }
         const statusEl = document.getElementById('qbConnectionStatus');
         const tableList = document.getElementById('qbTableList');
 
@@ -390,6 +396,7 @@
             const data = await res.json();
 
             if (data.success) {
+                if (data.driver) currentDriver = data.driver;
                 qbTables = data.tables;
                 qbTableColumns = {};
                 statusEl.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]"></span> <span class="text-emerald-600">' + qbTables.length + ' tables</span>';
@@ -1046,7 +1053,12 @@
             return ref;
         });
 
-        let sql = 'SELECT ' + selectParts.join(',\n       ');
+        let sql = '';
+        if (currentDriver === 'sqlsrv') {
+            sql = 'SELECT TOP ' + limit + ' ' + selectParts.join(',\n       ');
+        } else {
+            sql = 'SELECT ' + selectParts.join(',\n       ');
+        }
 
         // FROM
         const tables = [...qbUsedTables];
@@ -1106,7 +1118,9 @@
             obAdded = true;
         });
 
-        sql += '\nLIMIT ' + limit;
+        if (currentDriver !== 'sqlsrv') {
+            sql += '\nLIMIT ' + limit;
+        }
 
         if (typeof sqlEditor !== 'undefined' && sqlEditor) {
             sqlEditor.setValue(sql);
@@ -1339,6 +1353,13 @@
         const thead = document.getElementById('qbResultHead');
         if (thead) {
             thead.querySelectorAll('th').forEach(th => outColumns.push(th.innerText.trim()));
+        }
+
+        if (outColumns.length === 0) {
+            showToast('Silakan execute query terlebih dahulu untuk mendapatkan kolom-kolomnya sebelum menyimpan.', 'error');
+            btn.disabled = false;
+            btn.innerHTML = origText;
+            return;
         }
 
         const payload = {

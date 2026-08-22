@@ -46,7 +46,7 @@ class RbacSeeder extends Seeder
         }
 
         // 3. Roles
-        $adminRole = Role::updateOrCreate(['name' => 'Administrator'], [
+        $adminRole = Role::updateOrCreate(['name' => 'Super Administrator'], [
             'description' => 'System Administrator with full access'
         ]);
 

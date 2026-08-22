@@ -18,6 +18,7 @@ class QueryRepository extends Model
         'sql_text',
         'query_type',
         'parameter_json',
+        'ui_state_json',
         'output_column_json',
         'version',
         'is_active',
@@ -27,6 +28,7 @@ class QueryRepository extends Model
 
     protected $casts = [
         'parameter_json' => 'array',
+        'ui_state_json' => 'array',
         'output_column_json' => 'array',
         'is_active' => 'boolean',
     ];

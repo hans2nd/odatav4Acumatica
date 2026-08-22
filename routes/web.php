@@ -221,6 +221,7 @@ Route::middleware(['auth'])->group(function () {
             'update' => 'query-repository.update',
             'destroy' => 'query-repository.destroy',
         ]);
+        Route::get('/api/report/query-repository/{id}/columns', [\App\Http\Controllers\QueryRepositoryController::class, 'getColumns'])->name('api.query-repository.columns');
     });
 
     Route::middleware(['permission:query_repository.preview'])->group(function () {
@@ -312,8 +313,8 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/api/menus/publish', [App\Http\Controllers\MenuManagementController::class, 'publish'])->name('api.menus.publish');
         Route::post('/menu-management/refresh-files/{route_name}', [App\Http\Controllers\MenuManagementController::class, 'refreshGeneratedFiles'])->name('menu-management.refresh-files');
     });
-    // Auto-generated route for Receivables
-    Route::get('/receivables/index', [\App\Http\Controllers\ReceivablesIndexController::class, 'index'])->name('receivables.index');
-    // Auto-generated route for Master Warehouse
-    Route::get('/master-warehouse/index', [\App\Http\Controllers\MasterWarehouseIndexController::class, 'index'])->name('master-warehouse.index');
+    // Auto-generated route for Piutang
+    Route::get('/piutang/index', [\App\Http\Controllers\PiutangIndexController::class, 'index'])->name('piutang.index');
+    // Auto-generated route for GRN
+    Route::get('/grn/index', [\App\Http\Controllers\GrnIndexController::class, 'index'])->name('grn.index');
 });

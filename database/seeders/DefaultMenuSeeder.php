@@ -66,6 +66,16 @@ class DefaultMenuSeeder extends Seeder
             ]
         );
 
+        Menu::updateOrCreate(
+            ['title' => 'Query Repository', 'parent_id' => $report->id],
+            [
+                'icon' => 'database',
+                'route_name' => 'query-repository.index',
+                'sort_order' => 40,
+                'type' => 'link',
+            ]
+        );
+
         // === Synchronization ===
         $sync = Menu::updateOrCreate(
             ['title' => 'Synchronization', 'parent_id' => null],

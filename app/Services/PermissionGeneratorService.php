@@ -81,6 +81,7 @@ class PermissionGeneratorService
             ['name' => 'Report Builder', 'slug' => 'report_builder', 'module_id' => $reportModule->id, 'actions' => ['manage', 'view']],
             ['name' => 'Endpoint API', 'slug' => 'endpoint_api', 'module_id' => $reportModule->id, 'actions' => ['manage', 'view']],
             ['name' => 'Query Builder', 'slug' => 'query_builder', 'module_id' => $reportModule->id, 'actions' => ['manage', 'view']],
+            ['name' => 'Query Repository', 'slug' => 'query_repository', 'module_id' => $reportModule->id, 'actions' => ['manage', 'view']],
         ];
 
         foreach ($systemResources as $res) {
@@ -153,7 +154,7 @@ class PermissionGeneratorService
 
     private function assignToAdmin()
     {
-        $adminRole = Role::where('name', 'Administrator')->first();
+        $adminRole = Role::where('name', 'Super Administrator')->first();
         if ($adminRole) {
             $allPermissionIds = Permission::pluck('id');
             $adminRole->permissions()->sync($allPermissionIds);

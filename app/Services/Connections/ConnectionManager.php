@@ -100,7 +100,10 @@ class ConnectionManager
         $connection = $this->getConnectionModel($connectionKey);
         $provider = $this->factory->make($connection->type);
         
-        return $provider->discoverMetadata($connection->credentials ?? []);
+        $cacheKey = "connection_{$connectionKey}_metadata";
+        return \Illuminate\Support\Facades\Cache::remember($cacheKey, now()->addHours(24), function () use ($provider, $connection) {
+            return $provider->discoverMetadata($connection->credentials ?? []);
+        });
     }
 
     /**
@@ -111,7 +114,10 @@ class ConnectionManager
         $connection = $this->getConnectionModel($connectionKey);
         $provider = $this->factory->make($connection->type);
         
-        return $provider->discoverStructure($connection->credentials ?? [], $objectName);
+        $cacheKey = "connection_{$connectionKey}_structure_" . md5($objectName);
+        return \Illuminate\Support\Facades\Cache::remember($cacheKey, now()->addHours(24), function () use ($provider, $connection, $objectName) {
+            return $provider->discoverStructure($connection->credentials ?? [], $objectName);
+        });
     }
 
     /**

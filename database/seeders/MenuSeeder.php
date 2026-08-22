@@ -23,42 +23,6 @@ class MenuSeeder extends Seeder
             'type' => 'link',
         ]);
 
-        // === Synchronization (parent) ===
-        $sync = Menu::create([
-            'title' => 'Synchronization',
-            'icon' => 'sync',
-            'sort_order' => $sort += 10,
-            'type' => 'link',
-        ]);
-
-        Menu::create([
-            'parent_id' => $sync->id,
-            'title' => 'Master Data',
-            'icon' => 'folder',
-            'route_name' => 'master-data.index',
-            'sort_order' => 10,
-            'type' => 'link',
-        ]);
-
-        Menu::create([
-            'parent_id' => $sync->id,
-            'title' => 'Transaction',
-            'icon' => 'receipt',
-            'route_name' => 'transactions.index',
-            'sort_order' => 20,
-            'type' => 'link',
-        ]);
-
-        Menu::create([
-            'parent_id' => $sync->id,
-            'title' => 'Logs',
-            'icon' => 'article',
-            'route_name' => 'logs.index',
-            'sort_order' => 30,
-            'permission_key' => 'logs.view',
-            'type' => 'link',
-        ]);
-
         // === Report (parent) ===
         $report = Menu::create([
             'title' => 'Report',
@@ -96,6 +60,53 @@ class MenuSeeder extends Seeder
             'permission_key' => 'query_builder.view',
             'type' => 'link',
         ]);
+
+        Menu::create([
+            'parent_id' => $report->id,
+            'title' => 'Query Repository',
+            'icon' => 'database',
+            'route_name' => 'query-repository.index',
+            'sort_order' => 40,
+            'permission_key' => 'query_repository.view',
+            'type' => 'link',
+        ]);
+
+        // === Synchronization (parent) ===
+        $sync = Menu::create([
+            'title' => 'Synchronization',
+            'icon' => 'sync',
+            'sort_order' => $sort += 10,
+            'type' => 'link',
+        ]);
+
+        Menu::create([
+            'parent_id' => $sync->id,
+            'title' => 'Master Data',
+            'icon' => 'folder',
+            'route_name' => 'master-data.index',
+            'sort_order' => 10,
+            'type' => 'link',
+        ]);
+
+        Menu::create([
+            'parent_id' => $sync->id,
+            'title' => 'Transaction',
+            'icon' => 'receipt',
+            'route_name' => 'transactions.index',
+            'sort_order' => 20,
+            'type' => 'link',
+        ]);
+
+        Menu::create([
+            'parent_id' => $sync->id,
+            'title' => 'Logs',
+            'icon' => 'article',
+            'route_name' => 'logs.index',
+            'sort_order' => 30,
+            'permission_key' => 'logs.view',
+            'type' => 'link',
+        ]);
+
 
         // === Settings (parent) ===
         $settings = Menu::create([

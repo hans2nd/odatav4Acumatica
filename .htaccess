@@ -1,11 +1,21 @@
 <IfModule mod_rewrite.c>
+    <IfModule mod_negotiation.c>
+        Options -MultiViews -Indexes
+    </IfModule>
+
     RewriteEngine On
 
-    # Arahkan semua request ke folder public/
+    # 1. Hentikan loop public/public: 
+    # Jika URL browser (THE_REQUEST) mengandung /public/, arahkan kembali ke URL tanpa /public/
+    RewriteCond %{THE_REQUEST} \s/public/([^\s?]*) [NC]
+    RewriteRule ^ /%1 [L,R=301,NE]
+
+    # 2. Arahkan secara internal semua request ke folder public/
+    RewriteCond %{REQUEST_URI} !^/public/
     RewriteRule ^(.*)$ public/$1 [L]
 </IfModule>
 
-# Blokir akses ke file sensitif (seperti .env)
+# Blokir akses ke direktori sensitif
 <FilesMatch "^\.">
     Order allow,deny
     Deny from all
