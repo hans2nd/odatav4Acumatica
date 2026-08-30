@@ -478,7 +478,7 @@
 
         try {
             const connKey = document.getElementById('qbConnection').value;
-            const res = await fetch(`/api/query-builder/columns?connection=${connKey}&table=${table}`, {
+            const res = await fetch(`/api/query-builder/columns?connection=${encodeURIComponent(connKey)}&table=${encodeURIComponent(table)}`, {
                 headers: { 'Accept': 'application/json' }
             });
             const data = await res.json();
@@ -511,16 +511,22 @@
             const isKey = col.key === 'PRI';
             const isSelected = qbSelectedColumns.some(c => c.table === table && c.field === col.name);
             const typeColor = getTypeColor(col.type);
+            const displayName = col.label ? col.label : col.name;
+            const semanticHtml = col.semantic_type ? `<span class="text-[10px] px-1.5 py-0.5 rounded bg-purple-50 text-purple-600 font-mono ml-1 uppercase" title="Semantic Type">${col.semantic_type}</span>` : '';
 
             html += `
             <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg cursor-grab hover:bg-violet-50 transition-colors group ${isSelected ? 'bg-blue-50 ring-1 ring-blue-300' : ''}"
                  draggable="true"
+                 title="${col.description || col.name}"
                  ondragstart="onFieldDragStart(event, '${table}', '${col.name}')"
                  ondblclick="toggleField('${table}', '${col.name}')">
                 ${isKey ? '<span class="material-symbols-outlined text-[14px] text-amber-500" style="font-variation-settings: \'FILL\' 1;" title="Primary Key">key</span>' : '<span class="w-[14px]"></span>'}
-                <span class="text-label-sm text-surface-700 truncate flex-1 select-none font-medium ${isSelected ? 'text-blue-800' : ''}">${col.name}</span>
-                <span class="text-[10px] px-1.5 py-0.5 rounded ${typeColor} font-mono uppercase">${col.type.split('(')[0]}</span>
-                ${isSelected ? '<span class="material-symbols-outlined text-[16px] text-blue-600">check_circle</span>' : ''}
+                <div class="flex-1 min-w-0 flex items-center">
+                    <span class="text-label-sm text-surface-700 truncate select-none font-medium ${isSelected ? 'text-blue-800' : ''}">${displayName}</span>
+                    ${semanticHtml}
+                </div>
+                <span class="text-[10px] px-1.5 py-0.5 rounded ${typeColor} font-mono uppercase shrink-0">${col.type.split('(')[0]}</span>
+                ${isSelected ? '<span class="material-symbols-outlined text-[16px] text-blue-600 shrink-0">check_circle</span>' : ''}
             </div>`;
         }
         fieldsEl.innerHTML = html;
@@ -859,8 +865,8 @@
         let optionsRightHtml = '<option value="">-- Select Field --</option>';
         
         allFields.forEach(f => {
-            optionsLeftHtml += `<option value="${f}" ${f === join.on_left ? 'selected' : ''}>${f}</option>`;
-            optionsRightHtml += `<option value="${f}" ${f === join.on_right ? 'selected' : ''}>${f}</option>`;
+            optionsLeftHtml += `<option value="${f.val}" ${f.val === join.on_left ? 'selected' : ''}>${f.label}</option>`;
+            optionsRightHtml += `<option value="${f.val}" ${f.val === join.on_right ? 'selected' : ''}>${f.label}</option>`;
         });
 
         return `
@@ -917,8 +923,9 @@
         for (const [table, cols] of Object.entries(qbTableColumns)) {
             for (const col of cols) {
                 const val = table + '.' + col.name;
-                options.push(val);
-                dataListHtml += `<option value="${val}">`;
+                const displayName = col.label ? `${col.label} (${val})` : val;
+                options.push({ val: val, label: displayName });
+                dataListHtml += `<option value="${val}">${displayName}</option>`;
             }
         }
         
@@ -943,7 +950,7 @@
 
         const idx = container.querySelectorAll('.qb-where-row').length;
         const fields = getAllFieldOptions();
-        const fieldOpts = fields.map(f => `<option value="${f}">${f}</option>`).join('');
+        const fieldOpts = fields.map(f => `<option value="${f.val}">${f.label}</option>`).join('');
 
         const div = document.createElement('div');
         div.className = 'qb-where-row flex flex-wrap items-center gap-2 p-3 bg-emerald-50/50 rounded-xl border border-emerald-100';
@@ -992,7 +999,7 @@
         if (placeholder) placeholder.remove();
 
         const fields = getAllFieldOptions();
-        const fieldOpts = fields.map(f => `<option value="${f}">${f}</option>`).join('');
+        const fieldOpts = fields.map(f => `<option value="${f.val}">${f.label}</option>`).join('');
 
         const div = document.createElement('div');
         div.className = 'qb-orderby-row flex items-center gap-2';
@@ -1308,7 +1315,16 @@
         const category = document.getElementById('saveQueryCategory').value.trim();
         const desc = document.getElementById('saveQueryDesc').value.trim();
         const connKey = document.getElementById('qbConnection').value;
-        const rawSql = document.getElementById('qbSqlPreview').value.trim();
+        let rawSql = document.getElementById('qbSqlPreview').value.trim();
+
+        if (!isSqlManuallyEdited) {
+            const limitVal = parseInt(document.getElementById('qbLimit').value) || 500;
+            if (currentDriver === 'sqlsrv') {
+                rawSql = rawSql.replace(new RegExp('^SELECT TOP ' + limitVal + ' ', 'i'), 'SELECT ');
+            } else {
+                rawSql = rawSql.replace(new RegExp('\\nLIMIT ' + limitVal + '$', 'i'), '');
+            }
+        }
 
         if (!name) {
             showToast('Query Name is required', 'error');

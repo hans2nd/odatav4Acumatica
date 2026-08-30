@@ -13,12 +13,6 @@ class SystemUtilityController extends Controller
      */
     public function migrate(Request $request)
     {
-        // Basic security token to prevent unauthorized execution
-        $token = $request->query('token');
-        if ($token !== 'deploy123') {
-            return $this->promptToken();
-        }
-
         try {
             Artisan::call('migrate', ['--force' => true]);
             $output = Artisan::output();
@@ -33,12 +27,6 @@ class SystemUtilityController extends Controller
      */
     public function migrateFresh(Request $request)
     {
-        // Basic security token to prevent unauthorized execution
-        $token = $request->query('token');
-        if ($token !== 'deploy123') {
-            return $this->promptToken();
-        }
-
         try {
             Artisan::call('migrate:fresh', ['--force' => true, '--seed' => true]);
             $output = Artisan::output();
@@ -53,12 +41,6 @@ class SystemUtilityController extends Controller
      */
     public function installDefault(Request $request)
     {
-        // Basic security token to prevent unauthorized execution
-        $token = $request->query('token');
-        if ($token !== 'deploy123') {
-            return $this->promptToken();
-        }
-
         try {
             Artisan::call('migrate:fresh', ['--force' => true, '--seed' => true, '--seeder' => 'Database\\Seeders\\DefaultInstallationSeeder']);
             $output = Artisan::output();
@@ -73,11 +55,6 @@ class SystemUtilityController extends Controller
      */
     public function optimize(Request $request)
     {
-        $token = $request->query('token');
-        if ($token !== 'deploy123') {
-            return $this->promptToken();
-        }
-
         try {
             Artisan::call('optimize:clear');
             $output = Artisan::output();
@@ -92,11 +69,6 @@ class SystemUtilityController extends Controller
      */
     public function clearLogs(Request $request)
     {
-        $token = $request->query('token');
-        if ($token !== 'deploy123') {
-            return $this->promptToken();
-        }
-
         try {
             $logPath = storage_path('logs');
             $files = glob($logPath . '/*.log');
@@ -120,16 +92,29 @@ class SystemUtilityController extends Controller
      */
     public function runArtisan(Request $request, $command)
     {
-        $token = $request->query('token');
-        if ($token !== 'deploy123') {
-            return $this->promptToken();
-        }
+        $allowedCommands = [
+            'storage:link',
+            'db:seed',
+            'optimize:clear',
+            'cache:clear',
+            'config:clear',
+            'route:clear',
+            'view:clear'
+        ];
 
         // Allow passing 'storage-link' instead of 'storage:link' in the URL
         $command = str_replace('-', ':', $command);
 
+        if (!in_array($command, $allowedCommands)) {
+            return $this->formatResponse("Unauthorized", "Execution of arbitrary commands is prohibited.", true);
+        }
+
         try {
-            Artisan::call($command);
+            if ($command === 'db:seed') {
+                Artisan::call('db:seed', ['--force' => true]);
+            } else {
+                Artisan::call($command);
+            }
             $output = Artisan::output();
             return $this->formatResponse("Artisan '$command' Executed Successfully", $output ?: "Command completed with no output.");
         } catch (\Exception $e) {
@@ -139,10 +124,6 @@ class SystemUtilityController extends Controller
 
     public function runWebCron(Request $request)
     {
-        if ($request->query('token') !== 'deploy123') {
-            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
-        }
-
         try {
             // 1. Process Native Schedules
             Artisan::call('schedule:run');
@@ -171,25 +152,6 @@ class SystemUtilityController extends Controller
         }
     }
 
-    private function promptToken()
-    {
-        return response('
-            <!DOCTYPE html>
-            <html>
-            <head><title>Authentication Required</title></head>
-            <body>
-                <script>
-                    let token = prompt("Enter security token:");
-                    if (token) {
-                        window.location.href = window.location.pathname + "?token=" + encodeURIComponent(token);
-                    } else {
-                        document.body.innerHTML = "<h3>Unauthorized</h3><p>A valid token is required.</p>";
-                    }
-                </script>
-            </body>
-            </html>
-        ', 401);
-    }
 
     private function formatResponse($title, $output, $isError = false)
     {

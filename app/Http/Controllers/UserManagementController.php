@@ -144,7 +144,7 @@ class UserManagementController extends Controller
      */
     public function updateRolePermissions(Request $request, Role $role): JsonResponse
     {
-        if ($role->name === 'Administrator') {
+        if ($role->is_superadmin) {
             return response()->json([
                 'success' => false,
                 'message' => 'Cannot modify permissions for superadmin role.',
@@ -190,7 +190,7 @@ class UserManagementController extends Controller
      */
     public function destroyRole(Role $role): JsonResponse
     {
-        if ($role->name === 'Administrator') {
+        if ($role->is_superadmin) {
             return response()->json([
                 'success' => false,
                 'message' => 'Cannot delete the superadmin role.',
@@ -217,14 +217,14 @@ class UserManagementController extends Controller
     public function permissions(): JsonResponse
     {
         // 1. Fetch menu tree with permissions
-        $menus = \App\Models\Menu::with(['permissions.action'])->orderBy('sort_order')->get();
+        $menus = \App\Models\Menu::with(['permission.action'])->orderBy('sort_order')->get();
         
         // 2. Fetch any orphaned or non-menu permissions
-        $menuPermissionIds = \Illuminate\Support\Facades\DB::table('menu_permissions')->pluck('permission_id')->toArray();
-        $otherPermissions = \App\Models\Permission::with('action')->whereNotIn('id', $menuPermissionIds)->get();
+        $menuPermissionKeys = \App\Models\Menu::whereNotNull('permission_key')->pluck('permission_key')->toArray();
+        $otherPermissions = \App\Models\Permission::with('action')->whereNotIn('permission_key', $menuPermissionKeys)->get();
 
         // Load entity definitions
-        $allEntities = array_merge(config('acumatica.default_entities', []), config('acumatica.entities', []));
+        $allEntities = app(\App\Services\EntityConfigService::class)->getAll();
 
         // Create a mapping from entity_key to their permissions
         $entityPermissions = [];
@@ -242,6 +242,11 @@ class UserManagementController extends Controller
         }
 
         $menusArray = $menus->toArray();
+        foreach ($menusArray as &$m) {
+            $m['permissions'] = !empty($m['permission']) ? [$m['permission']] : [];
+            unset($m['permission']);
+        }
+        unset($m);
         
         $masterDataMenuId = null;
         $transactionMenuId = null;

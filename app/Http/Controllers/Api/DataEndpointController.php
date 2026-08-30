@@ -123,10 +123,14 @@ class DataEndpointController extends Controller
             }
 
             // Stream the JSON response to prevent memory exhaustion (500 errors) on large tables
-            return response()->stream(function () use ($query) {
+            return response()->stream(function () use ($query, $endpoint) {
+                $sql = $query->toSql();
+                $bindings = $query->getBindings();
+                $cursor = app(\App\Services\QueryRepositoryService::class)->executeStream($endpoint->connection_key, $sql, $bindings);
+
                 echo '{"data":[';
                 $first = true;
-                foreach ($query->cursor() as $row) {
+                foreach ($cursor as $row) {
                     if (!$first) {
                         echo ',';
                     }

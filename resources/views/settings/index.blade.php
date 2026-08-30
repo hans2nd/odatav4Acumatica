@@ -19,15 +19,23 @@
                         Define data sources and destinations (OData, REST, MySQL, SQL Server)
                     </p>
                 </div>
-                <button onclick="openConnectionModal()"
-                    class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand-600 text-white text-label-md hover:bg-brand-700 transition-all duration-200 active:scale-[0.97] shadow-sm">
-                    <span class="material-symbols-outlined text-[14px]">add</span> Add Connection
-                </button>
+                <div class="flex items-center gap-3">
+                    <button id="btn-batch-delete-conn" onclick="batchDeleteConnections()" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-red-50 text-red-600 text-label-md hover:bg-red-100 transition-all duration-200 shadow-sm border border-red-100">
+                        <span class="material-symbols-outlined text-[14px]">delete</span> Delete Selected (<span id="batch-delete-conn-count">0</span>)
+                    </button>
+                    <button onclick="openConnectionModal()"
+                        class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand-600 text-white text-label-md hover:bg-brand-700 transition-all duration-200 active:scale-[0.97] shadow-sm">
+                        <span class="material-symbols-outlined text-[14px]">add</span> Add Connection
+                    </button>
+                </div>
             </div>
             <div class="overflow-x-auto">
                 <table class="w-full text-left border-collapse" id="connection-table">
                     <thead>
-                        <tr class="border-b border-surface-100">
+                        <tr class="border-b border-surface-100 bg-surface-50">
+                            <th class="py-3 px-5 text-left w-12">
+                                <input type="checkbox" id="selectAllConnections" onchange="toggleAllConnections(this)" class="w-4 h-4 rounded border-surface-300 text-brand-600 focus:ring-brand-500 cursor-pointer">
+                            </th>
                             <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">Key</th>
                             <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">Name</th>
                             <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">Type</th>
@@ -37,7 +45,10 @@
                     </thead>
                     <tbody class="text-body-md text-surface-700 divide-y divide-surface-100">
                         @foreach ($connections as $key => $c)
-                            <tr class="hover:bg-surface-50/50 transition-colors">
+                            <tr class="hover:bg-surface-50/50 transition-colors" id="conn-row-{{ $key }}">
+                                <td class="py-3 px-5 w-12">
+                                    <input type="checkbox" value="{{ $key }}" onchange="updateBatchDeleteConnBtn()" onclick="updateBatchDeleteConnBtn()" class="conn-checkbox w-4 h-4 rounded border-surface-300 text-brand-600 focus:ring-brand-500 cursor-pointer">
+                                </td>
                                 <td class="py-3 px-5 font-medium font-mono text-body-sm text-surface-800">{{ $key }}</td>
                                 <td class="py-3 px-5 font-medium text-surface-800">{{ $c['name'] }}</td>
                                 <td class="py-3 px-5">
@@ -107,7 +118,7 @@
                 </p>
             </div>
             <div class="flex items-center gap-3">
-                <button id="btn-batch-delete" onclick="batchDeleteEntities()" class="hidden items-center gap-1.5 px-4 py-2 rounded-xl bg-red-50 text-red-600 text-label-md hover:bg-red-100 transition-all duration-200 shadow-sm border border-red-100">
+                <button id="btn-batch-delete" onclick="batchDeleteEntities()" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-red-50 text-red-600 text-label-md hover:bg-red-100 transition-all duration-200 shadow-sm border border-red-100">
                     <span class="material-symbols-outlined text-[14px]">delete</span> Delete Selected (<span id="batch-delete-count">0</span>)
                 </button>
                 <button onclick="openEntityModal()"
@@ -134,7 +145,7 @@
                     @foreach ($entities as $key => $e)
                         <tr class="hover:bg-surface-50/50 transition-colors" id="entity-row-{{ $key }}">
                             <td class="py-3 px-5 w-12">
-                                <input type="checkbox" value="{{ $key }}" onchange="updateBatchDeleteBtn()" class="entity-checkbox w-4 h-4 rounded border-surface-300 text-brand-600 focus:ring-brand-500 cursor-pointer">
+                                <input type="checkbox" value="{{ $key }}" onchange="updateBatchDeleteBtn()" onclick="updateBatchDeleteBtn()" class="entity-checkbox w-4 h-4 rounded border-surface-300 text-brand-600 focus:ring-brand-500 cursor-pointer">
                             </td>
                             <td class="py-3 px-5 font-medium font-mono text-body-sm text-surface-800">{{ $key }}
                                 <div class="text-label-sm text-surface-400 font-sans mt-0.5">{{ $e['description'] }}</div>
@@ -155,6 +166,11 @@
                             </td>
                             <td class="py-3 px-5 text-right">
                                 <div class="inline-flex items-center gap-1">
+                                    <button onclick="manageEntityFields('{{ $key }}')"
+                                        class="p-1.5 rounded-lg hover:bg-surface-100 text-surface-400 hover:text-brand-600 transition-all duration-200"
+                                        title="Manage Fields">
+                                        <span class="material-symbols-outlined text-[16px]">list_alt</span>
+                                    </button>
                                     <button onclick="editEntity('{{ $key }}')"
                                         class="p-1.5 rounded-lg hover:bg-surface-100 text-surface-400 hover:text-surface-700 transition-all duration-200"
                                         title="Edit">
@@ -349,6 +365,43 @@
                             <input type="text" id="form-desc" required placeholder="e.g. Master Cash Account" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
                         </div>
                     </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label for="form-sync-mode" class="text-label-md text-surface-600 block mb-1.5">Sync Mode <span class="text-red-500">*</span></label>
+                            <select id="form-sync-mode" name="sync_mode" required onchange="toggleWatermarkFields()" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                                <option value="full">Full Sync</option>
+                                <option value="incremental">Incremental Sync</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="form-batch-size" class="text-label-md text-surface-600 block mb-1.5">Batch Size <span class="text-red-500">*</span></label>
+                            <input type="number" id="form-batch-size" required min="1" max="100000" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                        </div>
+                    </div>
+                    
+                    <div id="watermark-container" class="grid grid-cols-1 sm:grid-cols-2 gap-4 hidden bg-amber-50/50 p-4 rounded-xl border border-amber-200/60">
+                        <div>
+                            <label for="form-watermark-type" class="text-label-md text-surface-600 block mb-1.5">Watermark Type</label>
+                            <select id="form-watermark-type" class="w-full bg-white border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                                <option value="">None</option>
+                                <option value="datetime">DateTime</option>
+                                <option value="integer">Integer</option>
+                                <option value="string">String</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="form-watermark-column" class="text-label-md text-surface-600 block mb-1.5">Watermark Column</label>
+                            <input type="text" id="form-watermark-column" placeholder="e.g. LastModifiedDateTime" class="w-full bg-white border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="form-is-active" class="w-4 h-4 text-brand-600 bg-surface-100 border-surface-300 rounded focus:ring-brand-500">
+                            <span class="text-label-md text-surface-700">Entity is Active</span>
+                        </label>
+                    </div>
                 </form>
                 <div class="px-5 py-4 border-t border-surface-100 flex justify-end gap-2 shrink-0 bg-surface-50/50">
                     <button type="button" onclick="closeEntityModal()"
@@ -399,10 +452,89 @@
             </div>
         </div>
     </div>
+
+    {{-- Field Management Modal --}}
+    <div id="fields-modal" class="fixed inset-0 z-50 hidden">
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" onclick="closeFieldsModal()"></div>
+        <div class="absolute inset-0 flex items-center justify-center p-4">
+            <div class="bg-white rounded-2xl border border-surface-200/60 shadow-2xl w-full max-w-6xl animate-fade-up overflow-hidden max-h-[90vh] flex flex-col">
+                <div class="px-5 py-4 border-b border-surface-100 flex justify-between items-center shrink-0">
+                    <h3 class="text-h3 text-surface-800 flex items-center gap-2">
+                        <span class="material-symbols-outlined text-brand-500 text-[20px]">list_alt</span>
+                        Manage Fields: <span id="fields-modal-entity-name" class="font-mono text-brand-600 ml-1"></span>
+                    </h3>
+                    <button onclick="closeFieldsModal()"
+                        class="p-1.5 rounded-xl hover:bg-surface-100 text-surface-400 hover:text-surface-700 transition-all duration-200">
+                        <span class="material-symbols-outlined text-[20px]">close</span>
+                    </button>
+                </div>
+                
+                <div class="p-4 bg-surface-50/50 border-b border-surface-100 shrink-0 flex justify-between items-center">
+                    <div class="relative w-64">
+                        <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-surface-400 text-[18px]">search</span>
+                        <input type="text" id="fields-search" onkeyup="filterFieldsTable()" placeholder="Search fields..." class="w-full bg-white border border-surface-200 rounded-xl pl-9 pr-3 py-2 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                    </div>
+                    <div class="flex gap-2">
+                        <button type="button" onclick="discoverFields()" id="btn-discover-fields"
+                            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-100 text-surface-600 border border-surface-200 text-label-sm hover:bg-surface-200 transition-all duration-200">
+                            <span class="material-symbols-outlined text-[14px]">sync</span>
+                            <span>Refresh Metadata</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="overflow-y-auto p-0 flex-1 relative min-h-[300px]">
+                    <div id="fields-loading" class="absolute inset-0 bg-white/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center hidden">
+                        <span class="material-symbols-outlined text-[32px] text-brand-500 spin mb-2">sync</span>
+                        <p class="text-body-sm text-surface-600 font-medium" id="fields-loading-text">Loading fields...</p>
+                    </div>
+                    
+                    <table class="w-full text-left border-collapse" id="fields-table">
+                        <thead class="bg-surface-50 sticky top-0 z-10 shadow-sm shadow-surface-100/50">
+                            <tr>
+                                <th class="py-3 px-4 text-label-sm font-semibold text-surface-600 border-b border-surface-100 w-12 text-center">
+                                    <input type="checkbox" id="fields-toggle-all" onchange="toggleAllFields(this)" class="w-4 h-4 text-brand-600 rounded border-surface-300 focus:ring-brand-500">
+                                </th>
+                                <th class="py-3 px-4 text-label-sm font-semibold text-surface-600 border-b border-surface-100">Source Field</th>
+                                <th class="py-3 px-4 text-label-sm font-semibold text-surface-600 border-b border-surface-100">Destination Column</th>
+                                <th class="py-3 px-4 text-label-sm font-semibold text-surface-600 border-b border-surface-100 w-28">Data Type</th>
+                                <th class="py-3 px-4 text-label-sm font-semibold text-surface-600 border-b border-surface-100 w-32">Semantic Type</th>
+                                <th class="py-3 px-4 text-label-sm font-semibold text-surface-600 border-b border-surface-100 w-32">Label</th>
+                                <th class="py-3 px-4 text-label-sm font-semibold text-surface-600 border-b border-surface-100">Description</th>
+                                <th class="py-3 px-4 text-label-sm font-semibold text-surface-600 border-b border-surface-100 w-48">Aliases</th>
+                                <th class="py-3 px-4 text-label-sm font-semibold text-surface-600 border-b border-surface-100 w-20 text-center">Is Key</th>
+                                <th class="py-3 px-4 text-label-sm font-semibold text-surface-600 border-b border-surface-100 w-20 text-center">Nullable</th>
+                                <th class="py-3 px-4 text-label-sm font-semibold text-surface-600 border-b border-surface-100 w-28">Transform</th>
+                            </tr>
+                        </thead>
+                        <tbody id="fields-tbody" class="divide-y divide-surface-100 text-body-sm">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="px-5 py-4 border-t border-surface-100 flex justify-between items-center shrink-0 bg-surface-50/50">
+                    <div class="text-label-sm text-surface-500" id="fields-count-summary">0 fields total</div>
+                    <div class="flex gap-2">
+                        <button type="button" onclick="closeFieldsModal()"
+                            class="px-4 py-2 rounded-xl text-label-md text-surface-600 hover:bg-surface-200 transition-all duration-200 bg-surface-100 border border-surface-200">
+                            Cancel
+                        </button>
+                        <button type="button" onclick="submitFieldsForm()" id="fields-submit-btn"
+                            class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand-600 text-white text-label-md hover:bg-brand-700 transition-all duration-200 active:scale-[0.97] shadow-sm">
+                            <span class="material-symbols-outlined text-[14px]">save</span>
+                            <span>Save Mappings</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 @endsection
 
 @section('scripts')
 <script>
+    // csrfToken is already declared globally in app.blade.php
     const entityData = @json($entities);
     const connectionData = @json($connections);
     const providerSchemas = @json($schemas);
@@ -463,15 +595,39 @@
             if(e.destination_connection) {
                 document.getElementById('form-dest-conn').value = e.destination_connection;
             }
+            
+            document.getElementById('form-sync-mode').value = e.sync_mode || 'full';
+            document.getElementById('form-batch-size').value = e.batch_size || 2000;
+            document.getElementById('form-watermark-type').value = e.watermark_type || '';
+            document.getElementById('form-watermark-column').value = e.watermark_column || '';
+            document.getElementById('form-is-active').checked = e.is_active ?? true;
+            
             document.getElementById('modal-title').innerHTML = '<span class="material-symbols-outlined text-brand-500 text-[20px]">edit</span> Edit Entity';
             document.getElementById('form-submit-text').textContent = 'Save Changes';
             fetchSourceObjects();
         } else {
+            document.getElementById('form-sync-mode').value = 'full';
+            document.getElementById('form-batch-size').value = 2000;
+            document.getElementById('form-watermark-type').value = '';
+            document.getElementById('form-watermark-column').value = '';
+            document.getElementById('form-is-active').checked = true;
+            
             document.getElementById('modal-title').innerHTML = '<span class="material-symbols-outlined text-brand-500 text-[20px]">add_circle</span> Add Entity';
             document.getElementById('form-submit-text').textContent = 'Create Entity';
             fetchSourceObjects();
         }
+        toggleWatermarkFields();
         modal.classList.remove('hidden');
+    }
+
+    function toggleWatermarkFields() {
+        const mode = document.getElementById('form-sync-mode').value;
+        const container = document.getElementById('watermark-container');
+        if (mode === 'incremental') {
+            container.classList.remove('hidden');
+        } else {
+            container.classList.add('hidden');
+        }
     }
 
     function filterList(input, listId) {
@@ -568,6 +724,11 @@
             description: document.getElementById('form-desc').value.trim(),
             source_connection: document.getElementById('form-source-conn').value,
             destination_connection: document.getElementById('form-dest-conn').value,
+            sync_mode: document.getElementById('form-sync-mode').value,
+            batch_size: parseInt(document.getElementById('form-batch-size').value, 10),
+            watermark_type: document.getElementById('form-watermark-type').value,
+            watermark_column: document.getElementById('form-watermark-column').value.trim(),
+            is_active: document.getElementById('form-is-active').checked,
         };
         btn.disabled = true;
         try {
@@ -579,6 +740,221 @@
             else { showToast(data.message || 'Operation failed', 'error'); }
         } catch (e) { showToast('Error: ' + e.message, 'error'); }
         finally { btn.disabled = false; }
+    }
+
+    // ── Field Management Modal ─────────────────────────────────────────────
+    let currentFieldsEntity = null;
+    let currentFieldsData = [];
+
+    async function manageEntityFields(key) {
+        currentFieldsEntity = key;
+        document.getElementById('fields-modal-entity-name').textContent = key;
+        document.getElementById('fields-search').value = '';
+        document.getElementById('fields-modal').classList.remove('hidden');
+        await loadFields(key);
+    }
+
+    function closeFieldsModal() {
+        document.getElementById('fields-modal').classList.add('hidden');
+        currentFieldsEntity = null;
+        currentFieldsData = [];
+    }
+
+    async function loadFields(key) {
+        const loading = document.getElementById('fields-loading');
+        loading.classList.remove('hidden');
+        document.getElementById('fields-loading-text').textContent = 'Loading fields...';
+        
+        try {
+            const res = await fetch(`/api/entities/${key}/mappings`);
+            const data = await res.json();
+            
+            if (res.ok) {
+                // If it returns an array directly or { success: true, fields: [...] }
+                currentFieldsData = data.fields || (Array.isArray(data) ? data : Object.values(data));
+                // Convert object to array if needed
+                if (!Array.isArray(currentFieldsData) && typeof currentFieldsData === 'object') {
+                    currentFieldsData = Object.keys(currentFieldsData).map(k => ({ source_field: k, ...currentFieldsData[k] }));
+                }
+                
+                // Sort by source_field
+                currentFieldsData.sort((a, b) => a.source_field.localeCompare(b.source_field));
+                
+                renderFieldsTable();
+            } else {
+                showToast(data.message || 'Failed to load fields', 'error');
+            }
+        } catch (e) {
+            showToast('Error: ' + e.message, 'error');
+        } finally {
+            loading.classList.add('hidden');
+        }
+    }
+
+    function renderFieldsTable() {
+        const tbody = document.getElementById('fields-tbody');
+        const filter = document.getElementById('fields-search').value.toLowerCase();
+        let html = '';
+        let count = 0;
+        let allEnabled = true;
+
+        currentFieldsData.forEach((field, index) => {
+            if (filter && !field.source_field.toLowerCase().includes(filter) && !(field.destination_field || '').toLowerCase().includes(filter)) {
+                return;
+            }
+            count++;
+            
+            if (field.is_enabled === false) {
+                allEnabled = false;
+            }
+
+            html += `
+                <tr class="hover:bg-surface-50/50 transition-colors" data-index="${index}">
+                    <td class="py-2.5 px-4 text-center border-b border-surface-100">
+                        <input type="checkbox" class="field-enabled w-4 h-4 text-brand-600 rounded border-surface-300 focus:ring-brand-500" ${field.is_enabled !== false ? 'checked' : ''} onchange="updateFieldData(${index}, 'is_enabled', this.checked)">
+                    </td>
+                    <td class="py-2.5 px-4 border-b border-surface-100 font-mono text-surface-900 font-medium">
+                        ${field.source_field}
+                        <input type="hidden" class="field-source" value="${field.source_field}">
+                    </td>
+                    <td class="py-2.5 px-4 border-b border-surface-100">
+                        <input type="text" class="field-dest w-full bg-white border border-surface-200 rounded-lg px-2 py-1 text-xs focus:ring-2 focus:ring-brand-500/20" value="${field.destination_field || ''}" onchange="updateFieldData(${index}, 'destination_field', this.value)">
+                    </td>
+                    <td class="py-2.5 px-4 border-b border-surface-100">
+                        <input type="text" class="field-type w-full bg-white border border-surface-200 rounded-lg px-2 py-1 text-xs font-mono focus:ring-2 focus:ring-brand-500/20" value="${field.data_type || ''}" onchange="updateFieldData(${index}, 'data_type', this.value)">
+                    </td>
+                    <td class="py-2.5 px-4 border-b border-surface-100">
+                        <select class="field-semantic w-full bg-white border border-surface-200 rounded-lg px-2 py-1 text-xs focus:ring-2 focus:ring-brand-500/20" onchange="updateFieldData(${index}, 'semantic_type', this.value)">
+                            <option value="" ${!field.semantic_type ? 'selected' : ''}>None</option>
+                            <option value="identifier" ${field.semantic_type === 'identifier' ? 'selected' : ''}>Identifier</option>
+                            <option value="metric" ${field.semantic_type === 'metric' ? 'selected' : ''}>Metric</option>
+                            <option value="amount" ${field.semantic_type === 'amount' ? 'selected' : ''}>Amount</option>
+                            <option value="currency" ${field.semantic_type === 'currency' ? 'selected' : ''}>Currency</option>
+                            <option value="dimension" ${field.semantic_type === 'dimension' ? 'selected' : ''}>Dimension</option>
+                            <option value="categorical" ${field.semantic_type === 'categorical' ? 'selected' : ''}>Categorical</option>
+                            <option value="date" ${field.semantic_type === 'date' ? 'selected' : ''}>Date</option>
+                            <option value="datetime" ${field.semantic_type === 'datetime' ? 'selected' : ''}>Datetime</option>
+                            <option value="boolean" ${field.semantic_type === 'boolean' ? 'selected' : ''}>Boolean</option>
+                            <option value="status" ${field.semantic_type === 'status' ? 'selected' : ''}>Status</option>
+                        </select>
+                    </td>
+                    <td class="py-2.5 px-4 border-b border-surface-100">
+                        <input type="text" class="field-label w-full bg-white border border-surface-200 rounded-lg px-2 py-1 text-xs focus:ring-2 focus:ring-brand-500/20" value="${field.label || ''}" placeholder="Label" onchange="updateFieldData(${index}, 'label', this.value)">
+                    </td>
+                    <td class="py-2.5 px-4 border-b border-surface-100">
+                        <input type="text" class="field-description w-full bg-white border border-surface-200 rounded-lg px-2 py-1 text-xs focus:ring-2 focus:ring-brand-500/20" value="${field.description || ''}" placeholder="Description" onchange="updateFieldData(${index}, 'description', this.value)">
+                    </td>
+                    <td class="py-2.5 px-4 border-b border-surface-100">
+                        <input type="text" class="field-aliases w-full bg-white border border-surface-200 rounded-lg px-2 py-1 text-xs focus:ring-2 focus:ring-brand-500/20" value="${(field.aliases || []).join(', ')}" placeholder="tag1, tag2" onchange="updateFieldAliases(${index}, this.value)">
+                    </td>
+                    <td class="py-2.5 px-4 text-center border-b border-surface-100">
+                        <input type="checkbox" class="field-key w-4 h-4 text-amber-500 rounded border-surface-300 focus:ring-amber-500" ${field.is_key ? 'checked' : ''} onchange="updateFieldData(${index}, 'is_key', this.checked)">
+                    </td>
+                    <td class="py-2.5 px-4 text-center border-b border-surface-100">
+                        <input type="checkbox" class="field-nullable w-4 h-4 text-brand-600 rounded border-surface-300 focus:ring-brand-500" ${field.is_nullable !== false ? 'checked' : ''} onchange="updateFieldData(${index}, 'is_nullable', this.checked)">
+                    </td>
+                    <td class="py-2.5 px-4 border-b border-surface-100">
+                        <input type="text" class="field-transform w-full bg-white border border-surface-200 rounded-lg px-2 py-1 text-xs focus:ring-2 focus:ring-brand-500/20" value="${field.transform_rule || ''}" placeholder="e.g. trim" onchange="updateFieldData(${index}, 'transform_rule', this.value)">
+                    </td>
+                </tr>
+            `;
+        });
+
+        tbody.innerHTML = html;
+        document.getElementById('fields-count-summary').textContent = `${count} fields visible`;
+        document.getElementById('fields-toggle-all').checked = count > 0 && allEnabled;
+    }
+
+    function updateFieldData(index, prop, value) {
+        if (currentFieldsData[index]) {
+            currentFieldsData[index][prop] = value === '' ? null : value;
+        }
+    }
+
+    function updateFieldAliases(index, value) {
+        if (currentFieldsData[index]) {
+            if (!value || value.trim() === '') {
+                currentFieldsData[index].aliases = null;
+            } else {
+                currentFieldsData[index].aliases = value.split(',').map(s => s.trim()).filter(s => s.length > 0);
+            }
+        }
+    }
+
+    function filterFieldsTable() {
+        renderFieldsTable();
+    }
+
+    function toggleAllFields(checkbox) {
+        const checked = checkbox.checked;
+        const filter = document.getElementById('fields-search').value.toLowerCase();
+        
+        currentFieldsData.forEach((field) => {
+            if (filter && !field.source_field.toLowerCase().includes(filter) && !(field.destination_field || '').toLowerCase().includes(filter)) {
+                return;
+            }
+            field.is_enabled = checked;
+        });
+        
+        renderFieldsTable();
+    }
+
+    async function submitFieldsForm() {
+        if (!currentFieldsEntity) return;
+        
+        const btn = document.getElementById('fields-submit-btn');
+        btn.disabled = true;
+        
+        try {
+            const payload = { fields: currentFieldsData };
+            const res = await fetch(`/api/entities/${currentFieldsEntity}/mappings`, { 
+                method: 'PUT', 
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' }, 
+                body: JSON.stringify(payload) 
+            });
+            const data = await res.json();
+            
+            if (res.ok && data.success) { 
+                showToast(data.message, 'success'); 
+                closeFieldsModal(); 
+            } else { 
+                showToast(data.message || 'Operation failed', 'error'); 
+            }
+        } catch (e) { 
+            showToast('Error: ' + e.message, 'error'); 
+        } finally { 
+            btn.disabled = false; 
+        }
+    }
+
+    async function discoverFields() {
+        if (!currentFieldsEntity) return;
+        
+        const btn = document.getElementById('btn-discover-fields');
+        btn.disabled = true;
+        document.getElementById('fields-loading').classList.remove('hidden');
+        document.getElementById('fields-loading-text').textContent = 'Discovering metadata (may take a minute)...';
+        
+        try {
+            // Assuming this triggers the job and we wait a bit or we just trigger the command directly
+            const res = await fetch(`/api/entities/${currentFieldsEntity}/discover`, { 
+                method: 'POST', 
+                headers: { 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' } 
+            });
+            const data = await res.json();
+            
+            if (res.ok) {
+                showToast('Discovery completed', 'success');
+                await loadFields(currentFieldsEntity);
+            } else {
+                showToast(data.message || 'Discovery failed', 'error');
+            }
+        } catch (e) {
+            showToast('Error: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            document.getElementById('fields-loading').classList.add('hidden');
+        }
     }
 
     // ── Connection Modal ───────────────────────────────────────────────────
@@ -1067,48 +1443,60 @@
         }
     }
 
-    // ── Delete ─────────────────────────────────────────────────────────────
+    // ── Delete & Batch Delete ──────────────────────────────────────────────
+    let deleteTargetBatchKeys = [];
+
     function deleteEntity(key) { 
         document.getElementById('delete-type').value = 'entity';
         deleteTargetKey = key; 
-        document.getElementById('delete-name').textContent = key; 
+        deleteTargetBatchKeys = [];
+        document.getElementById('delete-name').textContent = `entity "${key}"`; 
         document.getElementById('delete-modal').classList.remove('hidden'); 
     }
+
     function deleteConnection(key) { 
         document.getElementById('delete-type').value = 'connection';
         deleteTargetKey = key; 
-        document.getElementById('delete-name').textContent = connectionData[key] ? connectionData[key].name : key; 
+        deleteTargetBatchKeys = [];
+        document.getElementById('delete-name').textContent = `connection "${connectionData[key] ? connectionData[key].name : key}"`; 
         document.getElementById('delete-modal').classList.remove('hidden'); 
     }
     
-    // ── Batch Delete Entities ──────────────────────────────────────────────
-    function toggleAllEntities(source) {
-        const checkboxes = document.querySelectorAll('.entity-checkbox');
+    // ── Batch Delete Connections ───────────────────────────────────────────
+    function toggleAllConnections(source) {
+        const isChecked = source.checked;
+        const checkboxes = document.querySelectorAll('.conn-checkbox');
         checkboxes.forEach(cb => {
-            if (cb.closest('tr').style.display !== 'none') {
-                cb.checked = source.checked;
+            const tr = cb.closest('tr');
+            if (!tr || tr.style.display !== 'none') {
+                cb.checked = isChecked;
             }
         });
-        updateBatchDeleteBtn();
+        updateBatchDeleteConnBtn();
     }
 
-    function updateBatchDeleteBtn() {
-        const selectedCount = document.querySelectorAll('.entity-checkbox:checked').length;
-        const btn = document.getElementById('btn-batch-delete');
-        const countSpan = document.getElementById('batch-delete-count');
+    function updateBatchDeleteConnBtn() {
+        const checked = document.querySelectorAll('.conn-checkbox:checked');
+        const selectedCount = checked.length;
+        const btn = document.getElementById('btn-batch-delete-conn');
+        const countSpan = document.getElementById('batch-delete-conn-count');
         
-        if (selectedCount > 0) {
-            countSpan.textContent = selectedCount;
-            btn.classList.remove('hidden');
-            btn.classList.add('inline-flex');
-        } else {
-            btn.classList.add('hidden');
-            btn.classList.remove('inline-flex');
+        if (countSpan) countSpan.textContent = selectedCount;
+        
+        if (btn) {
+            if (selectedCount > 0) {
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+            } else {
+                btn.classList.add('opacity-50', 'cursor-not-allowed');
+            }
         }
         
-        const selectAll = document.getElementById('selectAllEntities');
-        if(selectAll) {
-            const visibleCheckboxes = Array.from(document.querySelectorAll('.entity-checkbox')).filter(cb => cb.closest('tr').style.display !== 'none');
+        const selectAll = document.getElementById('selectAllConnections');
+        if (selectAll) {
+            const visibleCheckboxes = Array.from(document.querySelectorAll('.conn-checkbox')).filter(cb => {
+                const tr = cb.closest('tr');
+                return !tr || tr.style.display !== 'none';
+            });
             if (visibleCheckboxes.length > 0) {
                 const allChecked = visibleCheckboxes.every(cb => cb.checked);
                 const someChecked = visibleCheckboxes.some(cb => cb.checked);
@@ -1121,56 +1509,136 @@
         }
     }
 
-    async function batchDeleteEntities() {
-        const selected = Array.from(document.querySelectorAll('.entity-checkbox:checked')).map(cb => cb.value);
-        if (selected.length === 0) return;
+    function batchDeleteConnections() {
+        const selected = Array.from(document.querySelectorAll('.conn-checkbox:checked')).map(cb => cb.value);
+        if (selected.length === 0) {
+            showToast('Please select at least one connection to delete.', 'error');
+            return;
+        }
         
-        if(!confirm(`Are you sure you want to delete ${selected.length} entities?`)) return;
-        
+        document.getElementById('delete-type').value = 'batch_connection';
+        deleteTargetKey = null;
+        deleteTargetBatchKeys = selected;
+        document.getElementById('delete-name').textContent = `${selected.length} selected connection(s) (${selected.join(', ')})`;
+        document.getElementById('delete-modal').classList.remove('hidden');
+    }
+
+    // ── Batch Delete Entities ──────────────────────────────────────────────
+    function toggleAllEntities(source) {
+        const isChecked = source.checked;
+        const checkboxes = document.querySelectorAll('.entity-checkbox');
+        checkboxes.forEach(cb => {
+            const tr = cb.closest('tr');
+            if (!tr || tr.style.display !== 'none') {
+                cb.checked = isChecked;
+            }
+        });
+        updateBatchDeleteBtn();
+    }
+
+    function updateBatchDeleteBtn() {
+        const checked = document.querySelectorAll('.entity-checkbox:checked');
+        const selectedCount = checked.length;
         const btn = document.getElementById('btn-batch-delete');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="material-symbols-outlined text-[14px] spin">sync</span> Deleting...';
+        const countSpan = document.getElementById('batch-delete-count');
         
-        let successCount = 0;
-        for (const key of selected) {
-            try {
-                const res = await fetch(`/api/entities/${key}`, {
-                    method: 'DELETE',
-                    headers: { 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' }
-                });
-                if(res.ok) successCount++;
-            } catch(e) {
-                console.error('Failed to delete ' + key);
+        if (countSpan) countSpan.textContent = selectedCount;
+        
+        if (btn) {
+            if (selectedCount > 0) {
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+            } else {
+                btn.classList.add('opacity-50', 'cursor-not-allowed');
             }
         }
         
-        if (successCount > 0) {
-            showToast(`Successfully deleted ${successCount} entities`, 'success');
-            setTimeout(() => location.reload(), 600);
-        } else {
-            showToast('Failed to delete entities', 'error');
-            btn.disabled = false;
-            btn.innerHTML = `<span class="material-symbols-outlined text-[14px]">delete</span> Delete Selected (<span id="batch-delete-count">${selected.length}</span>)`;
-            updateBatchDeleteBtn();
+        const selectAll = document.getElementById('selectAllEntities');
+        if (selectAll) {
+            const visibleCheckboxes = Array.from(document.querySelectorAll('.entity-checkbox')).filter(cb => {
+                const tr = cb.closest('tr');
+                return !tr || tr.style.display !== 'none';
+            });
+            if (visibleCheckboxes.length > 0) {
+                const allChecked = visibleCheckboxes.every(cb => cb.checked);
+                const someChecked = visibleCheckboxes.some(cb => cb.checked);
+                selectAll.checked = allChecked;
+                selectAll.indeterminate = someChecked && !allChecked;
+            } else {
+                selectAll.checked = false;
+                selectAll.indeterminate = false;
+            }
         }
     }
 
-    function closeDeleteModal() { document.getElementById('delete-modal').classList.add('hidden'); deleteTargetKey = null; }
+    function batchDeleteEntities() {
+        const selected = Array.from(document.querySelectorAll('.entity-checkbox:checked')).map(cb => cb.value);
+        if (selected.length === 0) {
+            showToast('Please select at least one entity to delete.', 'error');
+            return;
+        }
+        
+        document.getElementById('delete-type').value = 'batch_entity';
+        deleteTargetKey = null;
+        deleteTargetBatchKeys = selected;
+        document.getElementById('delete-name').textContent = `${selected.length} selected entity(s) (${selected.join(', ')})`;
+        document.getElementById('delete-modal').classList.remove('hidden');
+    }
+
+    function closeDeleteModal() { 
+        document.getElementById('delete-modal').classList.add('hidden'); 
+        deleteTargetKey = null; 
+        deleteTargetBatchKeys = [];
+    }
     
     async function confirmDelete() {
-        if (!deleteTargetKey) return;
         const type = document.getElementById('delete-type').value;
         const btn = document.getElementById('delete-confirm-btn');
         btn.disabled = true; 
         btn.innerHTML = '<span class="material-symbols-outlined text-[14px] spin">sync</span> Deleting…';
+        
         try {
-            const url = type === 'entity' ? `/api/entities/${deleteTargetKey}` : `/api/connections/${deleteTargetKey}`;
-            const res = await fetch(url, { method: 'DELETE', headers: { 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' } });
-            const data = await res.json();
-            if (res.ok && data.success) { showToast(data.message, 'success'); closeDeleteModal(); setTimeout(() => location.reload(), 800); }
-            else { showToast(data.message || 'Delete failed', 'error'); }
-        } catch (e) { showToast('Error: ' + e.message, 'error'); }
-        finally { btn.disabled = false; btn.innerHTML = '<span class="material-symbols-outlined text-[14px]">delete</span> Delete'; }
+            let res, data;
+            if (type === 'batch_connection') {
+                res = await fetch('/api/connections/batch-delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' },
+                    body: JSON.stringify({ keys: deleteTargetBatchKeys })
+                });
+                data = await res.json();
+            } else if (type === 'batch_entity') {
+                res = await fetch('/api/entities/batch-delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' },
+                    body: JSON.stringify({ keys: deleteTargetBatchKeys })
+                });
+                data = await res.json();
+            } else if (type === 'entity') {
+                res = await fetch(`/api/entities/${deleteTargetKey}`, {
+                    method: 'DELETE',
+                    headers: { 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' }
+                });
+                data = await res.json();
+            } else if (type === 'connection') {
+                res = await fetch(`/api/connections/${deleteTargetKey}`, {
+                    method: 'DELETE',
+                    headers: { 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' }
+                });
+                data = await res.json();
+            }
+
+            if (res && res.ok && data && data.success) {
+                showToast(data.message || 'Deleted successfully', 'success');
+                closeDeleteModal();
+                setTimeout(() => location.reload(), 600);
+            } else {
+                showToast(data?.message || 'Delete operation failed', 'error');
+            }
+        } catch (e) {
+            showToast('Error: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<span class="material-symbols-outlined text-[14px]">delete</span> Delete';
+        }
     }
 
 

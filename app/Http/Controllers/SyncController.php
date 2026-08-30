@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Jobs\SyncEntityJob;
 use App\Models\SyncLog;
 use App\Services\AcumaticaODataService;
+use App\Services\EntityConfigService;
 use App\Services\QueueWorkerService;
 use App\Services\SchemaManager;
 use App\Services\SyncService;
@@ -16,11 +17,13 @@ class SyncController extends Controller
 {
     protected SyncService $syncService;
     protected QueueWorkerService $queueWorker;
+    protected EntityConfigService $entityConfigService;
 
-    public function __construct(SyncService $syncService, QueueWorkerService $queueWorker)
+    public function __construct(SyncService $syncService, QueueWorkerService $queueWorker, EntityConfigService $entityConfigService)
     {
         $this->syncService = $syncService;
         $this->queueWorker = $queueWorker;
+        $this->entityConfigService = $entityConfigService;
     }
 
     /**
@@ -32,7 +35,7 @@ class SyncController extends Controller
      */
     public function syncAll(): JsonResponse
     {
-        $entities = config('acumatica.entities', []);
+        $entities = $this->entityConfigService->getAll();
         $connectionService = app(\App\Services\ConnectionService::class);
         $invalidEntities = [];
 
@@ -56,13 +59,23 @@ class SyncController extends Controller
         $jobIds = [];
 
         foreach ($sorted as $key => $config) {
-            // Check if already running or pending for this entity
             $activeJob = \App\Models\SyncJob::where('entity', $key)
                 ->whereIn('status', [\App\Models\SyncJob::STATUS_PENDING, \App\Models\SyncJob::STATUS_RUNNING])
                 ->first();
 
             if ($activeJob) {
                 continue; // Skip queuing duplicate job
+            }
+
+            // Check distributed lock
+            $schedule = \App\Models\SyncSchedule::where('entity_key', $key)->first();
+            if ($schedule) {
+                $syncState = \App\Models\SyncState::where('sync_schedule_id', $schedule->id)->first();
+                if ($syncState && $syncState->lock_owner !== null && (
+                    $syncState->lock_expires_at === null || \Carbon\Carbon::parse($syncState->lock_expires_at)->isFuture()
+                )) {
+                    continue; // Skip, already locked by another process
+                }
             }
 
             $jobRecord = \App\Models\SyncJob::create([
@@ -120,17 +133,16 @@ class SyncController extends Controller
             } elseif ($action === 'stop' || $action === 'cancel') {
                 $log->update(['status' => 'stopped', 'current_stage' => 'Stop Requested']);
 
-                // We also proactively clear the sync state lock if possible so user can restart immediately
+                // We intentionally do NOT proactively clear the sync state lock here.
+                // Releasing another worker's lock while it is still running a transaction
+                // will cause data corruption if another sync is started concurrently.
+                // The running worker will see the 'sync_control_log_' cache signal,
+                // finish its current transaction gracefully, and then release its own lock.
+                
                 try {
-                    $schedule = \App\Models\SyncSchedule::where('entity_key', $log->entity_key)->first();
-                    if ($schedule) {
-                        $syncStateService = app(\App\Services\Contracts\SyncStateServiceInterface::class);
-                        $syncStateService->failSynchronization($schedule->id);
-                        $syncStateService->releaseSynchronizationLock($schedule->id, $log->session_id);
-                    }
-                    
                     // Immediately mark any active SyncJob for this entity as failed
-                    // so the UI allows starting a new sync.
+                    // so the UI reflects the stop request, but the background worker
+                    // retains the lock until it cleanly exits.
                     \App\Models\SyncJob::where('entity', $log->entity_key)
                         ->whereIn('status', [\App\Models\SyncJob::STATUS_PENDING, \App\Models\SyncJob::STATUS_RUNNING])
                         ->update([
@@ -139,7 +151,7 @@ class SyncController extends Controller
                             'finished_at' => now()
                         ]);
                 } catch (\Exception $e) {
-                    // Ignore state errors if it's already released or failed
+                    // Ignore state errors
                 }
             }
 
@@ -163,7 +175,7 @@ class SyncController extends Controller
     public function syncEntity(Request $request, string $entity): JsonResponse
     {
         try {
-            $config = config("acumatica.entities.{$entity}");
+            $config = $this->entityConfigService->get($entity);
             if (!$config) {
                 return response()->json([
                     'success' => false,
@@ -193,6 +205,28 @@ class SyncController extends Controller
                 ], 400);
             }
 
+            // Check distributed lock first
+            $schedule = \App\Models\SyncSchedule::where('entity_key', $entity)->first();
+            if ($schedule) {
+                $syncState = \App\Models\SyncState::where('sync_schedule_id', $schedule->id)->first();
+                if ($syncState && $syncState->lock_owner !== null && (
+                    $syncState->lock_expires_at === null || \Carbon\Carbon::parse($syncState->lock_expires_at)->isFuture()
+                )) {
+                    // Lock is actively held! Find the most recent SyncJob to resume polling
+                    $activeJob = \App\Models\SyncJob::where('entity', $entity)
+                        ->orderByDesc('created_at')
+                        ->first();
+
+                    return response()->json([
+                        'success' => false,
+                        'status' => 'already_running',
+                        'message' => 'Synchronization is already running.',
+                        'schedule_id' => $schedule->id,
+                        'job_id' => $activeJob ? $activeJob->id : null
+                    ], 423);
+                }
+            }
+
             // Check if already running or pending for this entity
             $activeJob = \App\Models\SyncJob::where('entity', $entity)
                 ->whereIn('status', [\App\Models\SyncJob::STATUS_PENDING, \App\Models\SyncJob::STATUS_RUNNING])
@@ -201,6 +235,7 @@ class SyncController extends Controller
             if ($activeJob) {
                 return response()->json([
                     'success' => false,
+                    'status' => 'already_running',
                     'message' => 'Proses sinkronisasi untuk entitas ini sedang mengantre (pending) atau sedang berjalan. Harap tunggu hingga selesai.',
                     'job_id' => $activeJob->id
                 ], 429);
@@ -310,7 +345,7 @@ class SyncController extends Controller
      */
     public function entityFields(Request $request, string $entity, \App\Contracts\Metadata\MetadataSynchronizationServiceInterface $metadataService): JsonResponse
     {
-        $config = config("acumatica.entities.{$entity}");
+        $config = $this->entityConfigService->get($entity);
         if (!$config) {
             return response()->json(['success' => false, 'message' => "Unknown entity: {$entity}"], 404);
         }

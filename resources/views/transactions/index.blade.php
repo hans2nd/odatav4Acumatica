@@ -529,7 +529,18 @@
 
                 const data = await res.json();
 
-                if (data.success && data.job_id) {
+                if (data.status === 'already_running') {
+                    showToast(`${currentSyncEntity}: ${data.message}`, 'info');
+                    
+                    document.getElementById('syncStageLabel').innerText = 'Sync Already Running';
+                    document.getElementById('syncProgressLabel').innerText = `${currentSyncEntity} is currently being synchronized by another worker. Please wait for the current synchronization to finish.`;
+                    
+                    iconEl.className = 'w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-blue-600';
+                    iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px] spin">sync</span>';
+                    
+                    btnEl.disabled = false;
+                    btnEl.innerHTML = originalText;
+                } else if (data.success && data.job_id) {
                     showToast(`${currentSyncEntity}: Synchronization has been queued.`, 'info');
                     
                     // Instantly kickstart the queue worker via Web Cron (max 50s) to avoid waiting for VPS cron

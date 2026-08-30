@@ -98,12 +98,34 @@ class QueryBuilderController extends Controller
                 return response()->json(['success' => false, 'message' => 'Failed to fetch columns: ' . $result->errorMessage], 500);
             }
 
+            $semanticFields = \Illuminate\Support\Facades\Cache::remember(
+                "semantic_fields_{$connKey}_{$table}",
+                3600,
+                function () use ($table) {
+                    $entity = \App\Models\SyncEntity::where('destination_table', $table)->first();
+                    if ($entity) {
+                        return \App\Models\SyncEntityField::where('sync_entity_id', $entity->id)
+                            ->where('is_enabled', true)
+                            ->whereNotNull('destination_field')
+                            ->get()
+                            ->keyBy('destination_field');
+                    }
+                    return collect();
+                }
+            );
             $columns = [];
             foreach ($result->fields as $field) {
+                $colName = $field['name'];
+                $semantic = $semanticFields->get($colName);
+
                 $columns[] = [
-                    'name' => $field['name'],
+                    'name' => $colName,
                     'type' => $field['dataType'] ?? 'varchar',
                     'key'  => $field['isPrimaryKey'] ? 'PRI' : '',
+                    'label' => $semantic ? $semantic->label : null,
+                    'semantic_type' => $semantic ? $semantic->semantic_type : null,
+                    'description' => $semantic ? $semantic->description : null,
+                    'aliases' => $semantic ? $semantic->aliases : null,
                 ];
             }
 
@@ -278,9 +300,10 @@ class QueryBuilderController extends Controller
                 $sql = "SELECT {$selectClause} FROM {$fromClause}{$joinClause}{$whereClause}{$groupByClause}{$orderByClause}{$limitClause}";
             }
 
-            $startTime = microtime(true);
-            $results = DB::connection($connName)->select($sql, $bindings);
-            $elapsed = round((microtime(true) - $startTime) * 1000);
+            $qrService = app(\App\Services\QueryRepositoryService::class);
+            $result = $qrService->executeDynamic($connKey, $sql, $bindings);
+            $results = $result['data'];
+            $elapsed = round($result['duration'] * 1000);
 
             $rows = array_map(fn($r) => (array) $r, $results);
             $resultColumns = !empty($rows) ? array_keys($rows[0]) : [];
@@ -370,14 +393,11 @@ class QueryBuilderController extends Controller
             $connName = $this->connectionService->resolveConnectionName($connKey);
             $driver   = DB::connection($connName)->getDriverName();
 
-            if (!preg_match('/^\s*SELECT\s/i', $sql)) {
-                return response()->json(['success' => false, 'message' => 'Only SELECT queries are allowed.'], 400);
-            }
-
             $sql = $this->normalizeSqlForDriver($sql, $driver);
 
-            $results = DB::connection($connName)->select($sql);
-            $rows = array_map(fn($r) => (array) $r, $results);
+            $qrService = app(\App\Services\QueryRepositoryService::class);
+            $qrResult = $qrService->executeDynamic($connKey, $sql, []);
+            $rows = array_map(fn($r) => (array) $r, $qrResult['data']);
             $columns = !empty($rows) ? array_keys($rows[0]) : [];
 
             $token = Str::random(32);

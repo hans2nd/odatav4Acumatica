@@ -12,7 +12,9 @@ class MetadataEntity
     public function __construct(
         public readonly string $entityKey,
         public readonly array $fields,
-        public readonly ?string $providerVersion = null
+        public readonly ?string $providerVersion = null,
+        public readonly ?int $connectionId = null,
+        public readonly ?string $provider = null
     ) {
     }
 
@@ -24,6 +26,8 @@ class MetadataEntity
         
         return hash('sha256', json_encode([
             'entity' => $this->entityKey,
+            'connection' => $this->connectionId,
+            'provider' => $this->provider,
             'fields' => $fieldData
         ]));
     }

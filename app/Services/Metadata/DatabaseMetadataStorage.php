@@ -13,9 +13,12 @@ class DatabaseMetadataStorage implements DatabaseMetadataStorageInterface
     {
         DB::transaction(function () use ($metadataEntity, $version, $hash) {
             $defId = DB::table('sync_metadata_definitions')->updateOrInsert(
-                ['entity_key' => $metadataEntity->entityKey],
                 [
-                    'provider' => 'acumatica',
+                    'entity_key' => $metadataEntity->entityKey,
+                    'connection_id' => $metadataEntity->connectionId ?? null
+                ],
+                [
+                    'provider' => $metadataEntity->provider ?? 'acumatica',
                     'provider_version' => $metadataEntity->providerVersion,
                     'metadata_version' => $version,
                     'metadata_hash' => $hash,
@@ -26,7 +29,10 @@ class DatabaseMetadataStorage implements DatabaseMetadataStorageInterface
             );
 
             if ($defId === true || $defId === false) {
-                $defRecord = DB::table('sync_metadata_definitions')->where('entity_key', $metadataEntity->entityKey)->first();
+                $defRecord = DB::table('sync_metadata_definitions')
+                    ->where('entity_key', $metadataEntity->entityKey)
+                    ->where('connection_id', $metadataEntity->connectionId ?? null)
+                    ->first();
                 $defId = $defRecord->id;
             }
 
@@ -45,6 +51,7 @@ class DatabaseMetadataStorage implements DatabaseMetadataStorageInterface
                     'scale' => $field->scale,
                     'relationship_type' => $field->relationshipType,
                     'related_entity' => $field->relatedEntity,
+                    'semantic_type' => $field->semanticType,
                     'created_at' => now(),
                     'updated_at' => now(),
                 ];
@@ -77,7 +84,8 @@ class DatabaseMetadataStorage implements DatabaseMetadataStorageInterface
                 precision: $row->precision,
                 scale: $row->scale,
                 relationshipType: $row->relationship_type,
-                relatedEntity: $row->related_entity
+                relatedEntity: $row->related_entity,
+                semanticType: $row->semantic_type ?? null
             );
         }
 

@@ -50,9 +50,21 @@ class Menu extends Model
             ->orderBy('sort_order');
     }
 
+    /**
+     * LEGACY RELATIONSHIP
+     * This relationship uses the legacy `menu_permissions` pivot table.
+     * It is NOT used for authorization.
+     * The canonical permission relationship is `permission()`.
+     * Do NOT use this legacy pivot for RBAC decisions.
+     */
     public function permissions()
     {
         return $this->belongsToMany(Permission::class, 'menu_permissions');
+    }
+
+    public function permission()
+    {
+        return $this->belongsTo(Permission::class, 'permission_key', 'permission_key');
     }
 
     // --- Scopes ---
@@ -79,17 +91,21 @@ class Menu extends Model
      */
     public function hasAccess($user): bool
     {
-        if (!$this->is_active || !$this->is_visible) {
+        if (!$this->is_active) {
+            return false;
+        }
+
+        // Super admin sees everything (bypass normal visibility and permission checks)
+        if ($user->isSuperAdmin()) {
+            return true;
+        }
+
+        if (!$this->is_visible) {
             return false;
         }
 
         // No permission required = everyone can see
         if (empty($this->permission_key)) {
-            return true;
-        }
-
-        // Super admin sees everything
-        if ($user->isSuperAdmin()) {
             return true;
         }
 

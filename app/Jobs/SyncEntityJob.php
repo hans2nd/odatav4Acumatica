@@ -28,16 +28,23 @@ class SyncEntityJob implements ShouldQueue
     public int $tries = 3;
     
     /**
-     * Wait 60 seconds before retrying.
+     * Wait 60 seconds before first retry, then 300s (5 mins) to outlast the lock TTL, then 600s.
      */
-    public int $backoff = 60;
+    public array $backoff = [60, 300, 600];
+
+    /**
+     * The persistent identity of this worker instance across retries.
+     */
+    public string $workerId;
 
     public function __construct(
         public string $entityKey,
         public array $customFilters = [],
         public string $source = 'manual',
         public ?string $syncJobId = null
-    ) {}
+    ) {
+        $this->workerId = uniqid("worker_{$this->entityKey}_");
+    }
 
     public function handle(SyncService $syncService): void
     {
@@ -77,7 +84,7 @@ class SyncEntityJob implements ShouldQueue
                 'job_id' => $this->syncJobId
             ]);
 
-            $syncService->syncEntity($this->entityKey, $this->customFilters, $this->source, $this->syncJobId);
+            $syncService->syncEntity($this->entityKey, $this->customFilters, $this->source, $this->syncJobId, $this->workerId);
             
             // Note: SyncService->syncEntity() now guarantees it will update the SyncJob 
             // with the accurate final processed_rows, or it will throw an exception.

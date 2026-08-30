@@ -509,7 +509,7 @@
 
                     for (const [groupName, perms] of Object.entries(groupedOthers)) {
                         rows.push({
-                            type: 'menu',
+                            type: 'other',
                             title: groupName,
                             icon: 'subdirectory_arrow_right',
                             depth: 1,
@@ -520,9 +520,9 @@
 
                 rows.forEach((row, i) => {
                     const indent = row.depth * 20;
-                    const isHeaderOnly = row.type === 'header' || (row.type === 'menu' && row.permissions
-                        .length === 0);
+                    const isHeaderOnly = row.type === 'header' || ((row.type === 'menu' || row.type === 'other') && row.permissions.length === 0);
                     const rowId = `r${i}`;
+                    const isReadOnly = row.type === 'menu';
 
                     let rowHtml = `<tr class="hover:bg-surface-50/50 transition-colors group">`;
 
@@ -531,6 +531,7 @@
                                 <div class="flex items-center gap-2.5" style="padding-left: ${indent}px">
                                     <span class="material-symbols-outlined text-[18px] text-brand-600/70 shrink-0">${row.depth === 0 ? (row.icon || 'folder') : 'subdirectory_arrow_right'}</span>
                                     <span class="${row.depth === 0 ? 'font-semibold text-surface-800' : 'font-medium text-surface-600'} text-xs truncate" title="${row.title}">${row.title}</span>
+                                    ${isReadOnly ? '<span class="text-[9px] px-1.5 py-0.5 bg-yellow-100 text-yellow-700 rounded-full font-bold uppercase tracking-wider">Menu</span>' : ''}
                                 </div>
                             </td>
                         `;
@@ -561,7 +562,7 @@
 
                         rowHtml += `
                                 <td class="px-3 py-2.5 text-center border-r border-surface-200/80 bg-surface-50/50">
-                                    <input type="checkbox" class="rounded border-surface-300 text-brand-600 focus:ring-brand-500/20 w-4 h-4 cursor-pointer" onchange="toggleMatrixAll(this, 'row-all-${rowId}')">
+                                    <input type="checkbox" class="rounded border-surface-300 text-brand-600 focus:ring-brand-500/20 w-4 h-4 ${isReadOnly ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}" onchange="toggleMatrixAll(this, 'row-all-${rowId}')" ${isReadOnly ? 'disabled title="Manage in Menu Management"' : ''}>
                                 </td>
                             `;
 
@@ -571,7 +572,7 @@
                             if (p) {
                                 const checked = assignedIds.includes(p.id) ? 'checked' : '';
                                 rowHtml +=
-                                    `<input type="checkbox" name="permissions[]" value="${p.id}" class="perm-checkbox row-all row-all-${rowId} col-${action} rounded border-surface-300 text-brand-600 focus:ring-brand-500/20 w-4 h-4 cursor-pointer" ${checked}>`;
+                                    `<input type="checkbox" name="permissions[]" value="${p.id}" class="perm-checkbox row-all row-all-${rowId} col-${action} rounded border-surface-300 text-brand-600 focus:ring-brand-500/20 w-4 h-4 ${isReadOnly ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}" ${checked} ${isReadOnly ? 'disabled title="Manage in Menu Management"' : ''}>`;
                             } else {
                                 rowHtml +=
                                     `<span class="text-surface-200 text-[10px] select-none">-</span>`;
@@ -587,8 +588,8 @@
                                 const name = p.action ? p.action.name : p.permission_key.split('.')
                                     .pop();
                                 rowHtml += `
-                                        <label class="flex items-center gap-1.5 px-2 py-1 rounded bg-surface-100 border border-surface-200 cursor-pointer hover:bg-surface-200 transition-colors">
-                                            <input type="checkbox" name="permissions[]" value="${p.id}" class="perm-checkbox row-all row-all-${rowId} rounded border-surface-300 text-brand-600 focus:ring-brand-500/20 w-3 h-3" ${checked}>
+                                        <label class="flex items-center gap-1.5 px-2 py-1 rounded bg-surface-100 border border-surface-200 ${isReadOnly ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-surface-200'} transition-colors" ${isReadOnly ? 'title="Manage in Menu Management"' : ''}>
+                                            <input type="checkbox" name="permissions[]" value="${p.id}" class="perm-checkbox row-all row-all-${rowId} rounded border-surface-300 text-brand-600 focus:ring-brand-500/20 w-3 h-3 ${isReadOnly ? 'cursor-not-allowed' : 'cursor-pointer'}" ${checked} ${isReadOnly ? 'disabled' : ''}>
                                             <span class="text-[10px] text-surface-700 font-medium capitalize whitespace-nowrap">${name}</span>
                                         </label>
                                     `;

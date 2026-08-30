@@ -141,11 +141,43 @@ class ConnectionService
     }
 
     /**
-     * Check if a connection key already exists.
+     * Batch delete connections by keys.
      */
+    public function batchDelete(array $keys): bool
+    {
+        try {
+            return Connection::whereIn('key', $keys)->delete() > 0;
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error("Failed to batch delete connections: " . $e->getMessage());
+            return false;
+        }
+    }
+
     public function exists(string $key): bool
     {
         return Connection::where('key', $key)->exists();
+    }
+
+    /**
+     * Set exactly one connection as the analytics source using a strict lock.
+     */
+    public function setAnalyticsSource(int $connectionId): void
+    {
+        \Illuminate\Support\Facades\DB::transaction(function () use ($connectionId) {
+            // Lock all connections for update to prevent race conditions
+            Connection::lockForUpdate()->get();
+            
+            // Set all to false
+            Connection::query()->update(['is_analytics_source' => false]);
+            
+            // Set the specified connection to true
+            $conn = Connection::find($connectionId);
+            if ($conn) {
+                $conn->update(['is_analytics_source' => true]);
+            } else {
+                throw new \Exception("Connection ID not found.");
+            }
+        });
     }
 
 

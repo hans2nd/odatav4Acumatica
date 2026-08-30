@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Log;
 
 try {
     $syncService = app(SyncService::class);
-    $entities = config('acumatica.entities');
+    $entities = app(\App\Services\EntityConfigService::class)->getAll();
     $entityKey = array_key_first($entities); 
     
     echo "<pre>";

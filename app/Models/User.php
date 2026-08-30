@@ -65,11 +65,14 @@ class User extends Authenticatable
     }
 
     /**
-     * Check if the user is a superadmin (any role with is_superadmin = true).
+     * Check if the user is a superadmin (has an active role with is_superadmin = true).
      */
     public function isSuperAdmin(): bool
     {
-        return $this->roles()->whereIn('name', ['Administrator', 'Super Administrator'])->exists();
+        return $this->roles()
+            ->where('is_active', true)
+            ->where('is_superadmin', true)
+            ->exists();
     }
 
     /**
@@ -83,6 +86,7 @@ class User extends Authenticatable
         }
 
         return $this->roles()
+            ->where('is_active', true)
             ->whereHas('permissions', function ($q) use ($permission) {
                 $q->where('permission_key', $permission);
             })
@@ -99,6 +103,7 @@ class User extends Authenticatable
         }
 
         return $this->roles()
+            ->where('is_active', true)
             ->whereHas('permissions', function ($q) use ($permissions) {
                 $q->whereIn('permission_key', $permissions);
             })
@@ -114,7 +119,7 @@ class User extends Authenticatable
             return Permission::all();
         }
 
-        $roleIds = $this->roles()->pluck('roles.id');
+        $roleIds = $this->roles()->where('is_active', true)->pluck('roles.id');
 
         return Permission::whereHas('roles', function ($q) use ($roleIds) {
             $q->whereIn('roles.id', $roleIds);

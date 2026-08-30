@@ -15,6 +15,12 @@
             <h2 class="text-h2 text-surface-900">{{ $query->name }}</h2>
         </div>
         <div class="flex gap-2">
+            @if(auth()->user()->hasPermission('settings.manage'))
+            <a href="{{ route('menu-management.index', ['create_from_query_id' => $query->id, 'create_title' => $query->name]) }}" class="inline-flex items-center gap-2 px-4 py-2 bg-brand-600 text-white rounded-xl hover:bg-brand-700 transition-colors shadow-sm">
+                <span class="material-symbols-outlined text-[20px]">publish</span>
+                Publish to Menu
+            </a>
+            @endif
             @if(auth()->user()->hasPermission('query_repository.update'))
             <a href="{{ route('query-repository.edit', $query->id) }}" class="inline-flex items-center gap-2 px-4 py-2 bg-white border border-surface-200 text-surface-700 rounded-xl hover:bg-surface-50 transition-colors">
                 <span class="material-symbols-outlined text-[20px]">edit</span>

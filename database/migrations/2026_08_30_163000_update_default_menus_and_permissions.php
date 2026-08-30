@@ -1,0 +1,347 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+use App\Models\Menu;
+use App\Models\Action;
+use App\Models\Module;
+use App\Models\Role;
+use App\Services\PermissionGeneratorService;
+use Illuminate\Support\Facades\Cache;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+    {
+        // 1. Ensure new Actions exist
+        $actions = [
+            ['code' => 'access', 'name' => 'Access', 'sort_order' => 100],
+            ['code' => 'test', 'name' => 'Test', 'sort_order' => 110],
+        ];
+        foreach ($actions as $action) {
+            Action::firstOrCreate(['code' => $action['code']], $action);
+        }
+
+        // 2. Ensure Super Administrator has is_superadmin = true
+        Role::where('name', 'Super Administrator')->update([
+            'is_superadmin' => true,
+            'is_active' => true,
+        ]);
+
+        // 3. Regenerate system permissions
+        try {
+            app(PermissionGeneratorService::class)->generate();
+        } catch (\Throwable $e) {
+            // Ignore if tables not yet populated
+        }
+
+        // 4. Update / Sync default Menus structure
+        $sort = 0;
+
+        // Dashboard
+        Menu::updateOrCreate(
+            ['route_name' => 'dashboard'],
+            [
+                'parent_id' => null,
+                'title' => 'Dashboard',
+                'icon' => 'dashboard',
+                'sort_order' => $sort += 10,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+            ]
+        );
+
+        // ChatEDP
+        Menu::updateOrCreate(
+            ['route_name' => 'chatedp.index'],
+            [
+                'parent_id' => null,
+                'title' => 'ChatEDP',
+                'icon' => 'smart_toy',
+                'sort_order' => $sort += 10,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+                'permission_key' => 'chatedp.access',
+            ]
+        );
+
+        // Report Parent
+        $report = Menu::updateOrCreate(
+            ['title' => 'Report', 'parent_id' => null],
+            [
+                'icon' => 'analytics',
+                'route_name' => null,
+                'sort_order' => $sort += 10,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+            ]
+        );
+
+        Menu::updateOrCreate(
+            ['route_name' => 'report.builder'],
+            [
+                'parent_id' => $report->id,
+                'title' => 'Report Builder',
+                'icon' => 'build',
+                'sort_order' => 10,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+                'permission_key' => 'report_builder.view',
+            ]
+        );
+
+        Menu::updateOrCreate(
+            ['route_name' => 'endpoint.api.index'],
+            [
+                'parent_id' => $report->id,
+                'title' => 'Endpoint API',
+                'icon' => 'api',
+                'sort_order' => 20,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+                'permission_key' => 'endpoint_api.view',
+            ]
+        );
+
+        Menu::updateOrCreate(
+            ['route_name' => 'query.builder'],
+            [
+                'parent_id' => $report->id,
+                'title' => 'Query Builder',
+                'icon' => 'data_object',
+                'sort_order' => 30,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+                'permission_key' => 'query_builder.view',
+            ]
+        );
+
+        Menu::updateOrCreate(
+            ['route_name' => 'query-repository.index'],
+            [
+                'parent_id' => $report->id,
+                'title' => 'Query Repository',
+                'icon' => 'database',
+                'sort_order' => 40,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+                'permission_key' => 'query_repository.view',
+            ]
+        );
+
+        // Synchronization Parent
+        $sync = Menu::updateOrCreate(
+            ['title' => 'Synchronization', 'parent_id' => null],
+            [
+                'icon' => 'sync',
+                'route_name' => null,
+                'sort_order' => $sort += 10,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+            ]
+        );
+
+        Menu::updateOrCreate(
+            ['route_name' => 'master-data.index'],
+            [
+                'parent_id' => $sync->id,
+                'title' => 'Master Data',
+                'icon' => 'folder',
+                'sort_order' => 10,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+                'permission_key' => 'sync_engine.manage',
+            ]
+        );
+
+        Menu::updateOrCreate(
+            ['route_name' => 'transactions.index'],
+            [
+                'parent_id' => $sync->id,
+                'title' => 'Transaction',
+                'icon' => 'receipt',
+                'sort_order' => 20,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+                'permission_key' => 'sync_engine.manage',
+            ]
+        );
+
+        Menu::updateOrCreate(
+            ['route_name' => 'scheduler.index'],
+            [
+                'parent_id' => $sync->id,
+                'title' => 'Scheduler',
+                'icon' => 'schedule',
+                'sort_order' => 30,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+                'permission_key' => 'sync_engine.manage',
+            ]
+        );
+
+        Menu::updateOrCreate(
+            ['route_name' => 'sync-history.index'],
+            [
+                'parent_id' => $sync->id,
+                'title' => 'Sync History',
+                'icon' => 'history',
+                'sort_order' => 40,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+                'permission_key' => 'sync_engine.manage',
+            ]
+        );
+
+        Menu::updateOrCreate(
+            ['route_name' => 'logs.index'],
+            [
+                'parent_id' => $sync->id,
+                'title' => 'Logs',
+                'icon' => 'article',
+                'sort_order' => 50,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+                'permission_key' => 'logs.view',
+            ]
+        );
+
+        // Settings Parent
+        $settings = Menu::updateOrCreate(
+            ['title' => 'Settings', 'parent_id' => null],
+            [
+                'icon' => 'settings',
+                'route_name' => null,
+                'sort_order' => $sort += 10,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+            ]
+        );
+
+        Menu::updateOrCreate(
+            ['route_name' => 'settings.index'],
+            [
+                'parent_id' => $settings->id,
+                'title' => 'General Settings',
+                'icon' => 'tune',
+                'sort_order' => 10,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+                'permission_key' => 'settings.view',
+            ]
+        );
+
+        Menu::updateOrCreate(
+            ['route_name' => 'users.index'],
+            [
+                'parent_id' => $settings->id,
+                'title' => 'Users & Roles',
+                'icon' => 'group',
+                'sort_order' => 20,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+                'permission_key' => 'users.view',
+            ]
+        );
+
+        Menu::updateOrCreate(
+            ['route_name' => 'menu-management.index'],
+            [
+                'parent_id' => $settings->id,
+                'title' => 'Menu Management',
+                'icon' => 'account_tree',
+                'sort_order' => 30,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+                'permission_key' => 'settings.manage',
+            ]
+        );
+
+        Menu::updateOrCreate(
+            ['route_name' => 'settings.system-utilities'],
+            [
+                'parent_id' => $settings->id,
+                'title' => 'System Utilities',
+                'icon' => 'terminal',
+                'sort_order' => 40,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+                'permission_key' => 'settings.manage',
+            ]
+        );
+
+        Menu::updateOrCreate(
+            ['route_name' => 'settings.ai.openrouter'],
+            [
+                'parent_id' => $settings->id,
+                'title' => 'OpenRouter AI',
+                'icon' => 'smart_toy',
+                'sort_order' => 50,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+                'permission_key' => 'ai_settings.view',
+            ]
+        );
+
+        Menu::updateOrCreate(
+            ['route_name' => 'settings.ai.metadata'],
+            [
+                'parent_id' => $settings->id,
+                'title' => 'AI Metadata',
+                'icon' => 'schema',
+                'sort_order' => 60,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+                'permission_key' => 'ai_metadata.view',
+            ]
+        );
+
+        Menu::updateOrCreate(
+            ['route_name' => 'settings.chatedp.analytics'],
+            [
+                'parent_id' => $settings->id,
+                'title' => 'ChatEDP Analytics',
+                'icon' => 'query_stats',
+                'sort_order' => 70,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+                'permission_key' => 'settings.manage',
+            ]
+        );
+
+        Cache::forget('sidebar_menus');
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        Cache::forget('sidebar_menus');
+    }
+};

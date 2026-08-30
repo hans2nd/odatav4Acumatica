@@ -21,7 +21,6 @@ class PermissionGeneratorService
             $this->generateSystemResources();
             $this->generateEntityResources();
             $this->generateApiEndpoints();
-            $this->assignToAdmin();
         });
     }
 
@@ -81,7 +80,10 @@ class PermissionGeneratorService
             ['name' => 'Report Builder', 'slug' => 'report_builder', 'module_id' => $reportModule->id, 'actions' => ['manage', 'view']],
             ['name' => 'Endpoint API', 'slug' => 'endpoint_api', 'module_id' => $reportModule->id, 'actions' => ['manage', 'view']],
             ['name' => 'Query Builder', 'slug' => 'query_builder', 'module_id' => $reportModule->id, 'actions' => ['manage', 'view']],
-            ['name' => 'Query Repository', 'slug' => 'query_repository', 'module_id' => $reportModule->id, 'actions' => ['manage', 'view']],
+            ['name' => 'Query Repository', 'slug' => 'query_repository', 'module_id' => $reportModule->id, 'actions' => ['view', 'create', 'update', 'delete', 'execute']],
+            ['name' => 'AI Settings', 'slug' => 'ai_settings', 'module_id' => $systemModule->id, 'actions' => ['view', 'update', 'test']],
+            ['name' => 'AI Metadata', 'slug' => 'ai_metadata', 'module_id' => $systemModule->id, 'actions' => ['view', 'update']],
+            ['name' => 'ChatEDP', 'slug' => 'chatedp', 'module_id' => $systemModule->id, 'actions' => ['access', 'view', 'manage']],
         ];
 
         foreach ($systemResources as $res) {
@@ -149,15 +151,6 @@ class PermissionGeneratorService
         $toDelete = array_diff($existingEntitySlugs, $expectedSlugs);
         if (!empty($toDelete)) {
             Resource::whereIn('slug', $toDelete)->delete();
-        }
-    }
-
-    private function assignToAdmin()
-    {
-        $adminRole = Role::where('name', 'Super Administrator')->first();
-        if ($adminRole) {
-            $allPermissionIds = Permission::pluck('id');
-            $adminRole->permissions()->sync($allPermissionIds);
         }
     }
 }

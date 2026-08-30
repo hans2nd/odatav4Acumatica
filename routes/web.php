@@ -16,72 +16,7 @@ use App\Http\Controllers\SystemUtilityController;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Artisan;
 
-Route::get('/debug-sync/{entity}', function($entity) {
-    \Illuminate\Support\Facades\Artisan::call('cache:clear');
-    \Illuminate\Support\Facades\Artisan::call('config:clear');
-    \Illuminate\Support\Facades\Artisan::call('route:clear');
-    \Illuminate\Support\Facades\Artisan::call('view:clear');
-    return response()->json(['success' => true, 'message' => 'Caches cleared.']);
-});
 
-Route::get('/test-save-filter', function() {
-    $entity = 'vdatamentahsalesorder';
-    $customFilters = [
-        ['field' => 'OrderDate', 'operator' => 'ge', 'value' => '2026-06-30T00:00:00.000Z']
-    ];
-
-    \App\Models\SyncSchedule::updateOrCreate(
-        ['entity_key' => $entity],
-        ['custom_filters' => $customFilters]
-    );
-
-    $sched = \App\Models\SyncSchedule::where('entity_key', $entity)->first();
-    return response()->json([
-        'raw' => $sched->getRawOriginal('custom_filters'),
-        'casted' => $sched->custom_filters
-    ]);
-});
-
-Route::get('/debug-odata/{entity}', function($entity) {
-    try {
-        $entityConfig = config("acumatica.entities.{$entity}");
-        if (!$entityConfig) return response()->json(['error' => 'Not found']);
-        
-        $odataService = app(\App\Services\AcumaticaODataService::class);
-        
-        $sourceConnKey = $entityConfig['source_connection'] ?? 'acumatica_default';
-        $sourceConnection = app(\App\Services\ConnectionService::class)->get($sourceConnKey);
-        if ($sourceConnection && ($sourceConnection['type'] ?? 'odata') === 'odata') {
-            $odataService->setConnectionConfig($sourceConnection);
-        }
-
-        // Login if needed
-        if ($odataService->usesSessionAuth()) {
-            $odataService->login();
-        }
-        
-        $result = $odataService->fetchPage($entityConfig['odata_entity'], 10, 0, '', true);
-        
-        return response()->json([
-            'raw_response' => $result
-        ]);
-    } catch (\Exception $e) {
-        return response()->json(['error' => $e->getMessage()]);
-    }
-});
-
-/*
-|--------------------------------------------------------------------------
-| System Utilities (VPS Deployment)
-|--------------------------------------------------------------------------
-*/
-Route::get('/sys-cron', [SystemUtilityController::class, 'runWebCron'])->name('sys.cron');
-Route::get('/sys-migrate', [SystemUtilityController::class, 'migrate'])->name('sys.migrate');
-Route::get('/sys-migrate-fresh', [SystemUtilityController::class, 'migrateFresh'])->name('sys.migrate-fresh');
-Route::get('/sys-install-default', [SystemUtilityController::class, 'installDefault'])->name('sys.install-default');
-Route::get('/sys-optimize', [SystemUtilityController::class, 'optimize'])->name('sys.optimize');
-Route::get('/sys-clear-logs', [SystemUtilityController::class, 'clearLogs'])->name('sys.clear-logs');
-Route::get('/sys-artisan/{command}', [SystemUtilityController::class, 'runArtisan'])->name('sys.artisan');
 
 /*
 |--------------------------------------------------------------------------
@@ -103,12 +38,6 @@ Route::middleware(['auth.basic'])->group(function () {
     Route::get('/data/{slug}', [\App\Http\Controllers\Api\DataEndpointController::class, 'getData'])->name('api.data.endpoint');
 });
 
-Route::get('/dev/debug-logs', function() {
-    $schedules = \App\Models\SyncSchedule::all();
-    return response()->json([
-        'schedules' => $schedules
-    ]);
-});
 
 Route::middleware(['auth'])->group(function () {
     /*
@@ -175,11 +104,14 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/api/entities/{key}', [EntityController::class, 'show'])->name('api.entities.show');
         Route::post('/api/entities', [EntityController::class, 'store'])->name('api.entities.store');
         Route::put('/api/entities/{key}', [EntityController::class, 'update'])->name('api.entities.update');
+        Route::get('/api/entities/{key}/mappings', [EntityController::class, 'getMappings'])->name('api.entities.mappings.get');
+        Route::put('/api/entities/{key}/mappings', [EntityController::class, 'updateMappings'])->name('api.entities.mappings.update');
+        Route::post('/api/entities/{key}/discover', [EntityController::class, 'discover'])->name('api.entities.discover');
+        Route::post('/api/entities/batch-delete', [EntityController::class, 'batchDestroy'])->name('api.entities.batchDestroy');
         Route::delete('/api/entities/{key}', [EntityController::class, 'destroy'])->name('api.entities.destroy');
+        Route::get('/api/entities/{entity}/fields', [SyncController::class, 'entityFields'])->name('api.entities.fields');
+        Route::post('/api/entities/{entity}/filters', [SyncController::class, 'saveFilters'])->name('api.entities.filters.save');
     });
-
-    Route::get('/api/entities/{entity}/fields', [SyncController::class, 'entityFields'])->name('api.entities.fields');
-    Route::post('/api/entities/{entity}/filters', [SyncController::class, 'saveFilters'])->name('api.entities.filters.save');
 
     /*
     |--------------------------------------------------------------------------
@@ -188,6 +120,7 @@ Route::middleware(['auth'])->group(function () {
     */
 
     Route::middleware(['auth'])->group(function () {
+        Route::get('/report/dynamic/{menuId}', [App\Http\Controllers\DynamicReportController::class, 'index'])->name('report.dynamic');
         Route::get('/report/sales-order', [ReportController::class, 'salesOrder'])->name('report.sales-order');
     });
 
@@ -211,20 +144,32 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/api/query-builder/download/{token}', [QueryBuilderController::class, 'download'])->name('query.builder.download');
     });
 
+    // Query Repository (Create)
+    Route::middleware(['permission:query_repository.create'])->group(function () {
+        Route::get('/report/query-repository/create', [\App\Http\Controllers\QueryRepositoryController::class, 'create'])->name('query-repository.create');
+        Route::post('/report/query-repository', [\App\Http\Controllers\QueryRepositoryController::class, 'store'])->name('query-repository.store');
+    });
+
+    // Query Repository (View)
     Route::middleware(['permission:query_repository.view'])->group(function () {
-        Route::resource('/report/query-repository', \App\Http\Controllers\QueryRepositoryController::class)->names([
-            'index' => 'query-repository.index',
-            'create' => 'query-repository.create',
-            'store' => 'query-repository.store',
-            'show' => 'query-repository.show',
-            'edit' => 'query-repository.edit',
-            'update' => 'query-repository.update',
-            'destroy' => 'query-repository.destroy',
-        ]);
+        Route::get('/report/query-repository', [\App\Http\Controllers\QueryRepositoryController::class, 'index'])->name('query-repository.index');
+        Route::get('/report/query-repository/{query_repository}', [\App\Http\Controllers\QueryRepositoryController::class, 'show'])->name('query-repository.show');
         Route::get('/api/report/query-repository/{id}/columns', [\App\Http\Controllers\QueryRepositoryController::class, 'getColumns'])->name('api.query-repository.columns');
     });
 
-    Route::middleware(['permission:query_repository.preview'])->group(function () {
+    // Query Repository (Update)
+    Route::middleware(['permission:query_repository.update'])->group(function () {
+        Route::get('/report/query-repository/{query_repository}/edit', [\App\Http\Controllers\QueryRepositoryController::class, 'edit'])->name('query-repository.edit');
+        Route::put('/report/query-repository/{query_repository}', [\App\Http\Controllers\QueryRepositoryController::class, 'update'])->name('query-repository.update');
+    });
+
+    // Query Repository (Delete)
+    Route::middleware(['permission:query_repository.delete'])->group(function () {
+        Route::delete('/report/query-repository/{query_repository}', [\App\Http\Controllers\QueryRepositoryController::class, 'destroy'])->name('query-repository.destroy');
+    });
+
+    // Query Repository (Execute)
+    Route::middleware(['permission:query_repository.execute'])->group(function () {
         Route::post('/api/report/query-repository/preview', [\App\Http\Controllers\QueryRepositoryController::class, 'preview'])->name('api.query-repository.preview');
         Route::post('/api/report/query-repository/export', [\App\Http\Controllers\QueryRepositoryController::class, 'export'])->name('api.query-repository.export');
         Route::get('/api/report/query-repository/download/{token}', [\App\Http\Controllers\QueryRepositoryController::class, 'download'])->name('api.query-repository.download');
@@ -261,16 +206,29 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
         Route::get('/settings/system-utilities', [SettingsController::class, 'systemUtilities'])->name('settings.system-utilities');
 
+        // System Utilities endpoints (Strict Super Admin Only)
+        Route::middleware(['superadmin'])->group(function () {
+            Route::get('/sys-cron', [SystemUtilityController::class, 'runWebCron'])->name('sys.cron');
+            Route::get('/sys-migrate', [SystemUtilityController::class, 'migrate'])->name('sys.migrate');
+            Route::get('/sys-migrate-fresh', [SystemUtilityController::class, 'migrateFresh'])->name('sys.migrate-fresh');
+            Route::get('/sys-install-default', [SystemUtilityController::class, 'installDefault'])->name('sys.install-default');
+            Route::get('/sys-optimize', [SystemUtilityController::class, 'optimize'])->name('sys.optimize');
+            Route::get('/sys-clear-logs', [SystemUtilityController::class, 'clearLogs'])->name('sys.clear-logs');
+            Route::get('/sys-artisan/{command}', [SystemUtilityController::class, 'runArtisan'])->name('sys.artisan');
+        });
+
         // Connections CRUD
         Route::get('/api/connections', [SettingsController::class, 'getConnections'])->name('api.connections.index');
         Route::post('/api/connections', [SettingsController::class, 'storeConnection'])->name('api.connections.store');
         Route::put('/api/connections/{key}', [SettingsController::class, 'updateConnection'])->name('api.connections.update');
         Route::delete('/api/connections/{key}', [SettingsController::class, 'destroyConnection'])->name('api.connections.destroy');
+        Route::post('/api/connections/batch-delete', [SettingsController::class, 'batchDestroyConnections'])->name('api.connections.batchDestroy');
         Route::post('/api/connections/test', [SettingsController::class, 'testConnection'])->name('api.connections.test');
         Route::post('/api/connections/diagnostics', [SettingsController::class, 'runDiagnostics'])->name('api.connections.diagnostics');
         Route::post('/api/connections/{key}/disconnect', [SettingsController::class, 'disconnectConnection'])->name('api.connections.disconnect');
         Route::post('/api/connections/databases', [SettingsController::class, 'fetchDatabases'])->name('api.connections.databases');
         Route::get('/api/connections/{key}/objects', [SettingsController::class, 'getConnectionObjects'])->name('api.connections.objects');
+        Route::post('/api/connections/{key}/set-analytics-source', [SettingsController::class, 'setAnalyticsSource'])->name('api.connections.set-analytics');
     });
 
     /*
@@ -300,6 +258,7 @@ Route::middleware(['auth'])->group(function () {
     */
 
     Route::middleware(['permission:settings.manage'])->group(function () {
+        Route::get('/settings/chatedp-analytics', [App\Http\Controllers\ChatEDPAnalyticsController::class, 'index'])->name('settings.chatedp.analytics');
         Route::get('/menu-management', [App\Http\Controllers\MenuManagementController::class, 'index'])->name('menu-management.index');
         Route::get('/api/menus/tree', [App\Http\Controllers\MenuManagementController::class, 'getTree'])->name('api.menus.tree');
         Route::post('/api/menus', [App\Http\Controllers\MenuManagementController::class, 'store'])->name('api.menus.store');
@@ -313,8 +272,57 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/api/menus/publish', [App\Http\Controllers\MenuManagementController::class, 'publish'])->name('api.menus.publish');
         Route::post('/menu-management/refresh-files/{route_name}', [App\Http\Controllers\MenuManagementController::class, 'refreshGeneratedFiles'])->name('menu-management.refresh-files');
     });
-    // Auto-generated route for Piutang
-    Route::get('/piutang/index', [\App\Http\Controllers\PiutangIndexController::class, 'index'])->name('piutang.index');
-    // Auto-generated route for GRN
-    Route::get('/grn/index', [\App\Http\Controllers\GrnIndexController::class, 'index'])->name('grn.index');
+
+    /*
+    |--------------------------------------------------------------------------
+    | AI Settings
+    |--------------------------------------------------------------------------
+    */
+    Route::middleware(['permission:ai_settings.view'])->group(function () {
+        Route::get('/settings/ai/openrouter', [\App\Http\Controllers\AiSettingsController::class, 'index'])->name('settings.ai.openrouter');
+    });
+    
+    Route::middleware(['permission:ai_metadata.view'])->group(function () {
+        Route::get('/settings/ai/metadata', [\App\Http\Controllers\AiSettingsController::class, 'metadataIndex'])->name('settings.ai.metadata');
+    });
+
+    Route::middleware(['permission:ai_settings.update'])->group(function () {
+        Route::post('/settings/ai/openrouter', [\App\Http\Controllers\AiSettingsController::class, 'update'])->name('settings.ai.openrouter.update');
+        Route::post('/settings/ai/openrouter/disconnect', [\App\Http\Controllers\AiSettingsController::class, 'disconnect'])->name('settings.ai.openrouter.disconnect');
+    });
+
+    Route::middleware(['permission:ai_metadata.update'])->group(function () {
+        Route::post('/settings/ai/metadata/refresh', [\App\Http\Controllers\AiSettingsController::class, 'refreshSchema'])->name('settings.ai.metadata.refresh');
+        Route::post('/settings/ai/metadata/{id}', [\App\Http\Controllers\AiSettingsController::class, 'metadataUpdate'])->name('settings.ai.metadata.update');
+        Route::post('/settings/ai/metadata/{id}/suggest', [\App\Http\Controllers\AiSettingsController::class, 'suggestMetadata'])->name('settings.ai.metadata.suggest');
+    });
+
+    Route::middleware(['permission:ai_metadata.view'])->group(function () {
+        Route::get('/settings/ai/metadata/{id}/detail', [\App\Http\Controllers\AiSettingsController::class, 'metadataDetail'])->name('settings.ai.metadata.detail');
+    });
+
+    Route::middleware(['permission:ai_settings.test'])->group(function () {
+        Route::post('/settings/ai/openrouter/test', [\App\Http\Controllers\AiSettingsController::class, 'testConnection'])->name('settings.ai.openrouter.test');
+    });
+
+    Route::middleware(['permission:ai_settings.view'])->group(function () {
+        Route::get('/settings/ai/openrouter/model-providers/{modelId}', [\App\Http\Controllers\AiSettingsController::class, 'getModelProviders'])->where('modelId', '.*')->name('settings.ai.openrouter.model-providers');
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | ChatEDP Data Analysis
+    |--------------------------------------------------------------------------
+    */
+    Route::middleware(['permission:chatedp.access'])->group(function () {
+        Route::get('/chatedp', [\App\Http\Controllers\ChatEDPController::class, 'index'])->name('chatedp.index');
+        Route::get('/api/chatedp/conversations', [\App\Http\Controllers\ChatEDPController::class, 'conversations'])->name('api.chatedp.conversations');
+        Route::post('/api/chatedp/conversations', [\App\Http\Controllers\ChatEDPController::class, 'storeConversation'])->name('api.chatedp.conversations.store');
+        Route::get('/api/chatedp/conversations/{id}', [\App\Http\Controllers\ChatEDPController::class, 'showConversation'])->name('api.chatedp.conversations.show');
+        Route::post('/api/chatedp/messages', [\App\Http\Controllers\ChatEDPController::class, 'sendMessage'])->name('api.chatedp.messages.send');
+        Route::get('/api/chatedp/export', [\App\Http\Controllers\ChatEDPController::class, 'exportExcel'])->name('api.chatedp.export');
+        Route::get('/api/chatedp/report', [\App\Http\Controllers\ChatEDPController::class, 'generateReport'])->name('api.chatedp.report');
+    });
+    // Auto-generated route for AI Settings
+    Route::get('/ai-settings/index', [\App\Http\Controllers\AiSettingsIndexController::class, 'index'])->name('ai-settings.index');
 });

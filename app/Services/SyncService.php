@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\SyncLog;
+use App\Services\EntityConfigService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -14,6 +15,7 @@ class SyncService
     private \App\Services\Contracts\SyncStateServiceInterface $syncStateService;
     private BottleneckDetector $bottleneckDetector;
     private \App\Services\Sync\BatchStrategies\BatchStrategyFactory $batchStrategyFactory;
+    private EntityConfigService $entityConfigService;
 
     public function __construct(
         AcumaticaODataService $odataService,
@@ -21,7 +23,8 @@ class SyncService
         ConnectionService $connectionService,
         \App\Services\Contracts\SyncStateServiceInterface $syncStateService,
         BottleneckDetector $bottleneckDetector,
-        \App\Services\Sync\BatchStrategies\BatchStrategyFactory $batchStrategyFactory
+        \App\Services\Sync\BatchStrategies\BatchStrategyFactory $batchStrategyFactory,
+        EntityConfigService $entityConfigService
     ) {
         $this->odataService = $odataService;
         $this->schemaManager = $schemaManager;
@@ -29,6 +32,7 @@ class SyncService
         $this->syncStateService = $syncStateService;
         $this->bottleneckDetector = $bottleneckDetector;
         $this->batchStrategyFactory = $batchStrategyFactory;
+        $this->entityConfigService = $entityConfigService;
     }
 
     private function checkForControlSignals(SyncLog $log)
@@ -70,9 +74,9 @@ class SyncService
     |--------------------------------------------------------------------------
     */
 
-    public function syncEntity(string $entityKey, array $customFilters = [], string $source = 'manual', ?string $syncJobId = null): SyncLog
+    public function syncEntity(string $entityKey, array $customFilters = [], string $source = 'manual', ?string $syncJobId = null, ?string $workerId = null): SyncLog
     {
-        $entity = config("acumatica.entities.{$entityKey}");
+        $entity = $this->entityConfigService->get($entityKey);
 
         if (!$entity) {
             throw new \InvalidArgumentException("Unknown entity key: {$entityKey}");
@@ -87,7 +91,7 @@ class SyncService
         $destConnection = $this->connectionService->resolveConnectionName($destConnKey);
         Log::info("Sync [{$entityKey}]: Resolved destination connection to '{$destConnection}'");
 
-        $workerId = uniqid("worker_{$entityKey}_");
+        $workerId = $workerId ?? uniqid("worker_{$entityKey}_");
 
         // Create a log record
         $startTime = microtime(true);
@@ -98,22 +102,23 @@ class SyncService
 
         $this->syncStateService->initializeSyncState($schedule->id, $entityKey);
         $this->syncStateService->acquireSynchronizationLock($schedule->id, $workerId);
-        $this->syncStateService->startSynchronization($schedule->id);
-
-        // Create log only AFTER successfully acquiring the lock
-        $log = \App\Models\SyncLog::create([
-            'session_id' => $workerId,
-            'entity_key' => $entityKey,
-            'entity_description' => $entity['description'] ?? $entityKey,
-            'odata_entity' => $odataEntity,
-            'table_name' => $tableName,
-            'type' => $entity['type'] ?? 'master',
-            'source' => $source,
-            'status' => 'running',
-            'started_at' => now(),
-        ]);
 
         try {
+            $this->syncStateService->startSynchronization($schedule->id);
+
+            // Create log only AFTER successfully acquiring the lock and starting synchronization
+            $log = \App\Models\SyncLog::create([
+                'session_id' => $workerId,
+                'entity_key' => $entityKey,
+                'entity_description' => $entity['description'] ?? $entityKey,
+                'odata_entity' => $odataEntity,
+                'table_name' => $tableName,
+                'type' => $entity['type'] ?? 'master',
+                'source' => $source,
+                'status' => 'running',
+                'started_at' => now(),
+            ]);
+
             Log::info("Sync [{$entityKey}]: Starting…");
 
             $sourceConnection = $this->connectionService->get($sourceConnKey);
@@ -125,16 +130,20 @@ class SyncService
 
             // --- BEGIN INCREMENTAL LOGIC ---
             $filter = '';
-            $isIncremental = false;
+            $isIncremental = ($entity['sync_mode'] ?? 'full') === 'incremental';
             $watermark = null;
 
-            if ($this->schemaManager->tableExists($destConnection, $tableName)) {
-                $columns = \Illuminate\Support\Facades\Schema::connection($destConnection)->getColumnListing($tableName);
-                $lastModifiedCol = null;
-                foreach ($columns as $col) {
-                    if (strtolower($col) === 'lastmodifieddatetime') {
-                        $lastModifiedCol = $col;
-                        break;
+            if ($isIncremental && $this->schemaManager->tableExists($destConnection, $tableName)) {
+                $lastModifiedCol = $entity['watermark_column'] ?? null;
+                
+                // Fallback to auto-detect if no specific watermark column was configured
+                if (empty($lastModifiedCol)) {
+                    $columns = \Illuminate\Support\Facades\Schema::connection($destConnection)->getColumnListing($tableName);
+                    foreach ($columns as $col) {
+                        if (strtolower($col) === 'lastmodifieddatetime') {
+                            $lastModifiedCol = $col;
+                            break;
+                        }
                     }
                 }
 
@@ -143,8 +152,9 @@ class SyncService
                     if ($maxModifiedStr) {
                         $watermark = new \App\Services\Sync\Watermarks\TimestampWatermark($lastModifiedCol, $maxModifiedStr);
                         $filter = $watermark->toFilterString();
-                        $isIncremental = true;
                         Log::info("Sync [{$entityKey}] Session [{$workerId}]: Incremental sync starting from {$filter}");
+                    } else {
+                        Log::info("Sync [{$entityKey}] Session [{$workerId}]: Incremental sync starting from beginning (table empty)");
                     }
                 }
             }
@@ -286,7 +296,7 @@ class SyncService
                 $fetchTimeMs = (microtime(true) - $chunkStartTime) * 1000;
                 $writeStartTime = microtime(true);
 
-                $entityConfig = config("acumatica.entities.{$entityKey}");
+                $entityConfig = $this->entityConfigService->get($entityKey);
                 $primaryKeys = $entityConfig['primary_keys'] ?? null;
 
                 if (empty($primaryKeys)) {
@@ -372,6 +382,9 @@ class SyncService
             $sourceType = $sourceConnection['type'] ?? 'odata';
             if ($sourceType === 'odata' || $sourceType === 'acumatica') {
                 $this->odataService->setConnectionConfig($sourceConnection);
+                if (isset($entity['batch_size']) && $entity['batch_size'] > 0) {
+                    $this->odataService->setPageSize($entity['batch_size']);
+                }
 
                 if ($this->odataService->usesSessionAuth()) {
                     $this->odataService->login();
@@ -435,9 +448,9 @@ class SyncService
                 $totalRecordsCount = $query->count();
                 $progressCallback(0, $totalRecordsCount);
 
-                $chunkSize = 5000;
+                $chunkSize = $entity['batch_size'] ?? 5000;
 
-                $entityConfig = config("acumatica.entities.{$entityKey}");
+                $entityConfig = $this->entityConfigService->get($entityKey);
                 $primaryKeys = $entityConfig['primary_keys'] ?? null;
                 $chunkColumn = 'id';
                 if (!empty($primaryKeys) && is_array($primaryKeys) && count($primaryKeys) > 0) {
@@ -547,6 +560,16 @@ class SyncService
             $schedule->update(['last_run_at' => now()]);
 
             \Illuminate\Support\Facades\Cache::forget("entity_fields_{$entityKey}");
+            
+            try {
+                $connectionModel = \App\Models\Connection::where('key', $destConnKey)->first();
+                if ($connectionModel && $connectionModel->is_analytics_source) {
+                    \App\Jobs\RefreshSchemaCacheJob::dispatch($connectionModel->id);
+                    Log::info("Sync [{$entityKey}]: Dispatched schema cache refresh for destination connection '{$destConnKey}'.");
+                }
+            } catch (\Exception $e) {
+                Log::error("Sync [{$entityKey}]: Failed to dispatch schema cache refresh: " . $e->getMessage());
+            }
 
             Log::info("Sync [{$entityKey}]: Completed — {$insertedCount} records inserted in {$log->duration_seconds}s.");
             if ($syncJobId) {
@@ -632,12 +655,14 @@ class SyncService
                 'trace' => mb_substr($e->getTraceAsString(), 0, 2000),
             ]);
 
-            $log->update([
-                'status' => 'failed',
-                'error_message' => mb_substr($e->getMessage(), 0, 15000),
-                'duration_seconds' => round(microtime(true) - $startTime, 2),
-                'completed_at' => now(),
-            ]);
+            if (isset($log)) {
+                $log->update([
+                    'status' => 'failed',
+                    'error_message' => mb_substr($e->getMessage(), 0, 15000),
+                    'duration_seconds' => round(microtime(true) - $startTime, 2),
+                    'completed_at' => now(),
+                ]);
+            }
 
             throw $e; // Rethrow to ensure Queue triggers failed() callback
         } finally {
@@ -653,7 +678,7 @@ class SyncService
 
     public function syncAll(): array
     {
-        $entities = config('acumatica.entities', []);
+        $entities = $this->entityConfigService->getAll();
         $results = [];
         $sorted = collect($entities)->sortBy(fn($e) => ($e['type'] ?? '') === 'master' ? 0 : 1);
         foreach ($sorted as $key => $entity) {
@@ -813,7 +838,7 @@ class SyncService
 
     public function getDashboardStats(): array
     {
-        $entities = config('acumatica.entities', []);
+        $entities = $this->entityConfigService->getAll();
         $totalRecords = 0;
         $entityStats = [];
         $hasLogsTable = \Illuminate\Support\Facades\Schema::hasTable('sync_logs');

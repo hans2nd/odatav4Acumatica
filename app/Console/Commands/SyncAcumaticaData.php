@@ -41,7 +41,7 @@ class SyncAcumaticaData extends Command
 
     private function syncSingleEntity(SyncService $syncService, string $entityKey): int
     {
-        $config = config("acumatica.entities.{$entityKey}");
+        $config = app(\App\Services\EntityConfigService::class)->get($entityKey);
 
         if (! $config) {
             $this->error("Unknown entity: {$entityKey}");
@@ -78,7 +78,7 @@ class SyncAcumaticaData extends Command
 
     private function syncAllEntities(SyncService $syncService): int
     {
-        $entities = config('acumatica.entities', []);
+        $entities = app(\App\Services\EntityConfigService::class)->getAll();
         $this->info('🔄 Syncing ALL ' . count($entities) . ' entities…');
         $this->newLine();
 
@@ -120,7 +120,7 @@ class SyncAcumaticaData extends Command
 
     private function listEntities(): void
     {
-        $entities = config('acumatica.entities', []);
+        $entities = app(\App\Services\EntityConfigService::class)->getAll();
         $rows = [];
 
         foreach ($entities as $key => $e) {

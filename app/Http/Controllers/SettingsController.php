@@ -145,6 +145,50 @@ class SettingsController extends Controller
         return response()->json(['success' => true, 'message' => 'Connection deleted successfully.']);
     }
 
+    public function batchDestroyConnections(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'keys'   => 'required|array|min:1',
+            'keys.*' => 'string|max:100',
+        ]);
+
+        $keys = array_values(array_unique($validated['keys']));
+
+        try {
+            if (!$this->connectionService->batchDelete($keys)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Failed to delete the selected connection(s).",
+                ], 422);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => count($keys) . " connection(s) deleted successfully.",
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => "Error deleting connections: " . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function setAnalyticsSource(string $key): JsonResponse
+    {
+        $conn = \App\Models\Connection::where('key', $key)->first();
+        if (!$conn) {
+            return response()->json(['success' => false, 'message' => 'Connection not found.'], 404);
+        }
+
+        try {
+            $this->connectionService->setAnalyticsSource($conn->id);
+            return response()->json(['success' => true, 'message' => 'Analytics source updated successfully.']);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Failed to update analytics source: ' . $e->getMessage()], 500);
+        }
+    }
+
     public function getProviderSchema(string $type): JsonResponse
     {
         try {

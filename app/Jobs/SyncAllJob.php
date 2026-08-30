@@ -32,7 +32,7 @@ class SyncAllJob implements ShouldQueue
             }
         }
 
-        $entities = config('acumatica.entities', []);
+        $entities = app(\App\Services\EntityConfigService::class)->getAll();
 
         // Dispatch master data first, then transactions
         $sorted = collect($entities)->sortBy(fn ($e) => $e['type'] === 'master' ? 0 : 1);

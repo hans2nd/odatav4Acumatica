@@ -80,6 +80,16 @@ class AcumaticaODataService
         }
     }
 
+    /**
+     * Override default page size with entity configuration
+     */
+    public function setPageSize(int $pageSize): void
+    {
+        if ($pageSize > 0) {
+            $this->pageSize = $pageSize;
+        }
+    }
+
     /*
     |--------------------------------------------------------------------------
     | Authentication
@@ -270,6 +280,51 @@ class AcumaticaODataService
         }
 
         return $json;
+    }
+
+    /**
+     * Fetch the OData EDMX metadata XML document.
+     */
+    public function fetchMetadataXml(): string
+    {
+        if ($this->usesSessionAuth()) {
+            $this->ensureAuthenticated();
+        }
+
+        $pathParts = [
+            $this->baseUrl,
+            config('acumatica.odata_path', 'odatav4'),
+        ];
+
+        if ($this->includeTenantInODataUrl) {
+            $pathParts[] = rawurlencode($this->tenant);
+        }
+
+        $url = implode('/', array_filter($pathParts, fn($p) => $p !== '')) . '/$metadata';
+
+        Log::debug("Acumatica OData: Fetching Metadata XML", ['url' => $url]);
+
+        $request = Http::retry(3, 5000)->withOptions([
+            'verify' => $this->verifySsl,
+            'timeout' => $this->timeout,
+            'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
+        ]);
+
+        if ($this->usesSessionAuth()) {
+            $request = $request->withOptions(['cookies' => $this->cookieJar]);
+        } else {
+            $request = $request->withBasicAuth($this->username, $this->password);
+        }
+
+        $response = $request->get($url);
+
+        if (!$response->successful()) {
+            throw new \RuntimeException(
+                "OData metadata fetch failed: HTTP {$response->status()} - " . mb_substr($response->body(), 0, 500)
+            );
+        }
+
+        return $response->body();
     }
 
     /**

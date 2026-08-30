@@ -42,4 +42,9 @@ class QueryRepository extends Model
     {
         return $this->hasMany(QueryRepositoryLog::class);
     }
+
+    public function libraries()
+    {
+        return $this->hasMany(AiQueryLibrary::class, 'query_repository_id');
+    }
 }

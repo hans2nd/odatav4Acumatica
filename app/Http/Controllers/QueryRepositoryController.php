@@ -108,6 +108,13 @@ class QueryRepositoryController extends Controller
     public function destroy($id)
     {
         $queryRepo = QueryRepository::findOrFail($id);
+        
+        $dependentMenuCount = \App\Models\Menu::where('query_repository_id', $id)->count();
+        if ($dependentMenuCount > 0) {
+            return redirect()->route('query-repository.index')
+                ->with('error', "Cannot delete this query because it is actively referenced by {$dependentMenuCount} menu(s). Please remove the menu references first.");
+        }
+
         $queryRepo->delete();
 
         return redirect()->route('query-repository.index')->with('success', 'Query deleted successfully.');

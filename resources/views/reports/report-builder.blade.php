@@ -516,55 +516,26 @@
                 const userLocale = Intl.NumberFormat().resolvedOptions().locale;
                 const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-                // Ensure hidden iframe exists
-                let iframe = document.getElementById('downloadFrame');
-                if (!iframe) {
-                    iframe = document.createElement('iframe');
-                    iframe.id = 'downloadFrame';
-                    iframe.name = 'downloadFrame';
-                    iframe.style.display = 'none';
-                    document.body.appendChild(iframe);
-                }
-
-                const form = document.createElement('form');
-                form.method = 'POST';
-                form.action = '/api/report-builder/prepare';
-                form.target = 'downloadFrame';
-                form.style.display = 'none';
-
-                // Add CSRF
-                const csrf = document.createElement('input');
-                csrf.type = 'hidden';
-                csrf.name = '_token';
-                csrf.value = csrfToken; // Note: Ensure csrfToken is globally defined
-                form.appendChild(csrf);
-
-                const addInput = (name, value) => {
-                    const input = document.createElement('input');
-                    input.type = 'hidden';
-                    input.name = name;
-                    input.value = value;
-                    form.appendChild(input);
+                const payload = {
+                    connection: connKey,
+                    table: table,
+                    format: format,
+                    download_id: downloadId,
+                    locale: userLocale,
+                    timezone: userTimezone,
+                    columns: columns,
+                    filters: filters
                 };
 
-                addInput('connection', connKey);
-                addInput('table', table);
-                addInput('format', format);
-                addInput('download_id', downloadId);
-                addInput('locale', userLocale);
-                addInput('timezone', userTimezone);
-
-                columns.forEach(col => addInput('columns[]', col));
-
-                filters.forEach((f, i) => {
-                    addInput(`filters[${i}][field]`, f.field);
-                    addInput(`filters[${i}][operator]`, f.operator);
-                    addInput(`filters[${i}][value]`, f.value);
+                const fetchPromise = fetch('/api/report-builder/prepare', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                    },
+                    body: JSON.stringify(payload)
                 });
-
-                document.body.appendChild(form);
-                form.submit();
-                document.body.removeChild(form);
 
                 const progressText = document.getElementById('rbProgressText');
                 progressText.textContent = 'Preparing your report, please wait...';
@@ -574,35 +545,41 @@
                     try {
                         const res = await fetch(`/api/report-builder/progress?download_id=${downloadId}`);
                         const data = await res.json();
-
-                        if (data.done) {
-                            clearInterval(pollInterval);
-
-                            document.getElementById('rbProgressBar').style.width = '100%';
-                            document.getElementById('rbResultFilename').textContent = table + (format === 'xlsx' ? '.xlsx' : '.csv');
-                            document.getElementById('rbResultSize').textContent = 'Streamed directly';
-                            document.getElementById('rbResultZipped').classList.add('hidden');
-
-                            document.getElementById('rbDownloadLink').style.display = 'none';
-
-                            result.classList.remove('hidden');
-                            document.getElementById('rbDownloadNotice').classList.remove('hidden');
-
-                            btn.disabled = false;
-                            btn.innerHTML = '<span class="material-symbols-outlined text-[18px]">download</span> Prepare & Download';
-
-                            progress.classList.add('hidden');
-                        } else if (data.success) {
+                        
+                        if (data.success && !data.done) {
                             progressText.textContent = `Streaming... ${data.percentage}% (${data.current.toLocaleString()} / ${data.total.toLocaleString()} rows)`;
                             document.getElementById('rbProgressBar').style.width = `${data.percentage}%`;
                         }
-                    } catch (e) {
-                        // ignore poll errors
-                    }
+                    } catch (e) {}
                 }, 1000);
 
+                const res = await fetchPromise;
+                const data = await res.json();
+                
+                clearInterval(pollInterval);
+                
+                if (data.success) {
+                    document.getElementById('rbProgressBar').style.width = '100%';
+                    document.getElementById('rbResultFilename').textContent = data.filename;
+                    document.getElementById('rbResultSize').textContent = data.size;
+                    document.getElementById('rbResultZipped').classList.add('hidden');
+
+                    const downloadLink = document.getElementById('rbDownloadLink');
+                    downloadLink.href = `/api/report-builder/download/${data.token}`;
+                    downloadLink.style.display = 'inline-flex';
+
+                    result.classList.remove('hidden');
+                    document.getElementById('rbDownloadNotice').classList.add('hidden');
+
+                    btn.disabled = false;
+                    btn.innerHTML = '<span class="material-symbols-outlined text-[18px]">download</span> Prepare & Download';
+                    progress.classList.add('hidden');
+                } else {
+                    throw new Error(data.message || 'Export failed');
+                }
+
             } catch (e) {
-                document.getElementById('rbErrorMsg').textContent = 'Error initiating download.';
+                document.getElementById('rbErrorMsg').textContent = e.message || 'Error initiating download.';
                 errorEl.classList.remove('hidden');
 
                 btn.disabled = false;

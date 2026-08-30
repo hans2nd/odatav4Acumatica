@@ -13,7 +13,8 @@ class MetadataField
         public readonly ?int $precision = null,
         public readonly ?int $scale = null,
         public readonly ?string $relationshipType = null,
-        public readonly ?string $relatedEntity = null
+        public readonly ?string $relatedEntity = null,
+        public readonly ?string $semanticType = null
     ) {
     }
 
@@ -29,6 +30,7 @@ class MetadataField
             'scale' => $this->scale,
             'relationshipType' => $this->relationshipType,
             'relatedEntity' => $this->relatedEntity,
+            'semanticType' => $this->semanticType,
         ];
     }
 }

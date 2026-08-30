@@ -93,12 +93,15 @@ class SqlServerProvider implements ConnectionProviderInterface
     public function discoverMetadata(array $credentials): MetadataTree
     {
         $pdo = $this->createRuntimeConnection($credentials);
-        $stmt = $pdo->query("SELECT TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE IN ('BASE TABLE', 'VIEW')");
+        $stmt = $pdo->query("SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE IN ('BASE TABLE', 'VIEW')");
         
         $nodes = [];
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             $type = $row['TABLE_TYPE'] === 'VIEW' ? 'view' : 'table';
-            $nodes[] = new MetadataNode(name: $row['TABLE_NAME'], type: $type);
+            $name = isset($row['TABLE_SCHEMA']) && $row['TABLE_SCHEMA'] !== 'dbo' 
+                ? $row['TABLE_SCHEMA'] . '.' . $row['TABLE_NAME'] 
+                : $row['TABLE_NAME'];
+            $nodes[] = new MetadataNode(name: $name, type: $type);
         }
 
         return new MetadataTree($nodes);
@@ -107,8 +110,18 @@ class SqlServerProvider implements ConnectionProviderInterface
     public function discoverStructure(array $credentials, string $objectName): MetadataNode
     {
         $pdo = $this->createRuntimeConnection($credentials);
-        $objectNameEscaped = str_replace("'", "''", $objectName);
-        $stmt = $pdo->query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{$objectNameEscaped}' ORDER BY ORDINAL_POSITION");
+        
+        $parts = explode('.', $objectName);
+        if (count($parts) === 2) {
+            $schemaName = str_replace("'", "''", $parts[0]);
+            $tableName = str_replace("'", "''", $parts[1]);
+            $query = "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$schemaName}' AND TABLE_NAME = '{$tableName}' ORDER BY ORDINAL_POSITION";
+        } else {
+            $objectNameEscaped = str_replace("'", "''", $objectName);
+            $query = "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{$objectNameEscaped}' ORDER BY ORDINAL_POSITION";
+        }
+        
+        $stmt = $pdo->query($query);
         
         $properties = [];
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {

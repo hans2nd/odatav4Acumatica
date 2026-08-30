@@ -32,6 +32,27 @@
             </div>
         </div>
 
+        {{-- Seeder Component --}}
+        <div class="bg-white rounded-2xl border border-surface-200/60 flex flex-col shadow-card overflow-hidden">
+            <div class="px-4 sm:px-5 py-3 sm:py-4 border-b border-surface-100 flex items-center bg-surface-50/50 gap-3">
+                <div class="p-2 bg-gradient-to-br from-purple-50 to-fuchsia-100 rounded-lg shrink-0">
+                    <span class="material-symbols-outlined text-purple-600 text-[18px]">data_object</span>
+                </div>
+                <div class="min-w-0">
+                    <h2 class="text-h3 text-surface-800 truncate">Database Seeder</h2>
+                    <p class="text-label-sm text-surface-400 mt-0.5 truncate">Populate database with default and sample data</p>
+                </div>
+            </div>
+            <div class="p-4 sm:p-5 flex flex-col gap-3 flex-1">
+                <p class="text-body-sm text-surface-600">This will execute <code class="text-xs bg-surface-100 px-1.5 py-0.5 rounded">php artisan db:seed</code> on the server. Useful for applying default permissions and structures.</p>
+                <div class="mt-auto pt-2">
+                    <button onclick="runCommand('{{ route('sys.artisan', ['command' => 'db-seed']) }}')" class="w-full flex justify-center items-center gap-2 px-4 py-2.5 rounded-xl bg-purple-600 text-white text-label-md hover:bg-purple-700 transition-all duration-200 active:scale-[0.98] shadow-sm">
+                        <span class="material-symbols-outlined text-[18px]">play_circle</span> Run Seeder
+                    </button>
+                </div>
+            </div>
+        </div>
+
         {{-- Optimize Component --}}
         <div class="bg-white rounded-2xl border border-surface-200/60 flex flex-col shadow-card overflow-hidden">
             <div class="px-4 sm:px-5 py-3 sm:py-4 border-b border-surface-100 flex items-center bg-surface-50/50 gap-3">

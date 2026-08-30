@@ -101,9 +101,7 @@ class SyncStateService implements SyncStateServiceInterface
         $acquired = $this->repository->acquireLock($scheduleId, $owner, $ttlMinutes);
         if (!$acquired) {
             $state = $this->loadSyncState($scheduleId);
-            if ($state->lock_owner !== $owner) {
-                throw new SyncStateLockException("Lock for schedule ID {$scheduleId} is already held by {$state->lock_owner}.");
-            }
+            throw new SyncStateLockException("Lock for schedule ID {$scheduleId} is already held by {$state->lock_owner} (active lease).");
         }
         return true;
     }

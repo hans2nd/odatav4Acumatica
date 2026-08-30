@@ -44,6 +44,8 @@ class DefaultRbacSeeder extends Seeder
             ['code' => 'sync', 'name' => 'Sync', 'sort_order' => 70],
             ['code' => 'execute', 'name' => 'Execute', 'sort_order' => 80],
             ['code' => 'manage', 'name' => 'Manage', 'sort_order' => 90],
+            ['code' => 'access', 'name' => 'Access', 'sort_order' => 100],
+            ['code' => 'test', 'name' => 'Test', 'sort_order' => 110],
         ];
 
         foreach ($actions as $action) {
@@ -56,6 +58,7 @@ class DefaultRbacSeeder extends Seeder
             [
                 'description' => 'System Administrator with full access',
                 'is_active' => true,
+                'is_superadmin' => true,
             ]
         );
 

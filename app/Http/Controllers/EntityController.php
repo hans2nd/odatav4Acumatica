@@ -55,8 +55,13 @@ class EntityController extends Controller
             'type'                   => 'required|in:master,transaction',
             'icon'                   => 'nullable|string|max:100',
             'description'            => 'required|string|max:255',
-            'source_connection'      => 'nullable|string|max:100',
-            'destination_connection' => 'nullable|string|max:100',
+            'source_connection'      => 'nullable|string|max:100|exists:connections,key',
+            'destination_connection' => 'nullable|string|max:100|exists:connections,key',
+            'sync_mode'              => 'required|in:full,incremental',
+            'watermark_type'         => 'nullable|required_if:sync_mode,incremental|string|max:50',
+            'watermark_column'       => 'nullable|required_if:sync_mode,incremental|string|max:100',
+            'batch_size'             => 'required|integer|min:1|max:100000',
+            'is_active'              => 'boolean',
         ]);
 
         $key = $validated['key'];
@@ -98,9 +103,14 @@ class EntityController extends Controller
             'type'                   => 'required|in:master,transaction',
             'icon'                   => 'nullable|string|max:100',
             'description'            => 'required|string|max:255',
-            'source_connection'      => 'nullable|string|max:100',
-            'destination_connection' => 'nullable|string|max:100',
+            'source_connection'      => 'nullable|string|max:100|exists:connections,key',
+            'destination_connection' => 'nullable|string|max:100|exists:connections,key',
             'schedule_minutes'       => 'nullable|integer|min:1',
+            'sync_mode'              => 'required|in:full,incremental',
+            'watermark_type'         => 'nullable|required_if:sync_mode,incremental|string|max:50',
+            'watermark_column'       => 'nullable|required_if:sync_mode,incremental|string|max:100',
+            'batch_size'             => 'required|integer|min:1|max:100000',
+            'is_active'              => 'boolean',
         ]);
 
         $newKey = $validated['key'];
@@ -130,6 +140,99 @@ class EntityController extends Controller
 
 
     /**
+     * Get an entity's field mappings.
+     */
+    public function getMappings(string $key): JsonResponse
+    {
+        $entity = $this->entityConfig->getModel($key);
+        
+        if (!$entity) {
+            return response()->json([
+                'success' => false,
+                'message' => "Entity '{$key}' not found.",
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'fields' => $entity->fields,
+        ]);
+    }
+
+    /**
+     * Update an entity's field mappings.
+     */
+    public function updateMappings(Request $request, string $key): JsonResponse
+    {
+        $entity = $this->entityConfig->getModel($key);
+        
+        if (!$entity) {
+            return response()->json([
+                'success' => false,
+                'message' => "Entity '{$key}' not found.",
+            ], 404);
+        }
+
+        $validated = $request->validate([
+            'fields' => 'required|array',
+            'fields.*.source_field' => 'required|string|max:255',
+            'fields.*.destination_field' => 'nullable|string|max:255',
+            'fields.*.data_type' => 'nullable|string|max:100',
+            'fields.*.semantic_type' => 'nullable|string|max:100',
+            'fields.*.is_key' => 'boolean',
+            'fields.*.is_nullable' => 'boolean',
+            'fields.*.transform_rule' => 'nullable|string',
+            'fields.*.is_enabled' => 'boolean',
+            'fields.*.label' => 'nullable|string|max:150',
+            'fields.*.description' => 'nullable|string',
+            'fields.*.aliases' => 'nullable|array',
+            'fields.*.aliases.*' => 'string|max:100',
+        ]);
+
+        // Validation: require at least one key field if incremental
+        if ($entity->sync_mode === 'incremental') {
+            $hasKey = collect($validated['fields'])
+                ->where('is_key', true)
+                ->where('is_enabled', true)
+                ->isNotEmpty();
+                
+            if (!$hasKey) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Incremental sync mode requires at least one enabled key field.",
+                ], 422);
+            }
+        }
+
+        $this->entityConfig->updateFields($entity->id, $validated['fields']);
+
+        return response()->json([
+            'success' => true,
+            'message' => "Entity '{$key}' fields updated successfully.",
+        ]);
+    }
+
+    /**
+     * Trigger metadata discovery manually.
+     */
+    public function discover(string $key): JsonResponse
+    {
+        if (!$this->entityConfig->exists($key)) {
+            return response()->json([
+                'success' => false,
+                'message' => "Entity '{$key}' not found.",
+            ], 404);
+        }
+
+        \App\Jobs\DiscoverEntityMetadataJob::dispatch($key);
+
+        return response()->json([
+            'success' => true,
+            'message' => "Metadata discovery triggered for '{$key}'.",
+        ]);
+    }
+
+    /**
      * Delete an entity.
      */
     public function destroy(string $key): JsonResponse
@@ -145,5 +248,37 @@ class EntityController extends Controller
             'success' => true,
             'message' => "Entity '{$key}' deleted successfully.",
         ]);
+    }
+
+    /**
+     * Batch delete entities.
+     */
+    public function batchDestroy(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'keys'   => 'required|array|min:1',
+            'keys.*' => 'string|max:100',
+        ]);
+
+        $keys = array_values(array_unique($validated['keys']));
+
+        try {
+            if (!$this->entityConfig->batchDelete($keys)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Failed to delete the selected entity/entities.",
+                ], 422);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => count($keys) . " entity/entities deleted successfully.",
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => "Error deleting entities: " . $e->getMessage(),
+            ], 500);
+        }
     }
 }

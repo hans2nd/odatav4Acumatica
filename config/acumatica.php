@@ -1,16 +1,5 @@
 <?php
 
-/*
-|--------------------------------------------------------------------------
-| Load dynamic entities from JSON file (managed via UI CRUD)
-|--------------------------------------------------------------------------
-*/
-$entitiesFile = storage_path('app/acumatica_entities.json');
-$dynamicEntities = [];
-if (file_exists($entitiesFile)) {
-    $dynamicEntities = json_decode(file_get_contents($entitiesFile), true) ?? [];
-}
-
 return [
 
     /*
@@ -39,25 +28,23 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Entity Definitions (loaded from storage/app/acumatica_entities.json)
+    | Entity Definitions (DB-driven via sync_entities table)
     |--------------------------------------------------------------------------
-    | Managed via Settings → Entity Configuration UI.
-    | Each entity maps an Acumatica OData v4 DAC-based entity name to a local
-    | SQL Server table. Tables are created automatically on first sync.
+    | Runtime entities are loaded from the `sync_entities` database table
+    | via EntityConfigService. This config key is kept empty for backward
+    | compatibility but should NOT be relied upon at runtime.
     |
-    | odata_entity : Acumatica DAC entity name (PX_Objects_XX_EntityName)
-    | table        : Target SQL Server table name
-    | type         : 'master' or 'transaction'
-    | icon         : Material Symbols icon name for the UI
-    | description  : Human-readable label for the dashboard
+    | Use app(EntityConfigService::class)->getAll() instead.
     */
 
-    'entities' => $dynamicEntities,
+    'entities' => [],
 
     /*
     |--------------------------------------------------------------------------
-    | Default Entity Definitions (seed data for first-time setup)
+    | Default Entity Definitions (seed/reference data only)
     |--------------------------------------------------------------------------
+    | Used by `php artisan entities:import-json --seed` to populate the
+    | sync_entities table on first-time setup. NOT used at runtime.
     */
 
     'default_entities' => [

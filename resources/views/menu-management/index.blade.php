@@ -345,6 +345,28 @@
     let allIcons = [];
     let currentEditId = null;
     let sortableInstances = [];
+    let collapsedState = {}; // { id: boolean }
+    let hasUnpublishedChanges = false;
+    
+    // Automatically trigger Add Menu if navigating from Query Repository Publishing
+    document.addEventListener('DOMContentLoaded', () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const queryId = urlParams.get('create_from_query_id');
+        const queryTitle = urlParams.get('create_title');
+        
+        if (queryId) {
+            setTimeout(() => {
+                addRootMenu();
+                document.getElementById('editTitle').value = queryTitle || 'New Report';
+                document.getElementById('editQueryRepositoryId').value = queryId;
+                loadQueryColumns(queryId);
+                showToast('Publishing Query. Please configure menu location and filters.', 'info');
+                
+                // Clean URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }, 500);
+        }
+    });
 
     // ========== INITIALIZATION ==========
     async function initializeMenuManagement() {
@@ -468,8 +490,7 @@
     }
 
     // ========== TREE RENDERING ==========
-    let collapsedState = {};
-
+    
     function toggleNodeCollapse(id) {
         collapsedState[id] = !collapsedState[id];
         renderTree();
@@ -1331,7 +1352,8 @@
             let html = '<table class="w-full text-xs border-collapse">';
             html += '<thead><tr><th class="text-left px-2 py-2 border-b border-surface-200 text-surface-600 font-medium sticky left-0 bg-white z-10 min-w-[140px]">Menu</th>';
             roles.forEach(r => {
-                html += `<th class="px-2 py-2 border-b border-surface-200 text-surface-600 font-medium text-center whitespace-nowrap">${r.name}</th>`;
+                const adminBadge = r.is_superadmin ? ' <span class="text-[10px] bg-brand-100 text-brand-700 px-1 py-0.5 rounded ml-1" title="Super Administrator">Super</span>' : '';
+                html += `<th class="px-2 py-2 border-b border-surface-200 text-surface-600 font-medium text-center whitespace-nowrap">${r.name}${adminBadge}</th>`;
             });
             html += '</tr></thead><tbody>';
 
@@ -1340,11 +1362,15 @@
                 html += `<tr class="hover:bg-surface-50 transition-colors">`;
                 html += `<td class="px-2 py-1.5 border-b border-surface-100 text-surface-700 font-medium sticky left-0 bg-white z-10 ${indent}">${row.title}</td>`;
                 roles.forEach(r => {
-                    const hasAccess = row.roles[r.id];
+                    const hasAccess = r.is_superadmin || row.roles[r.id];
                     const permKey = row.permission_key;
                     html += `<td class="px-2 py-1.5 border-b border-surface-100 text-center">`;
                     if (!permKey) {
                         html += `<span class="text-emerald-500" title="No restriction">✓</span>`;
+                    } else if (r.is_superadmin) {
+                        html += `<input type="checkbox" 
+                                    class="w-4 h-4 text-slate-400 rounded border-slate-200 cursor-not-allowed bg-slate-100"
+                                    checked disabled title="Super Administrator automatically has access">`;
                     } else {
                         html += `<input type="checkbox" 
                                     class="w-4 h-4 text-brand-600 rounded border-surface-300 focus:ring-brand-500 cursor-pointer"

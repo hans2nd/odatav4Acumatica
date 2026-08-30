@@ -226,7 +226,7 @@ class ReportBuilderController extends Controller
             }
 
             // Build query
-            $query = DB::connection($connName)->table($table)->select($validColumns);
+            $query = DB::connection($connName)->table($table);
 
             // Apply filters
             foreach ($filters as $filter) {
@@ -275,12 +275,30 @@ class ReportBuilderController extends Controller
             $baseFilename = $table . '_' . now()->format('Ymd_His');
             $downloadName = $baseFilename . ($format === 'xlsx' ? '.xlsx' : '.csv');
 
-            $totalRows = $query->count();
+            $countSql = $query->clone()->selectRaw('count(*) as aggregate')->toSql();
+            $countBindings = $query->getBindings();
+            $countResult = app(\App\Services\QueryRepositoryService::class)->executeDynamic($connKey, $countSql, $countBindings);
+
+            // Now apply the select to the main query
+            $query->select($validColumns);
+            
+            $firstRow = $countResult['data'][0] ?? null;
+            $totalRows = 0;
+            if ($firstRow) {
+                // Handle object or array return
+                $totalRows = (int) (is_array($firstRow) ? ($firstRow['aggregate'] ?? 0) : ($firstRow->aggregate ?? 0));
+            }
             if ($downloadId) {
                 \Illuminate\Support\Facades\Cache::put("report_dl_{$downloadId}", ['total' => $totalRows, 'current' => 0], 300);
             }
 
-            $writer = \Spatie\SimpleExcel\SimpleExcelWriter::streamDownload($downloadName);
+            $exportDir = storage_path('app/exports');
+            if (!is_dir($exportDir)) {
+                mkdir($exportDir, 0755, true);
+            }
+            $filePath = $exportDir . '/' . $downloadName;
+
+            $writer = \Spatie\SimpleExcel\SimpleExcelWriter::create($filePath);
 
             // For Excel, attempt to set sheet name (spout underlying)
             if ($format === 'xlsx') {
@@ -309,7 +327,11 @@ class ReportBuilderController extends Controller
             }
 
             $count = 0;
-            foreach ($query->cursor() as $row) {
+            $sql = $query->toSql();
+            $bindings = $query->getBindings();
+            $cursor = app(\App\Services\QueryRepositoryService::class)->executeStream($connKey, $sql, $bindings);
+
+            foreach ($cursor as $row) {
                 $rowArray = [];
                 foreach ($validColumns as $col) {
                     $val = $row->{$col} ?? '';
@@ -353,11 +375,24 @@ class ReportBuilderController extends Controller
                 }
             }
 
+            $writer->close();
+
             if ($downloadId) {
                 \Illuminate\Support\Facades\Cache::forget("report_dl_{$downloadId}");
             }
 
-            return $writer->toBrowser();
+            $token = Str::random(32);
+            \Illuminate\Support\Facades\Cache::put("report_download_{$token}", [
+                'path'     => $filePath,
+                'filename' => $downloadName,
+            ], now()->addHour());
+
+            return response()->json([
+                'success'  => true,
+                'token'    => $token,
+                'filename' => $downloadName,
+                'size'     => $this->formatBytes(filesize($filePath)),
+            ]);
         } catch (\Throwable $e) {
             Log::error('Report Builder prepare failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
             return response()->json(['success' => false, 'message' => 'Failed to prepare report: ' . $e->getMessage()], 500);

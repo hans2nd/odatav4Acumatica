@@ -4,8 +4,8 @@
 <div class="space-y-6">
     <div class="flex items-center justify-between animate-fade-up">
         <div>
-            <h2 class="text-h2 text-surface-900">GRN</h2>
-            <p class="text-body-md text-surface-500 mt-0.5">Data generated from Query Builder</p>
+            <h2 class="text-h2 text-surface-900">{{ $title }}</h2>
+            <p class="text-body-md text-surface-500 mt-0.5">Data generated from Query Repository</p>
         </div>
         <div class="flex items-center gap-2">
             <a href="{{ url()->current() }}?export=csv&{{ http_build_query(request()->except('export')) }}" onclick="showExportProgress()" class="flex items-center gap-2 px-4 py-2.5 bg-white border border-surface-200 text-surface-700 hover:bg-surface-50 hover:text-surface-900 rounded-xl text-label-md transition-all shadow-sm">
@@ -14,12 +14,6 @@
             <a href="{{ url()->current() }}?export=xlsx&{{ http_build_query(request()->except('export')) }}" onclick="showExportProgress()" class="flex items-center gap-2 px-4 py-2.5 bg-white border border-surface-200 text-surface-700 hover:bg-surface-50 hover:text-surface-900 rounded-xl text-label-md transition-all shadow-sm">
                 <span class="material-symbols-outlined text-[18px]">table_chart</span> Export Excel
             </a>
-            <form method="POST" action="{{ route('menu-management.refresh-files', ['route_name' => 'grn.index']) }}" onsubmit="return confirm('Regenerate files to pull latest columns from Query Builder?');">
-                @csrf
-                <button type="submit" class="flex items-center gap-2 px-4 py-2.5 bg-white border border-surface-200 text-surface-700 hover:bg-surface-50 hover:text-surface-900 rounded-xl text-label-md transition-all shadow-sm">
-                    <span class="material-symbols-outlined text-[18px]">refresh</span> Refresh Columns
-                </button>
-            </form>
         </div>
     </div>
 
@@ -145,7 +139,7 @@
     @endif
 </div>
 
-@push('scripts')
+@section('scripts')
 <div id="exportProgressModal" class="fixed inset-0 z-50 flex items-center justify-center hidden">
     <div class="absolute inset-0 bg-surface-900/50 backdrop-blur-sm"></div>
     <div class="bg-white rounded-2xl shadow-xl p-8 max-w-sm w-full mx-4 relative z-10 text-center animate-fade-up">
@@ -165,5 +159,5 @@
         }, 5000);
     }
 </script>
-@endpush
+@endsection
 @endsection

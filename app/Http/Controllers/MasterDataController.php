@@ -4,12 +4,13 @@ namespace App\Http\Controllers;
 
 use App\Services\SchemaManager;
 use App\Services\ConnectionService;
+use App\Services\EntityConfigService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class MasterDataController extends Controller
 {
-    public function index(SchemaManager $schemaManager, ConnectionService $connectionService)
+    public function index(SchemaManager $schemaManager, ConnectionService $connectionService, EntityConfigService $entityConfigService)
     {
         $connections = array_merge([
             'acumatica_default' => ['name' => 'Acumatica Default', 'type' => 'odata'],
@@ -17,7 +18,7 @@ class MasterDataController extends Controller
         ], $connectionService->getAll());
 
         $user = auth()->user();
-        $entities = collect(config('acumatica.entities', []))
+        $entities = collect($entityConfigService->getAll())
             ->filter(fn ($e, $key) => $e['type'] === 'master' && $user->hasPermission("{$key}.view"));
 
         $entityData = [];
@@ -55,7 +56,7 @@ class MasterDataController extends Controller
             abort(403, "You do not have permission to view {$entity}.");
         }
 
-        $config = config("acumatica.entities.{$entity}");
+        $config = app(EntityConfigService::class)->get($entity);
 
         if (! $config || $config['type'] !== 'master') {
             abort(404, 'Entity not found.');

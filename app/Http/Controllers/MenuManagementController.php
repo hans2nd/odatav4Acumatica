@@ -74,9 +74,19 @@ class MenuManagementController extends Controller
         // Determine sort_order (append to end)
         $maxSort = Menu::where('parent_id', $validated['parent_id'] ?? null)->max('sort_order') ?? 0;
         $validated['sort_order'] = $maxSort + 10;
+        
+        // Use generic dynamic runtime for new Query Repository menus
+        if (!empty($validated['query_repository_id']) && empty($validated['route_name'])) {
+            $validated['route_name'] = 'report.dynamic';
+            $request->merge(['generate_files' => false]);
+        }
 
         $menuData = collect($validated)->except(['generate_files'])->toArray();
         $menu = Menu::create($menuData);
+        
+        if ($menu->route_name === 'report.dynamic') {
+            $menu->update(['route_params' => ['menuId' => $menu->id]]);
+        }
 
         // Auto-generate Resource & Permission so it appears in Settings -> Roles & Permissions
         $systemModule = Module::where('code', 'system')->first() ?? Module::first();
@@ -118,13 +128,8 @@ class MenuManagementController extends Controller
         }
 
         $menu->update(['permission_key' => $permKey]);
-        $menu->permissions()->syncWithoutDetaching([$perm->id]);
 
-        // Automatically assign new menu permission to all roles
-        $roles = Role::all();
-        foreach ($roles as $role) {
-            $role->permissions()->syncWithoutDetaching([$perm->id]);
-        }
+        // Superadmin bypasses this, so we don't assign it to any roles yet.
 
         if ($request->generate_files && $menu->type === 'link' && !empty($menu->route_name)) {
             $this->generateRouteAndFiles($menu->route_name, $menu->title, $menu->query_repository_id, false, $menu->id);
@@ -175,6 +180,14 @@ class MenuManagementController extends Controller
         if (isset($validated['parent_id']) && $validated['parent_id'] == $id) {
             return response()->json(['success' => false, 'message' => 'A menu cannot be its own parent.'], 422);
         }
+        
+        // Switch to generic dynamic runtime if switching to query repository
+        $oldRouteName = $menu->route_name;
+        if (!empty($validated['query_repository_id']) && empty($validated['route_name'])) {
+            $validated['route_name'] = 'report.dynamic';
+            $validated['route_params'] = ['menuId' => $menu->id];
+            $request->merge(['generate_files' => false]);
+        }
 
         $menuData = collect($validated)->except(['generate_files'])->toArray();
         $menu->update($menuData);
@@ -211,13 +224,6 @@ class MenuManagementController extends Controller
                     'resource_id' => $resource->id,
                     'action_id' => $viewAction ? $viewAction->id : null,
                 ]);
-            }
-
-            $menu->permissions()->syncWithoutDetaching([$perm->id]);
-
-            $roles = Role::all();
-            foreach ($roles as $role) {
-                $role->permissions()->syncWithoutDetaching([$perm->id]);
             }
         }
 
@@ -261,9 +267,6 @@ class MenuManagementController extends Controller
 
         // Move children to root/parent (keep main menu intact)
         Menu::where('parent_id', $id)->update(['parent_id' => $menu->parent_id]);
-
-        // Detach pivot relationship from menu_permissions table
-        $menu->permissions()->detach();
 
         $menu->delete();
 
@@ -524,8 +527,9 @@ class MenuManagementController extends Controller
      */
     public function getPermissionMatrix(): JsonResponse
     {
-        $roles = Role::with('permissions')->orderBy('name')->get();
-        $allMenus = Menu::with('permissions')->orderBy('sort_order')->get();
+        $roles = Role::with('permissions')->where('is_active', true)->orderBy('name')->get();
+        // We don't need menu_permissions anymore, so we don't need to load 'permissions' on Menu
+        $allMenus = Menu::orderBy('sort_order')->get();
 
         $orderedMenus = [];
         $buildTree = function ($parentId = null) use ($allMenus, &$orderedMenus, &$buildTree) {
@@ -540,21 +544,20 @@ class MenuManagementController extends Controller
 
         $matrix = [];
         foreach ($orderedMenus as $menu) {
-            $menuPerms = $menu->permissions->pluck('id')->toArray();
-            
-            if (empty($menuPerms) && !empty($menu->permission_key)) {
+            $menuPermId = null;
+            if (!empty($menu->permission_key)) {
                 $perm = $permissionsByKey->get($menu->permission_key);
                 if ($perm) {
-                    $menuPerms = [$perm->id];
+                    $menuPermId = $perm->id;
                 }
             }
 
             $roleAccess = [];
             foreach ($roles as $role) {
                 $rolePermIds = $role->permissions->pluck('id')->toArray();
-                // A role has access if it has ANY of the menu's assigned permissions
+                // A role has access if it has the menu's permission_key mapped permission
                 // OR if the menu has no permission_key (open to all)
-                $roleAccess[$role->id] = empty($menu->permission_key) || !empty(array_intersect($menuPerms, $rolePermIds));
+                $roleAccess[$role->id] = empty($menu->permission_key) || ($menuPermId && in_array($menuPermId, $rolePermIds));
             }
             $matrix[] = [
                 'menu_id' => $menu->id,
@@ -567,7 +570,7 @@ class MenuManagementController extends Controller
 
         return response()->json([
             'success' => true,
-            'roles' => $roles->map(fn($r) => ['id' => $r->id, 'name' => $r->name]),
+            'roles' => $roles->map(fn($r) => ['id' => $r->id, 'name' => $r->name, 'is_superadmin' => $r->is_superadmin]),
             'matrix' => $matrix,
         ]);
     }
@@ -584,28 +587,25 @@ class MenuManagementController extends Controller
         ]);
 
         $role = Role::findOrFail($validated['role_id']);
-        $menu = Menu::with('permissions')->findOrFail($validated['menu_id']);
+        $menu = Menu::findOrFail($validated['menu_id']);
+
+        if ($role->is_superadmin) {
+            return response()->json(['success' => false, 'message' => 'Super Administrator automatically has all permissions.']);
+        }
 
         if (empty($menu->permission_key)) {
             return response()->json(['success' => false, 'message' => 'This menu is open to all and cannot have restricted permissions.']);
         }
 
-        $menuPermIds = $menu->permissions->pluck('id')->toArray();
-
-        // If the menu has a permission_key but no permissions attached in menu_permissions, we should try to find the permission by key.
-        if (empty($menuPermIds)) {
-            $permission = Permission::where('permission_key', $menu->permission_key)->first();
-            if ($permission) {
-                $menuPermIds = [$permission->id];
-            } else {
-                return response()->json(['success' => false, 'message' => 'Permission key not found in the system.']);
-            }
+        $permission = Permission::where('permission_key', $menu->permission_key)->first();
+        if (!$permission) {
+            return response()->json(['success' => false, 'message' => 'Permission key not found in the system.']);
         }
 
         if ($validated['is_granted']) {
-            $role->permissions()->syncWithoutDetaching($menuPermIds);
+            $role->permissions()->syncWithoutDetaching([$permission->id]);
         } else {
-            $role->permissions()->detach($menuPermIds);
+            $role->permissions()->detach([$permission->id]);
         }
 
         return response()->json(['success' => true, 'message' => 'Permission updated.']);
@@ -686,16 +686,11 @@ class {$controllerName} extends Controller
             return view('{$routeName}.index', ['error' => 'Database connection not found.']);
         }
         
-        try {
-            \$laravelConnName = \$connService->resolveConnectionName(\$conn->key);
-        } catch (\Exception \$e) {
-            return view('{$routeName}.index', ['error' => 'Failed to resolve connection: ' . \$e->getMessage()]);
-        }
-        
         \$rawSql = \$queryRepo->sql_text;
         \$columns = is_array(\$queryRepo->output_column_json) ? \$queryRepo->output_column_json : json_decode(\$queryRepo->output_column_json, true) ?? [];
         
-        \$query = DB::connection(\$laravelConnName)->query()->fromSub(\$rawSql, 'subquery');
+        \$qrService = app(\App\Services\QueryRepositoryService::class);
+        \$query = \$qrService->executeBuilder(\$conn->key, \$rawSql, \$request->all());
         
         \$filterConfig = \$menu ? \$menu->filter_config : null;
         
@@ -803,7 +798,7 @@ PHP;
         </div>
     @endif
     
-    @if(!isset(\$error) || collect(\$results)->isNotEmpty() || isset(\$filterConfig))
+    @if(!isset(\$error) || (isset(\$results) && collect(\$results)->isNotEmpty()) || isset(\$filterConfig))
         @php
             \$hasFilters = false;
             \$renderFilters = [];
@@ -887,11 +882,12 @@ PHP;
                     <tbody class="divide-y divide-surface-100 text-body-sm text-surface-700">
                         @if(isset(\$results) && collect(\$results)->isNotEmpty())
                             @foreach(\$results as \$row)
+                                @php \$rowArray = array_change_key_case((array) \$row, CASE_LOWER); @endphp
                                 <tr class="hover:bg-surface-50/80 transition-colors">
                                     @foreach(\$columns as \$col)
                                         @php \$field = is_array(\$col) ? (\$col['field'] ?? null) : \$col; @endphp
                                         @if(\$field)
-                                        <td class="px-6 py-4 whitespace-nowrap">{{ \$row->{\$field} ?? '-' }}</td>
+                                        <td class="px-6 py-4 whitespace-nowrap">{{ \$rowArray[strtolower(\$field)] ?? '-' }}</td>
                                         @endif
                                     @endforeach
                                 </tr>
@@ -919,7 +915,7 @@ PHP;
     @endif
 </div>
 
-@push('scripts')
+@section('scripts')
 <div id="exportProgressModal" class="fixed inset-0 z-50 flex items-center justify-center hidden">
     <div class="absolute inset-0 bg-surface-900/50 backdrop-blur-sm"></div>
     <div class="bg-white rounded-2xl shadow-xl p-8 max-w-sm w-full mx-4 relative z-10 text-center animate-fade-up">
@@ -939,7 +935,7 @@ PHP;
         }, 5000);
     }
 </script>
-@endpush
+@endsection
 @endsection
 BLADE;
             } else {

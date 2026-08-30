@@ -5,12 +5,14 @@ namespace Tests\Feature;
 use App\Models\Menu;
 use App\Models\QueryRepository;
 use App\Models\Connection;
+use App\Models\User;
 use App\Services\MenuFilterService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class MenuFilterConfigTest extends TestCase
 {
@@ -18,17 +20,28 @@ class MenuFilterConfigTest extends TestCase
 
     public function test_filter_config_validation_rules()
     {
+            $user = User::factory()->create();
+
+            $role = \App\Models\Role::firstOrCreate(['name' => 'Administrator']);
+            $user->roles()->attach($role->id);
+
+            $this->actingAs($user);
+
         $conn = Connection::create([
-            'name' => 'test_conn',
-            'db_connection' => 'mysql',
-            'db_host' => '127.0.0.1',
-            'db_port' => '3306',
-            'db_database' => 'test',
-            'db_username' => 'root',
-            'db_password' => ''
+            'key' => 'test_conn',
+            'name' => 'Test Connection',
+            'type' => 'mysql',
+            'credentials' => [
+                'host' => '127.0.0.1',
+                'port' => 3306,
+                'database' => 'test',
+                'username' => 'root',
+                'password' => '',
+            ],
         ]);
 
         $queryRepo = QueryRepository::create([
+            'uuid' => (string) Str::uuid(),
             'name' => 'Test Query',
             'database_connection_id' => $conn->id,
             'sql_text' => 'SELECT id, name, created_at FROM users',
