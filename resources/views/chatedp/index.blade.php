@@ -4,365 +4,395 @@
 
 @section('content')
 <style>
-    /* ===== ChatEDP Premium Theme ===== */
+    /* ===== ChatGPT-Inspired ChatEDP Theme ===== */
     .chatedp-root {
-        --primary: #6366f1;
-        --primary-light: #818cf8;
-        --primary-dark: #4f46e5;
-        --primary-50: #eef2ff;
-        --surface: #ffffff;
-        --surface-hover: #f8fafc;
-        --border: #e2e8f0;
-        --border-light: #f1f5f9;
-        --text-primary: #0f172a;
-        --text-secondary: #475569;
-        --text-muted: #94a3b8;
-        --bg-chat: #f8fafc;
-        --gradient-start: #6366f1;
-        --gradient-end: #8b5cf6;
-        font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        --sidebar-bg: #171717;
+        --sidebar-hover: #212121;
+        --sidebar-active: #2a2a2a;
+        --sidebar-border: #2e2e2e;
+        --sidebar-text: #ececec;
+        --sidebar-muted: #8e8e8e;
+        --chat-bg: #212121;
+        --chat-content-bg: #2f2f2f;
+        --msg-user-bg: #303030;
+        --msg-assistant-bg: transparent;
+        --text-primary: #ececec;
+        --text-secondary: #b4b4b4;
+        --text-muted: #8e8e8e;
+        --border-color: #3e3e3e;
+        --accent: #7c3aed;
+        --accent-light: #a78bfa;
+        --input-bg: #303030;
+        --input-border: #424242;
+        --code-bg: #1a1a2e;
+        font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
     }
 
-    /* Sidebar */
-    .chatedp-sidebar {
-        background: linear-gradient(180deg, #1e1b4b 0%, #312e81 100%);
-        transition: width 0.3s ease;
+    /* ===== Sidebar ===== */
+    .edp-sidebar {
+        background: var(--sidebar-bg);
+        width: 260px;
+        transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        border-right: 1px solid var(--sidebar-border);
     }
-    .chatedp-sidebar .sidebar-btn {
-        background: rgba(255,255,255,0.08);
-        border: 1px solid rgba(255,255,255,0.1);
-        backdrop-filter: blur(10px);
-        transition: all 0.2s ease;
-    }
-    .chatedp-sidebar .sidebar-btn:hover {
-        background: rgba(255,255,255,0.15);
-        border-color: rgba(255,255,255,0.2);
-        transform: translateY(-1px);
-    }
-    .chatedp-sidebar .conv-item {
-        border-radius: 10px;
-        padding: 10px 14px;
+    .edp-sidebar.collapsed { width: 0; overflow: hidden; padding: 0; }
+
+    .edp-sidebar .new-chat-btn {
+        display: flex; align-items: center; gap: 10px;
+        width: 100%; padding: 10px 14px; border-radius: 10px;
+        color: var(--sidebar-text); font-size: 0.875rem; font-weight: 500;
+        border: 1px dashed rgba(255,255,255,0.12);
+        background: transparent; cursor: pointer;
         transition: all 0.15s ease;
-        cursor: pointer;
+    }
+    .edp-sidebar .new-chat-btn:hover {
+        background: var(--sidebar-hover);
+        border-color: rgba(255,255,255,0.2);
+    }
+
+    .edp-sidebar .search-box {
+        width: 100%; padding: 8px 12px; border-radius: 8px;
+        background: rgba(255,255,255,0.06); border: 1px solid transparent;
+        color: var(--sidebar-text); font-size: 0.8125rem;
+        outline: none; transition: all 0.15s;
+    }
+    .edp-sidebar .search-box::placeholder { color: var(--sidebar-muted); }
+    .edp-sidebar .search-box:focus {
+        background: rgba(255,255,255,0.08);
+        border-color: rgba(255,255,255,0.12);
+    }
+
+    .conv-item {
+        display: flex; align-items: center; gap: 10px;
+        padding: 10px 14px; border-radius: 10px;
+        cursor: pointer; transition: background 0.12s;
         position: relative;
     }
-    .chatedp-sidebar .conv-item:hover {
-        background: rgba(255,255,255,0.08);
+    .conv-item:hover { background: var(--sidebar-hover); }
+    .conv-item.active { background: var(--sidebar-active); }
+    .conv-item .conv-title {
+        flex: 1; font-size: 0.8125rem; color: var(--sidebar-text);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .chatedp-sidebar .conv-item.active {
-        background: rgba(99, 102, 241, 0.25);
-        border: 1px solid rgba(129, 140, 248, 0.3);
+    .conv-item .conv-del {
+        opacity: 0; flex-shrink: 0; padding: 4px; border-radius: 6px;
+        color: var(--sidebar-muted); background: transparent; border: none;
+        cursor: pointer; transition: all 0.12s; display: flex;
     }
-    .chatedp-sidebar .conv-item .delete-btn {
-        opacity: 0;
-        transition: opacity 0.15s;
-    }
-    .chatedp-sidebar .conv-item:hover .delete-btn {
-        opacity: 1;
-    }
+    .conv-item:hover .conv-del { opacity: 1; }
+    .conv-item .conv-del:hover { color: #f87171; background: rgba(248,113,113,0.1); }
 
-    /* Chat area */
-    .chat-bg {
-        background-color: var(--bg-chat);
-        background-image: 
-            radial-gradient(at 20% 80%, rgba(99,102,241,0.04) 0%, transparent 50%),
-            radial-gradient(at 80% 20%, rgba(139,92,246,0.04) 0%, transparent 50%);
-    }
+    /* ===== Main Chat Area ===== */
+    .edp-main { background: var(--chat-bg); }
 
-    /* Message bubbles */
-    .msg-user {
-        background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
-        color: #fff;
-        border-radius: 20px 20px 6px 20px;
-        box-shadow: 0 2px 12px rgba(99,102,241,0.25);
-    }
-    .msg-assistant {
-        background: var(--surface);
-        color: var(--text-primary);
-        border: 1px solid var(--border);
-        border-radius: 20px 20px 20px 6px;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-    }
-
-    /* Avatar */
-    .avatar-user {
-        background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
-        box-shadow: 0 2px 8px rgba(99,102,241,0.3);
-    }
-    .avatar-assistant {
-        background: linear-gradient(135deg, #06b6d4, #6366f1);
-        box-shadow: 0 2px 8px rgba(6,182,212,0.3);
-    }
-
-    /* Results card */
-    .results-card {
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: 16px;
-        box-shadow: 0 1px 6px rgba(0,0,0,0.04);
-        overflow: hidden;
-    }
-    .results-card table thead th {
-        background: #f8fafc;
-        font-weight: 600;
-        font-size: 0.75rem;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        color: var(--text-secondary);
-        padding: 12px 16px;
-        border-bottom: 2px solid var(--border);
-        white-space: nowrap;
-    }
-    .results-card table tbody td {
+    /* Top bar */
+    .edp-topbar {
+        background: var(--chat-bg);
+        border-bottom: 1px solid var(--border-color);
         padding: 10px 16px;
-        font-size: 0.8125rem;
+    }
+
+    /* Messages container: centered like ChatGPT */
+    .msg-container { max-width: 768px; margin: 0 auto; padding: 0 24px; }
+
+    /* === Message Row === */
+    .msg-row {
+        padding: 24px 0;
+        animation: msgFade 0.35s ease-out;
+    }
+    .msg-row + .msg-row {
+        border-top: 1px solid rgba(255,255,255,0.04);
+    }
+
+    /* User message */
+    .msg-row.user .msg-body {
+        display: flex; justify-content: flex-end;
+    }
+    .msg-row.user .msg-bubble {
+        background: var(--msg-user-bg);
         color: var(--text-primary);
-        border-bottom: 1px solid var(--border-light);
+        border-radius: 20px;
+        padding: 12px 20px;
+        max-width: 80%;
+        font-size: 0.9375rem;
+        line-height: 1.65;
+        border: 1px solid var(--border-color);
+    }
+
+    /* Assistant message: full-width, no bubble */
+    .msg-row.assistant .msg-body {
+        display: flex; gap: 16px; align-items: flex-start;
+    }
+    .msg-row.assistant .msg-avatar {
+        width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+        background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+        display: flex; align-items: center; justify-content: center;
+        box-shadow: 0 0 0 2px rgba(124,58,237,0.2);
+    }
+    .msg-row.assistant .msg-text {
+        flex: 1; min-width: 0;
+        color: var(--text-primary);
+        font-size: 0.9375rem;
+        line-height: 1.75;
+    }
+
+    /* Prose inside assistant */
+    .msg-row.assistant .msg-text strong { color: #fff; font-weight: 600; }
+    .msg-row.assistant .msg-text ol,
+    .msg-row.assistant .msg-text ul { padding-left: 1.5em; margin: 0.5em 0; }
+    .msg-row.assistant .msg-text ol { list-style: decimal; }
+    .msg-row.assistant .msg-text ul { list-style: disc; }
+    .msg-row.assistant .msg-text li { margin: 0.35em 0; }
+
+    /* Error message style */
+    .msg-error-inline {
+        background: rgba(239,68,68,0.08);
+        border: 1px solid rgba(239,68,68,0.2);
+        border-radius: 12px;
+        padding: 14px 18px;
+        color: #fca5a5;
+        display: flex; align-items: flex-start; gap: 10px;
+    }
+
+    /* ===== Data Results Card ===== */
+    .data-card {
+        background: var(--chat-content-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        overflow: hidden;
+        margin-top: 16px;
+    }
+    .data-card table { width: 100%; border-collapse: collapse; }
+    .data-card thead th {
+        background: rgba(255,255,255,0.03);
+        font-size: 0.6875rem; font-weight: 700;
+        text-transform: uppercase; letter-spacing: 0.08em;
+        color: var(--text-muted); padding: 10px 16px;
+        border-bottom: 1px solid var(--border-color);
+        white-space: nowrap; text-align: left;
+    }
+    .data-card tbody td {
+        padding: 10px 16px; font-size: 0.8125rem;
+        color: var(--text-secondary);
+        border-bottom: 1px solid rgba(255,255,255,0.04);
         white-space: nowrap;
     }
-    .results-card table tbody tr {
-        transition: background 0.1s;
-    }
-    .results-card table tbody tr:hover {
-        background: #f8fafc;
-    }
-    .results-card table tbody tr:last-child td {
-        border-bottom: none;
-    }
-
-    /* Suggestion chips */
-    .suggestion-chip {
-        background: var(--primary-50);
-        border: 1px solid rgba(99,102,241,0.15);
-        border-radius: 12px;
-        padding: 12px 16px;
-        transition: all 0.2s ease;
-        cursor: pointer;
-    }
-    .suggestion-chip:hover {
-        border-color: var(--primary-light);
-        background: rgba(99,102,241,0.08);
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(99,102,241,0.12);
-    }
-
-    /* Welcome card */
-    .welcome-card {
-        background: linear-gradient(135deg, rgba(99,102,241,0.05) 0%, rgba(139,92,246,0.05) 100%);
-        border: 1px solid rgba(99,102,241,0.1);
-        border-radius: 20px;
-        padding: 40px;
-    }
-    .welcome-icon {
-        width: 72px;
-        height: 72px;
-        border-radius: 20px;
-        background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        margin: 0 auto 20px;
-        box-shadow: 0 8px 24px rgba(99,102,241,0.25);
-    }
-
-    /* Input area */
-    .input-wrapper {
-        background: var(--surface);
-        border: 2px solid var(--border);
-        border-radius: 16px;
-        transition: all 0.2s ease;
-        box-shadow: 0 2px 12px rgba(0,0,0,0.04);
-    }
-    .input-wrapper:focus-within {
-        border-color: var(--primary-light);
-        box-shadow: 0 0 0 4px rgba(99,102,241,0.08), 0 2px 12px rgba(0,0,0,0.04);
-    }
-    .input-wrapper input {
-        border: none;
-        outline: none;
-        background: transparent;
-        font-size: 0.9375rem;
-        color: var(--text-primary);
-    }
-    .input-wrapper input::placeholder {
-        color: var(--text-muted);
-    }
-    .send-btn {
-        background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
-        border: none;
-        width: 40px;
-        height: 40px;
-        border-radius: 12px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: #fff;
-        cursor: pointer;
-        transition: all 0.2s ease;
-        flex-shrink: 0;
-    }
-    .send-btn:hover:not(:disabled) {
-        transform: scale(1.05);
-        box-shadow: 0 4px 12px rgba(99,102,241,0.35);
-    }
-    .send-btn:disabled {
-        opacity: 0.4;
-        cursor: not-allowed;
-    }
+    .data-card tbody tr:last-child td { border-bottom: none; }
+    .data-card tbody tr:hover { background: rgba(255,255,255,0.02); }
 
     /* Export buttons */
-    .export-btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 6px 14px;
-        border-radius: 8px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        transition: all 0.15s ease;
-        cursor: pointer;
-        text-decoration: none;
+    .export-pill {
+        display: inline-flex; align-items: center; gap: 5px;
+        padding: 6px 14px; border-radius: 20px;
+        font-size: 0.75rem; font-weight: 600;
+        cursor: pointer; text-decoration: none; transition: all 0.15s;
+        border: 1px solid;
     }
-    .export-btn-excel {
-        background: #ecfdf5;
-        color: #059669;
-        border: 1px solid #a7f3d0;
+    .export-pill.excel {
+        color: #4ade80; border-color: rgba(74,222,128,0.2);
+        background: rgba(74,222,128,0.06);
     }
-    .export-btn-excel:hover {
-        background: #d1fae5;
-        border-color: #6ee7b7;
+    .export-pill.excel:hover { background: rgba(74,222,128,0.12); border-color: rgba(74,222,128,0.35); }
+    .export-pill.report {
+        color: var(--accent-light); border-color: rgba(167,139,250,0.2);
+        background: rgba(167,139,250,0.06);
     }
-    .export-btn-report {
-        background: var(--primary-50);
-        color: var(--primary);
-        border: 1px solid rgba(99,102,241,0.2);
-    }
-    .export-btn-report:hover {
-        background: rgba(99,102,241,0.1);
-        border-color: var(--primary-light);
-    }
+    .export-pill.report:hover { background: rgba(167,139,250,0.12); border-color: rgba(167,139,250,0.35); }
 
-    /* Loading animation */
-    .loading-dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: var(--primary-light);
-        animation: loadPulse 1.4s ease-in-out infinite;
-    }
-    .loading-dot:nth-child(2) { animation-delay: 0.2s; }
-    .loading-dot:nth-child(3) { animation-delay: 0.4s; }
-    @keyframes loadPulse {
-        0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
-        40% { transform: scale(1); opacity: 1; }
-    }
-
-    /* Smart suggestion in message */
-    .smart-suggestion {
-        background: linear-gradient(135deg, rgba(99,102,241,0.04), rgba(139,92,246,0.04));
-        border: 1px solid rgba(99,102,241,0.12);
+    /* Chart container */
+    .chart-card {
+        background: var(--chat-content-bg);
+        border: 1px solid var(--border-color);
         border-radius: 12px;
+        padding: 20px;
+        margin-top: 16px;
+    }
+
+    /* ===== Smart Suggestions ===== */
+    .smart-sugg {
+        margin-top: 16px;
         padding: 14px;
-        margin-top: 12px;
+        background: rgba(124,58,237,0.05);
+        border: 1px solid rgba(124,58,237,0.12);
+        border-radius: 12px;
     }
-    .smart-suggestion button {
-        display: block;
-        width: 100%;
-        text-align: left;
-        padding: 10px 14px;
-        border-radius: 10px;
-        border: 1px solid rgba(99,102,241,0.1);
-        background: var(--surface);
-        transition: all 0.15s ease;
-        margin-top: 8px;
+    .smart-sugg-btn {
+        display: block; width: 100%; text-align: left;
+        padding: 10px 14px; border-radius: 8px;
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.06);
+        color: var(--text-secondary); cursor: pointer;
+        transition: all 0.12s; margin-top: 8px;
     }
-    .smart-suggestion button:hover {
-        border-color: var(--primary-light);
-        background: var(--primary-50);
+    .smart-sugg-btn:hover {
+        background: rgba(124,58,237,0.1);
+        border-color: var(--accent-light);
+        color: var(--text-primary);
         transform: translateX(4px);
     }
 
-    /* Error message */
-    .msg-error {
-        background: #fef2f2;
-        border: 1px solid #fecaca;
-        color: #991b1b;
-        border-radius: 12px;
-        padding: 12px 16px;
+    /* ===== Welcome Screen ===== */
+    .welcome-screen {
+        display: flex; flex-direction: column; align-items: center;
+        justify-content: center; min-height: 65vh;
+        animation: msgFade 0.45s ease-out;
+    }
+    .welcome-logo {
+        width: 56px; height: 56px; border-radius: 50%;
+        background: linear-gradient(135deg, #7c3aed, #6d28d9);
+        display: flex; align-items: center; justify-content: center;
+        box-shadow: 0 0 40px rgba(124,58,237,0.25);
+        margin-bottom: 20px;
+    }
+    .welcome-title {
+        font-size: 1.5rem; font-weight: 700; color: var(--text-primary);
+        margin-bottom: 6px;
+    }
+    .welcome-subtitle {
+        font-size: 0.875rem; color: var(--text-muted);
+        margin-bottom: 32px; text-align: center; max-width: 400px;
+    }
+    .welcome-grid {
+        display: grid; grid-template-columns: repeat(2, 1fr);
+        gap: 12px; width: 100%; max-width: 560px;
+    }
+    .welcome-card {
+        padding: 16px; border-radius: 12px; cursor: pointer;
+        background: var(--chat-content-bg);
+        border: 1px solid var(--border-color);
+        transition: all 0.15s;
+    }
+    .welcome-card:hover {
+        border-color: var(--accent-light);
+        background: rgba(124,58,237,0.06);
+        transform: translateY(-2px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+    }
+    .welcome-card .wc-title {
+        font-size: 0.8125rem; font-weight: 600; color: var(--text-primary);
+        margin-bottom: 4px;
+    }
+    .welcome-card .wc-desc {
+        font-size: 0.75rem; color: var(--text-muted);
+        line-height: 1.4; display: -webkit-box;
+        -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
     }
 
-    /* Prose overrides for assistant */
-    .msg-assistant .prose-custom strong {
-        color: var(--text-primary);
-        font-weight: 700;
+    /* ===== Input Area ===== */
+    .edp-input-area {
+        background: var(--chat-bg);
+        padding: 12px 24px 20px;
+    }
+    .edp-input-box {
+        max-width: 768px; margin: 0 auto;
+        background: var(--input-bg);
+        border: 1px solid var(--input-border);
+        border-radius: 24px;
+        padding: 12px 18px; display: flex; align-items: flex-end; gap: 12px;
+        transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .edp-input-box:focus-within {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px rgba(124,58,237,0.15);
+    }
+    .edp-input-box textarea {
+        flex: 1; background: transparent; border: none; outline: none; resize: none;
+        color: var(--text-primary); font-size: 0.9375rem; font-family: inherit;
+        line-height: 1.5; max-height: 200px; overflow-y: auto;
+        scrollbar-width: thin; scrollbar-color: var(--border-color) transparent;
+    }
+    .edp-input-box textarea::placeholder { color: var(--text-muted); }
+    .edp-input-box textarea::-webkit-scrollbar { width: 4px; }
+    .edp-input-box textarea::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 2px; }
+
+    .send-btn {
+        width: 36px; height: 36px; border-radius: 50%; border: none;
+        background: var(--accent); color: #fff;
+        display: flex; align-items: center; justify-content: center;
+        cursor: pointer; flex-shrink: 0; transition: all 0.15s;
+    }
+    .send-btn:hover:not(:disabled) {
+        background: #6d28d9;
+        transform: scale(1.05);
+    }
+    .send-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    .edp-disclaimer {
+        text-align: center; font-size: 0.6875rem;
+        color: var(--text-muted); margin-top: 8px;
+        max-width: 768px; margin-left: auto; margin-right: auto;
     }
 
-    /* Markdown list styling inside assistant messages */
-    .msg-assistant .prose-custom ol,
-    .msg-assistant .prose-custom ul {
-        padding-left: 1.5em;
-        margin: 0.5em 0;
+    /* ===== Loading ===== */
+    .typing-indicator { display: flex; gap: 5px; align-items: center; padding: 6px 0; }
+    .typing-dot {
+        width: 8px; height: 8px; border-radius: 50%;
+        background: var(--accent-light);
+        animation: typingBounce 1.3s ease-in-out infinite;
     }
-    .msg-assistant .prose-custom ol { list-style: decimal; }
-    .msg-assistant .prose-custom ul { list-style: disc; }
-    .msg-assistant .prose-custom li { margin: 0.25em 0; }
+    .typing-dot:nth-child(2) { animation-delay: 0.15s; }
+    .typing-dot:nth-child(3) { animation-delay: 0.3s; }
+    @keyframes typingBounce {
+        0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+        30% { transform: translateY(-6px); opacity: 1; }
+    }
 
-    /* Fade in animation */
-    @keyframes fadeInUp {
-        from { opacity: 0; transform: translateY(8px); }
+    /* ===== Animations ===== */
+    @keyframes msgFade {
+        from { opacity: 0; transform: translateY(10px); }
         to { opacity: 1; transform: translateY(0); }
     }
-    .animate-fadeInUp {
-        animation: fadeInUp 0.3s ease-out;
-    }
 
-    /* Chart container */
-    .chart-container {
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 16px;
-        margin-top: 12px;
+    /* ===== Scrollbar for chat ===== */
+    .edp-chat-scroll::-webkit-scrollbar { width: 6px; }
+    .edp-chat-scroll::-webkit-scrollbar-track { background: transparent; }
+    .edp-chat-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+    .edp-chat-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+
+    /* Sidebar scrollbar */
+    .edp-sidebar::-webkit-scrollbar { width: 4px; }
+    .edp-sidebar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .edp-sidebar { position: fixed; left: 0; top: 0; bottom: 0; z-index: 50; }
+        .welcome-grid { grid-template-columns: 1fr; }
+        .msg-container { padding: 0 16px; }
+        .msg-row.user .msg-bubble { max-width: 90%; }
     }
 </style>
 
 <div class="h-[calc(100vh-64px)] flex chatedp-root" x-data="chatedp()">
-    <!-- Sidebar -->
-    <div class="chatedp-sidebar w-72 flex flex-col shrink-0 overflow-hidden" :class="sidebarOpen ? 'w-72' : 'w-0'" style="transition: width 0.3s ease;">
-        <!-- Sidebar Header -->
-        <div class="p-4 shrink-0">
-            <button @click="newConversation" class="sidebar-btn w-full flex items-center justify-center gap-2 text-white rounded-xl px-4 py-3 text-sm font-semibold">
-                <span class="material-symbols-outlined text-lg">add_circle</span>
-                Percakapan Baru
+    <!-- ===== Sidebar ===== -->
+    <div class="edp-sidebar flex flex-col shrink-0 overflow-hidden" :class="sidebarOpen ? '' : 'collapsed'">
+        <!-- New Chat -->
+        <div class="p-3 shrink-0">
+            <button @click="newConversation" class="new-chat-btn">
+                <span class="material-symbols-outlined text-lg" style="font-variation-settings: 'FILL' 0;">edit_square</span>
+                <span>Percakapan Baru</span>
             </button>
         </div>
 
-        <!-- Sidebar Search -->
-        <div class="px-4 pb-3 shrink-0">
-            <div class="relative">
-                <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-indigo-300 text-lg">search</span>
-                <input type="text" x-model="searchQuery" placeholder="Cari percakapan..." 
-                       class="w-full bg-white/5 border border-white/10 text-white placeholder-indigo-300/60 rounded-lg py-2 pl-9 pr-3 text-sm focus:outline-none focus:border-white/20 focus:bg-white/10 transition">
-            </div>
+        <!-- Search -->
+        <div class="px-3 pb-2 shrink-0">
+            <input type="text" x-model="searchQuery" placeholder="Cari..." class="search-box">
         </div>
 
         <!-- Conversation List -->
-        <div class="flex-1 overflow-y-auto px-3 pb-3 space-y-4">
+        <div class="flex-1 overflow-y-auto px-2 pb-3 space-y-3">
             <template x-for="(group, groupName) in filteredGroupedHistory" :key="groupName">
                 <div x-show="group.length > 0">
-                    <div class="px-2 py-2 text-[11px] font-bold text-indigo-300/70 uppercase tracking-widest" x-text="groupName"></div>
-                    <div class="space-y-1">
+                    <div class="px-3 py-2 text-[10px] font-bold uppercase tracking-[0.12em]" style="color: var(--sidebar-muted);" x-text="groupName"></div>
+                    <div class="space-y-0.5">
                         <template x-for="conv in group" :key="conv.id">
-                            <div @click="loadConversation(conv.id)" 
-                                 class="conv-item group flex items-center gap-2"
+                            <div @click="loadConversation(conv.id)"
+                                 class="conv-item"
                                  :class="conversationId === conv.id ? 'active' : ''">
-                                <span class="material-symbols-outlined text-indigo-300/60 text-base shrink-0" x-text="conversationId === conv.id ? 'chat_bubble' : 'chat_bubble_outline'"></span>
-                                <div class="flex-1 min-w-0">
-                                    <div class="truncate text-sm text-white/90 font-medium" x-text="conv.title || 'Percakapan'"></div>
-                                    <div class="text-[11px] text-indigo-300/50 mt-0.5" x-text="formatDate(conv.updated_at)"></div>
-                                </div>
-                                <button @click.stop="deleteConversation(conv.id)" class="delete-btn text-red-300/70 hover:text-red-300 p-1 rounded-md hover:bg-red-400/10 transition" title="Hapus">
-                                    <span class="material-symbols-outlined text-base">delete</span>
+                                <span class="material-symbols-outlined text-base shrink-0" style="color: var(--sidebar-muted); font-size: 18px;"
+                                      x-text="conversationId === conv.id ? 'chat_bubble' : 'chat_bubble_outline'"></span>
+                                <span class="conv-title" x-text="conv.title || 'Percakapan'"></span>
+                                <button @click.stop="deleteConversation(conv.id)" class="conv-del" title="Hapus">
+                                    <span class="material-symbols-outlined" style="font-size: 16px;">delete</span>
                                 </button>
                             </div>
                         </template>
@@ -371,67 +401,70 @@
             </template>
         </div>
 
-        <!-- Sidebar Footer -->
-        <div class="p-4 border-t border-white/5 shrink-0">
-            <div class="flex items-center gap-2 text-indigo-300/50 text-xs">
-                <span class="material-symbols-outlined text-sm">auto_awesome</span>
-                <span>Powered by AI</span>
+        <!-- Footer -->
+        <div class="p-3 shrink-0" style="border-top: 1px solid var(--sidebar-border);">
+            <div class="flex items-center gap-2" style="color: var(--sidebar-muted); font-size: 11px;">
+                <span class="material-symbols-outlined" style="font-size: 14px; font-variation-settings: 'FILL' 1;">auto_awesome</span>
+                <span>ChatEDP · Powered by AI</span>
             </div>
         </div>
     </div>
 
-    <!-- Main Content Area -->
-    <div class="flex-1 flex flex-col min-w-0">
+    <!-- ===== Main ===== -->
+    <div class="edp-main flex-1 flex flex-col min-w-0">
         <!-- Top Bar -->
-        <div class="bg-white border-b border-slate-200/80 px-6 py-3 flex justify-between items-center shrink-0">
-            <div class="flex items-center gap-3">
-                <button @click="sidebarOpen = !sidebarOpen" class="p-2 rounded-lg hover:bg-slate-100 text-slate-500 transition" title="Toggle sidebar">
-                    <span class="material-symbols-outlined text-xl">menu</span>
-                </button>
-                <div>
-                    <h1 class="text-lg font-bold text-slate-800 flex items-center gap-2">
-                        <span class="inline-flex items-center justify-center w-7 h-7 rounded-lg" style="background: linear-gradient(135deg, #6366f1, #8b5cf6);">
-                            <span class="material-symbols-outlined text-white text-base">analytics</span>
-                        </span>
-                        ChatEDP
-                    </h1>
-                </div>
-            </div>
+        <div class="edp-topbar flex items-center gap-3 shrink-0">
+            <button @click="sidebarOpen = !sidebarOpen" class="p-2 rounded-lg transition" style="color: var(--text-muted);"
+                    onmouseover="this.style.background='rgba(255,255,255,0.06)'" onmouseout="this.style.background='transparent'">
+                <span class="material-symbols-outlined text-xl">menu</span>
+            </button>
             <div class="flex items-center gap-2">
-                <span class="text-xs text-slate-400 bg-slate-100 px-3 py-1 rounded-full font-medium">Natural Language Analytics</span>
+                <span class="font-semibold" style="color: var(--text-primary); font-size: 0.9375rem;">ChatEDP</span>
+                <span style="font-size: 0.6875rem; color: var(--text-muted); background: rgba(255,255,255,0.05); padding: 2px 10px; border-radius: 20px;">Analytics</span>
             </div>
         </div>
 
-        <!-- Main Chat Area -->
-        <div class="flex-1 overflow-y-auto chat-bg" id="chat-container">
-            <div class="max-w-4xl mx-auto px-6 py-6 space-y-5">
+        <!-- Chat Scroll Area -->
+        <div class="flex-1 overflow-y-auto edp-chat-scroll" id="chat-container">
 
             <!-- Welcome State -->
             <template x-if="messages.length === 0">
-                <div class="flex flex-col items-center justify-center min-h-[60vh] animate-fadeInUp">
-                    <div class="welcome-card text-center max-w-xl w-full">
-                        <div class="welcome-icon">
-                            <span class="material-symbols-outlined text-white text-3xl" style="font-variation-settings: 'FILL' 1;">smart_toy</span>
+                <div class="msg-container">
+                    <div class="welcome-screen">
+                        <div class="welcome-logo">
+                            <span class="material-symbols-outlined text-white" style="font-size: 28px; font-variation-settings: 'FILL' 1;">auto_awesome</span>
                         </div>
-                        <h2 class="text-xl font-bold text-slate-800 mb-2">Halo! Saya ChatEDP 👋</h2>
-                        <p class="text-sm text-slate-500 mb-6">Asisten analisis data Anda. Tanyakan apa saja tentang data bisnis yang tersedia.</p>
-                        
+                        <div class="welcome-title">Ada yang bisa saya bantu?</div>
+                        <div class="welcome-subtitle">Tanyakan apa saja tentang data bisnis Anda. Saya akan menganalisis dan menyajikan hasilnya secara visual.</div>
+
                         @if(!empty($suggestedQuestions) && count($suggestedQuestions) > 0)
-                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-left">
+                            <div class="welcome-grid">
                                 @foreach($suggestedQuestions as $sq)
-                                    <button @click="setInput({{ json_encode($sq['prompt']) }}); setTimeout(() => sendMessage(), 50)" class="suggestion-chip group">
-                                        <div class="flex items-start gap-3">
-                                            <span class="material-symbols-outlined text-indigo-400 mt-0.5 text-lg shrink-0" style="font-variation-settings: 'FILL' 1;">trending_up</span>
-                                            <div>
-                                                <span class="font-semibold text-slate-700 text-sm block group-hover:text-indigo-700 transition">{{ $sq['title'] }}</span>
-                                                <span class="text-xs text-slate-400 mt-1 block">"{{ $sq['prompt'] }}"</span>
-                                            </div>
-                                        </div>
+                                    <button @click="setInput({{ json_encode($sq['prompt']) }}); setTimeout(() => sendMessage(), 50)" class="welcome-card text-left">
+                                        <div class="wc-title">{{ $sq['title'] }}</div>
+                                        <div class="wc-desc">{{ $sq['prompt'] }}</div>
                                     </button>
                                 @endforeach
                             </div>
                         @else
-                            <p class="text-sm text-slate-400 mt-2">Contoh: "Berapa total penjualan bulan ini?" atau "Top 5 customer berdasarkan revenue"</p>
+                            <div class="welcome-grid">
+                                <div class="welcome-card" @click="setInput('Berapa total penjualan bulan ini?'); setTimeout(() => sendMessage(), 50)" style="cursor:pointer;">
+                                    <div class="wc-title">💰 Total Penjualan</div>
+                                    <div class="wc-desc">Berapa total penjualan bulan ini?</div>
+                                </div>
+                                <div class="welcome-card" @click="setInput('Top 5 customer berdasarkan revenue'); setTimeout(() => sendMessage(), 50)" style="cursor:pointer;">
+                                    <div class="wc-title">🏆 Top Customer</div>
+                                    <div class="wc-desc">Top 5 customer berdasarkan revenue</div>
+                                </div>
+                                <div class="welcome-card" @click="setInput('Perbandingan penjualan per salesperson'); setTimeout(() => sendMessage(), 50)" style="cursor:pointer;">
+                                    <div class="wc-title">📊 Perbandingan Sales</div>
+                                    <div class="wc-desc">Perbandingan penjualan per salesperson</div>
+                                </div>
+                                <div class="welcome-card" @click="setInput('Tren penjualan 6 bulan terakhir'); setTimeout(() => sendMessage(), 50)" style="cursor:pointer;">
+                                    <div class="wc-title">📈 Tren Penjualan</div>
+                                    <div class="wc-desc">Tren penjualan 6 bulan terakhir</div>
+                                </div>
+                            </div>
                         @endif
                     </div>
                 </div>
@@ -439,117 +472,120 @@
 
             <!-- Message Loop -->
             <template x-for="(msg, index) in messages" :key="index">
-                <div class="animate-fadeInUp">
+                <div>
                     <!-- User Message -->
                     <template x-if="msg.role === 'user'">
-                        <div class="flex items-end justify-end gap-3 mb-1">
-                            <div class="msg-user px-5 py-3 max-w-[75%]">
-                                <div class="text-sm leading-relaxed" x-text="msg.content"></div>
-                            </div>
-                            <div class="avatar-user w-8 h-8 rounded-full flex items-center justify-center shrink-0">
-                                <span class="material-symbols-outlined text-white text-base">person</span>
+                        <div class="msg-row user">
+                            <div class="msg-container">
+                                <div class="msg-body">
+                                    <div class="msg-bubble" x-text="msg.content"></div>
+                                </div>
                             </div>
                         </div>
                     </template>
 
                     <!-- Assistant Message -->
                     <template x-if="msg.role === 'assistant'">
-                        <div class="flex items-start gap-3 mb-1">
-                            <div class="avatar-assistant w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-1">
-                                <span class="material-symbols-outlined text-white text-base" style="font-variation-settings: 'FILL' 1;">smart_toy</span>
-                            </div>
-                            <div class="max-w-[85%] space-y-3">
-                                <!-- Text content -->
-                                <template x-if="msg.content && !msg.content.startsWith('⚠️')">
-                                    <div class="msg-assistant px-5 py-4">
-                                        <div class="prose-custom text-sm leading-relaxed" x-html="formatMessage(msg.content)"></div>
+                        <div class="msg-row assistant">
+                            <div class="msg-container">
+                                <div class="msg-body">
+                                    <!-- Avatar -->
+                                    <div class="msg-avatar">
+                                        <span class="material-symbols-outlined text-white" style="font-size: 18px; font-variation-settings: 'FILL' 1;">auto_awesome</span>
                                     </div>
-                                </template>
+                                    <!-- Content -->
+                                    <div class="msg-text">
+                                        <!-- Normal text -->
+                                        <template x-if="msg.content && !msg.content.startsWith('⚠️')">
+                                            <div x-html="formatMessage(msg.content)"></div>
+                                        </template>
 
-                                <!-- Error content -->
-                                <template x-if="msg.content && msg.content.startsWith('⚠️')">
-                                    <div class="msg-error flex items-start gap-2">
-                                        <span class="material-symbols-outlined text-red-500 text-lg mt-0.5 shrink-0">error</span>
-                                        <div class="text-sm" x-text="msg.content.replace('⚠️ ', '')"></div>
-                                    </div>
-                                </template>
+                                        <!-- Error -->
+                                        <template x-if="msg.content && msg.content.startsWith('⚠️')">
+                                            <div class="msg-error-inline">
+                                                <span class="material-symbols-outlined" style="font-size: 18px; color: #f87171; flex-shrink: 0; margin-top: 1px;">error</span>
+                                                <span x-text="msg.content.replace('⚠️ ', '')"></span>
+                                            </div>
+                                        </template>
 
-                                <!-- Smart Suggestions -->
-                                <template x-if="msg.metadata && msg.metadata.suggestions && msg.metadata.suggestions.length > 0">
-                                    <div class="smart-suggestion">
-                                        <p class="text-xs font-bold text-indigo-600 uppercase tracking-wider flex items-center gap-1.5 mb-1">
-                                            <span class="material-symbols-outlined text-sm" style="font-variation-settings: 'FILL' 1;">lightbulb</span>
-                                            Mungkin Anda bermaksud
-                                        </p>
-                                        <template x-for="(sugg, sIdx) in msg.metadata.suggestions" :key="sIdx">
-                                            <button @click="setInput(sugg.prompt); setTimeout(() => sendMessage(), 50)">
-                                                <span class="font-semibold text-sm text-indigo-700 block" x-text="sugg.title"></span>
-                                                <span class="text-xs text-slate-500" x-text="'\"' + sugg.prompt + '\"'"></span>
-                                            </button>
+                                        <!-- Smart Suggestions -->
+                                        <template x-if="msg.metadata && msg.metadata.suggestions && msg.metadata.suggestions.length > 0">
+                                            <div class="smart-sugg">
+                                                <p style="font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent-light); display: flex; align-items: center; gap: 6px;">
+                                                    <span class="material-symbols-outlined" style="font-size: 14px; font-variation-settings: 'FILL' 1;">lightbulb</span>
+                                                    Mungkin Anda bermaksud
+                                                </p>
+                                                <template x-for="(sugg, sIdx) in msg.metadata.suggestions" :key="sIdx">
+                                                    <button @click="setInput(sugg.prompt); setTimeout(() => sendMessage(), 50)" class="smart-sugg-btn">
+                                                        <span style="font-weight: 600; font-size: 0.8125rem; color: var(--accent-light); display: block;" x-text="sugg.title"></span>
+                                                        <span style="font-size: 0.75rem; color: var(--text-muted);" x-text="'\"' + sugg.prompt + '\"'"></span>
+                                                    </button>
+                                                </template>
+                                            </div>
+                                        </template>
+
+                                        <!-- Results Table -->
+                                        <template x-if="msg.results && msg.results.length > 0">
+                                            <div>
+                                                <div class="data-card">
+                                                    <div class="overflow-x-auto">
+                                                        <table>
+                                                            <thead>
+                                                                <tr>
+                                                                    <template x-if="msg.metadata && msg.metadata.presentation && msg.metadata.presentation.columns">
+                                                                        <template x-for="col in msg.metadata.presentation.columns" :key="col.key">
+                                                                            <th x-text="col.label"></th>
+                                                                        </template>
+                                                                    </template>
+                                                                    <template x-if="!(msg.metadata && msg.metadata.presentation && msg.metadata.presentation.columns)">
+                                                                        <template x-for="col in Object.keys(msg.results[0])" :key="col">
+                                                                            <th x-text="col"></th>
+                                                                        </template>
+                                                                    </template>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                <template x-for="(row, idx) in msg.results" :key="idx">
+                                                                    <tr>
+                                                                        <template x-if="msg.metadata && msg.metadata.presentation && msg.metadata.presentation.columns">
+                                                                            <template x-for="col in msg.metadata.presentation.columns" :key="col.key">
+                                                                                <td x-text="typeof row[col.key] === 'object' && row[col.key] !== null && 'formatted_value' in row[col.key] ? row[col.key].formatted_value : row[col.key]"></td>
+                                                                            </template>
+                                                                        </template>
+                                                                        <template x-if="!(msg.metadata && msg.metadata.presentation && msg.metadata.presentation.columns)">
+                                                                            <template x-for="col in Object.keys(row)" :key="col">
+                                                                                <td x-text="typeof row[col] === 'object' && row[col] !== null && 'formatted_value' in row[col] ? row[col].formatted_value : row[col]"></td>
+                                                                            </template>
+                                                                        </template>
+                                                                    </tr>
+                                                                </template>
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                </div>
+
+                                                <!-- Export Actions -->
+                                                <div class="mt-3 flex gap-2 flex-wrap" x-show="msg.export_token">
+                                                    <a :href="`/api/chatedp/export?token=` + msg.export_token" target="_blank" class="export-pill excel">
+                                                        <span class="material-symbols-outlined" style="font-size: 14px;">download</span>
+                                                        Export Excel
+                                                    </a>
+                                                    <a :href="`/api/chatedp/report?token=` + msg.export_token" target="_blank" class="export-pill report">
+                                                        <span class="material-symbols-outlined" style="font-size: 14px;">summarize</span>
+                                                        Report
+                                                    </a>
+                                                </div>
+                                            </div>
+                                        </template>
+
+                                        <!-- Chart -->
+                                        <template x-if="msg.chart_config">
+                                            <div class="chart-card">
+                                                <canvas :id="'chart-' + index" class="w-full" style="height: 280px;"></canvas>
+                                            </div>
                                         </template>
                                     </div>
-                                </template>
-
-                                <!-- Results Table -->
-                                <template x-if="msg.results && msg.results.length > 0">
-                                    <div>
-                                        <div class="results-card">
-                                            <div class="overflow-x-auto">
-                                                <table class="w-full text-left border-collapse">
-                                                    <thead>
-                                                        <tr>
-                                                            <template x-if="msg.metadata && msg.metadata.presentation && msg.metadata.presentation.columns">
-                                                                <template x-for="col in msg.metadata.presentation.columns" :key="col.key">
-                                                                    <th x-text="col.label"></th>
-                                                                </template>
-                                                            </template>
-                                                            <template x-if="!(msg.metadata && msg.metadata.presentation && msg.metadata.presentation.columns)">
-                                                                <template x-for="col in Object.keys(msg.results[0])" :key="col">
-                                                                    <th x-text="col"></th>
-                                                                </template>
-                                                            </template>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody>
-                                                        <template x-for="(row, idx) in msg.results" :key="idx">
-                                                            <tr>
-                                                                <template x-if="msg.metadata && msg.metadata.presentation && msg.metadata.presentation.columns">
-                                                                    <template x-for="col in msg.metadata.presentation.columns" :key="col.key">
-                                                                        <td x-text="typeof row[col.key] === 'object' && row[col.key] !== null && 'formatted_value' in row[col.key] ? row[col.key].formatted_value : row[col.key]"></td>
-                                                                    </template>
-                                                                </template>
-                                                                <template x-if="!(msg.metadata && msg.metadata.presentation && msg.metadata.presentation.columns)">
-                                                                    <template x-for="col in Object.keys(row)" :key="col">
-                                                                        <td x-text="typeof row[col] === 'object' && row[col] !== null && 'formatted_value' in row[col] ? row[col].formatted_value : row[col]"></td>
-                                                                    </template>
-                                                                </template>
-                                                            </tr>
-                                                        </template>
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        </div>
-
-                                        <!-- Export Actions -->
-                                        <div class="mt-3 flex gap-2 flex-wrap" x-show="msg.export_token">
-                                            <a :href="`/api/chatedp/export?token=` + msg.export_token" target="_blank" class="export-btn export-btn-excel">
-                                                <span class="material-symbols-outlined text-sm">download</span>
-                                                Export Excel
-                                            </a>
-                                            <a :href="`/api/chatedp/report?token=` + msg.export_token" target="_blank" class="export-btn export-btn-report">
-                                                <span class="material-symbols-outlined text-sm">summarize</span>
-                                                Report
-                                            </a>
-                                        </div>
-                                    </div>
-                                </template>
-
-                                <!-- Chart -->
-                                <template x-if="msg.chart_config">
-                                    <div class="chart-container">
-                                        <canvas :id="'chart-' + index" class="w-full" style="height: 280px;"></canvas>
-                                    </div>
-                                </template>
+                                </div>
                             </div>
                         </div>
                     </template>
@@ -557,45 +593,41 @@
             </template>
 
             <!-- Loading Indicator -->
-            <div x-show="isLoading" class="flex items-start gap-3 animate-fadeInUp">
-                <div class="avatar-assistant w-8 h-8 rounded-full flex items-center justify-center shrink-0">
-                    <span class="material-symbols-outlined text-white text-base" style="font-variation-settings: 'FILL' 1;">smart_toy</span>
-                </div>
-                <div class="msg-assistant px-5 py-4">
-                    <div class="flex items-center gap-3">
-                        <div class="flex gap-1.5">
-                            <div class="loading-dot"></div>
-                            <div class="loading-dot"></div>
-                            <div class="loading-dot"></div>
+            <div x-show="isLoading" class="msg-row assistant" style="animation: msgFade 0.3s ease-out;">
+                <div class="msg-container">
+                    <div class="msg-body" style="display:flex;gap:16px;align-items:flex-start;">
+                        <div class="msg-avatar">
+                            <span class="material-symbols-outlined text-white" style="font-size: 18px; font-variation-settings: 'FILL' 1;">auto_awesome</span>
                         </div>
-                        <span class="text-sm text-slate-400 font-medium">Menganalisis data...</span>
+                        <div style="padding: 6px 0;">
+                            <div class="typing-indicator">
+                                <div class="typing-dot"></div>
+                                <div class="typing-dot"></div>
+                                <div class="typing-dot"></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            </div>
         </div>
 
         <!-- Input Area -->
-        <div class="bg-white/80 backdrop-blur-sm border-t border-slate-200/80 p-4 shrink-0">
-            <form @submit.prevent="sendMessage" class="max-w-4xl mx-auto">
-                <div class="input-wrapper flex items-center gap-3 px-4 py-2">
-                    <span class="material-symbols-outlined text-slate-300 text-xl shrink-0">chat</span>
-                    <input type="text" x-model="input" placeholder="Tanyakan sesuatu tentang data Anda..." 
-                           class="flex-1 py-2 text-sm"
-                           :disabled="isLoading"
-                           @keydown.enter="if(!$event.shiftKey) { $event.preventDefault(); sendMessage(); }">
+        <div class="edp-input-area shrink-0">
+            <form @submit.prevent="sendMessage">
+                <div class="edp-input-box">
+                    <textarea x-model="input"
+                              placeholder="Tanyakan sesuatu tentang data Anda..."
+                              :disabled="isLoading"
+                              rows="1"
+                              @input="autoResize($event.target)"
+                              @keydown.enter="if(!$event.shiftKey) { $event.preventDefault(); sendMessage(); }"></textarea>
                     <button type="submit" :disabled="!input.trim() || isLoading" class="send-btn">
-                        <span class="material-symbols-outlined text-lg">send</span>
+                        <span class="material-symbols-outlined" style="font-size: 20px;">arrow_upward</span>
                     </button>
                 </div>
-                <div class="flex items-center justify-between mt-2 px-2">
-                    <span class="text-[11px] text-slate-400">
-                        <kbd class="px-1.5 py-0.5 bg-slate-100 rounded text-[10px] font-semibold">Enter</kbd> untuk kirim
-                    </span>
-                    <span class="text-[11px] text-slate-400">AI bisa membuat kesalahan. Periksa informasi penting.</span>
-                </div>
             </form>
+            <div class="edp-disclaimer">ChatEDP dapat membuat kesalahan. Periksa informasi penting.</div>
         </div>
     </div>
 </div>
@@ -633,6 +665,11 @@
                     filtered[key] = convs.filter(c => (c.title || '').toLowerCase().includes(q));
                 }
                 return filtered;
+            },
+
+            autoResize(el) {
+                el.style.height = 'auto';
+                el.style.height = Math.min(el.scrollHeight, 200) + 'px';
             },
 
             loadHistory() {
@@ -680,7 +717,7 @@
                 if (this.conversationId === id) return;
                 this.isLoading = true;
                 this.messages = [];
-                
+
                 fetch(`/api/chatedp/conversations/${id}`, {
                     headers: { 'Accept': 'application/json' }
                 })
@@ -692,7 +729,7 @@
                         try {
                             parsedMeta = typeof m.metadata === 'string' ? JSON.parse(m.metadata) : m.metadata;
                         } catch(e) {}
-                        
+
                         return {
                             role: m.role,
                             content: m.content,
@@ -739,7 +776,7 @@
                 const diff = now - date;
                 const mins = Math.floor(diff / 60000);
                 const hours = Math.floor(diff / 3600000);
-                
+
                 if (mins < 1) return 'Baru saja';
                 if (mins < 60) return `${mins} menit lalu`;
                 if (hours < 24) return `${hours} jam lalu`;
@@ -778,7 +815,11 @@
                 this.messages.push({ role: 'user', content: userText });
                 this.input = '';
                 this.isLoading = true;
-                
+
+                // Reset textarea height
+                const ta = document.querySelector('.edp-input-box textarea');
+                if (ta) ta.style.height = 'auto';
+
                 this.scrollToBottom();
 
                 fetch('/api/chatedp/messages', {
@@ -795,7 +836,7 @@
                 .then(res => res.json())
                 .then(data => {
                     this.isLoading = false;
-                    
+
                     if (data.error) {
                         this.messages.push({ role: 'assistant', content: '⚠️ ' + data.error });
                     } else {
@@ -805,15 +846,15 @@
                             parsedMeta = typeof data.message.metadata === 'string' ? JSON.parse(data.message.metadata) : data.message.metadata;
                         } catch(e) {}
 
-                        this.messages.push({ 
-                            role: 'assistant', 
+                        this.messages.push({
+                            role: 'assistant',
                             content: data.message.content,
                             results: data.results,
                             export_token: data.export_token,
                             chart_config: data.chart_config,
                             metadata: parsedMeta
                         });
-                        
+
                         // Render chart if present after DOM updates
                         if (data.chart_config && data.results && data.results.length > 0) {
                             setTimeout(() => {
@@ -822,7 +863,7 @@
                         }
                     }
                     this.scrollToBottom();
-                    this.loadHistory(); // Refresh sidebar
+                    this.loadHistory();
                 })
                 .catch(err => {
                     this.isLoading = false;
@@ -842,7 +883,7 @@
                 if (!text) return '';
                 // Bold
                 let formatted = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-                // Ordered list items (numbered)
+                // Ordered list items
                 formatted = formatted.replace(/^(\d+)\.\s/gm, '<li style="list-style: decimal inside; margin-left: 0;">');
                 // Newlines to <br>
                 formatted = formatted.replace(/\n/g, '<br>');
@@ -863,8 +904,8 @@
                 });
 
                 const gradient = canvas.getContext('2d').createLinearGradient(0, 0, 0, 280);
-                gradient.addColorStop(0, 'rgba(99, 102, 241, 0.6)');
-                gradient.addColorStop(1, 'rgba(139, 92, 246, 0.1)');
+                gradient.addColorStop(0, 'rgba(124, 58, 237, 0.6)');
+                gradient.addColorStop(1, 'rgba(124, 58, 237, 0.05)');
 
                 new Chart(canvas, {
                     type: config.type || 'bar',
@@ -874,9 +915,9 @@
                             label: config.y_label || config.y_field,
                             data: values,
                             backgroundColor: gradient,
-                            borderColor: 'rgb(99, 102, 241)',
+                            borderColor: 'rgb(124, 58, 237)',
                             borderWidth: 2,
-                            borderRadius: 8,
+                            borderRadius: 6,
                             borderSkipped: false,
                         }]
                     },
@@ -889,27 +930,27 @@
                                 position: 'top',
                                 labels: {
                                     font: { family: 'Inter', size: 12, weight: '500' },
-                                    color: '#64748b',
+                                    color: '#8e8e8e',
                                     usePointStyle: true,
                                     pointStyle: 'rectRounded',
                                 }
                             },
                             tooltip: {
-                                backgroundColor: '#1e293b',
+                                backgroundColor: '#1e1e1e',
                                 titleFont: { family: 'Inter', size: 13 },
                                 bodyFont: { family: 'Inter', size: 12 },
-                                cornerRadius: 10,
+                                cornerRadius: 8,
                                 padding: 12,
                             }
                         },
                         scales: {
                             x: {
                                 grid: { display: false },
-                                ticks: { font: { family: 'Inter', size: 11 }, color: '#94a3b8' }
+                                ticks: { font: { family: 'Inter', size: 11 }, color: '#8e8e8e' }
                             },
                             y: {
-                                grid: { color: '#f1f5f9' },
-                                ticks: { font: { family: 'Inter', size: 11 }, color: '#94a3b8' },
+                                grid: { color: 'rgba(255,255,255,0.04)' },
+                                ticks: { font: { family: 'Inter', size: 11 }, color: '#8e8e8e' },
                                 beginAtZero: true
                             }
                         }

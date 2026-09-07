@@ -441,43 +441,75 @@ class ChatEDPController extends Controller
             $this->costGuard->guard($validatedPlan);
 
             // 5. Query Library Lookup & Query Compiler or Repository Reuse
-            $libraryHit = $this->libraryService->lookup($validatedPlan, $connection, $domainContext);
-            $matchedRepository = null;
-            $executionSource = 'compiler';
+            try {
+                $libraryHit = $this->libraryService->lookup($validatedPlan, $connection, $domainContext);
+                $matchedRepository = null;
+                $executionSource = 'compiler';
 
-            if ($libraryHit) {
-                // Library HIT: Validated QueryRepository definition loaded directly without QueryCompilerService
-                $executionSource = 'library_hit';
-                $repo = $libraryHit->queryRepository;
-                $matchedRepository = $repo;
-                $reuseMatch = $this->executor->findCompatibleRepositoryQuery($validatedPlan, $connection);
-                
-                if ($reuseMatch['matched']) {
-                    $sql = $reuseMatch['sql'];
-                    $bindings = $reuseMatch['bindings'];
+                if ($libraryHit) {
+                    // Library HIT: Validated QueryRepository definition loaded directly without QueryCompilerService
+                    $executionSource = 'library_hit';
+                    $repo = $libraryHit->queryRepository;
+                    $matchedRepository = $repo;
+                    $reuseMatch = $this->executor->findCompatibleRepositoryQuery($validatedPlan, $connection);
+                    
+                    if ($reuseMatch['matched']) {
+                        $sql = $reuseMatch['sql'];
+                        $bindings = $reuseMatch['bindings'];
+                    } else {
+                        $sql = $repo->sql_text;
+                        $bindings = [];
+                    }
+                    
+                    $libraryHit->recordHit();
                 } else {
-                    $sql = $repo->sql_text;
-                    $bindings = [];
+                    // Library MISS: Check compatible repository or compile SQL fresh
+                    $reuseMatch = $this->executor->findCompatibleRepositoryQuery($validatedPlan, $connection);
+                    
+                    if ($reuseMatch['matched']) {
+                        $executionSource = 'repository_match';
+                        $sql = $reuseMatch['sql'];
+                        $bindings = $reuseMatch['bindings'];
+                        $matchedRepository = QueryRepository::find($reuseMatch['repository_id']);
+                    } else {
+                        [$sql, $bindings] = $this->compiler->compile($validatedPlan, $connection);
+                    }
                 }
+
+                // 6. Secure Execution
+                $executionResult = $this->executor->executeForAnalytics($sql, $bindings, $validatedPlan->limit ?? 500);
+                $results = $executionResult['data'];
+            } catch (\App\Exceptions\AI\SemanticAmbiguityException $e) {
+                $assistantMessage = AiMessage::create([
+                    'conversation_id' => $conversation->id,
+                    'role' => 'assistant',
+                    'content' => $e->getMessage(),
+                    'metadata' => ['intent' => 'semantic_ambiguity']
+                ]);
                 
-                $libraryHit->recordHit();
-            } else {
-                // Library MISS: Check compatible repository or compile SQL fresh
-                $reuseMatch = $this->executor->findCompatibleRepositoryQuery($validatedPlan, $connection);
+                return response()->json([
+                    'message' => $assistantMessage,
+                    'results' => [],
+                    'export_token' => null,
+                    'chart_config' => null
+                ]);
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error('Query Compilation/Execution Failed: ' . $e->getMessage());
                 
-                if ($reuseMatch['matched']) {
-                    $executionSource = 'repository_match';
-                    $sql = $reuseMatch['sql'];
-                    $bindings = $reuseMatch['bindings'];
-                    $matchedRepository = QueryRepository::find($reuseMatch['repository_id']);
-                } else {
-                    [$sql, $bindings] = $this->compiler->compile($validatedPlan, $connection);
-                }
+                $assistantMessage = AiMessage::create([
+                    'conversation_id' => $conversation->id,
+                    'role' => 'assistant',
+                    'content' => 'Maaf, terjadi kesalahan teknis saat menerjemahkan atau mengeksekusi kueri Anda: ' . $e->getMessage(),
+                    'metadata' => ['intent' => 'error']
+                ]);
+                
+                return response()->json([
+                    'message' => $assistantMessage,
+                    'results' => [],
+                    'export_token' => null,
+                    'chart_config' => null
+                ]);
             }
-
-            // 6. Secure Execution
-            $executionResult = $this->executor->executeForAnalytics($sql, $bindings, $validatedPlan->limit ?? 500);
-            $results = $executionResult['data'];
 
             // Promote to Query Library if backed by an authoritative QueryRepository definition
             if ($matchedRepository && !$libraryHit) {
