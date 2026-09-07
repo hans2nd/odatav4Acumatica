@@ -147,6 +147,11 @@ class SyncService
                     }
                 }
 
+                if ($lastModifiedCol && !\Illuminate\Support\Facades\Schema::connection($destConnection)->hasColumn($tableName, $lastModifiedCol)) {
+                    Log::warning("Sync [{$entityKey}] Session [{$workerId}]: Watermark column '{$lastModifiedCol}' not found in table '{$tableName}'. Proceeding without watermark filter.");
+                    $lastModifiedCol = null;
+                }
+
                 if ($lastModifiedCol) {
                     $maxModifiedStr = DB::connection($destConnection)->table($tableName)->max($lastModifiedCol);
                     if ($maxModifiedStr) {

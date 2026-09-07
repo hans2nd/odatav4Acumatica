@@ -83,10 +83,10 @@ class AppServiceProvider extends ServiceProvider
             $registry = new \App\Services\ChangeDetection\Strategies\ComparisonStrategyRegistry();
             $registry->register('primary_key', new \App\Services\ChangeDetection\Strategies\PrimaryKeyComparisonStrategy());
             $registry->register('timestamp', new \App\Services\ChangeDetection\Strategies\TimestampComparisonStrategy());
-            
+
             $fingerprintGenerator = $app->make(\App\Services\ChangeDetection\Contracts\FingerprintGeneratorInterface::class);
             $registry->register('fingerprint', new \App\Services\ChangeDetection\Strategies\FingerprintComparisonStrategy($fingerprintGenerator));
-            
+
             return $registry;
         });
 
@@ -107,27 +107,27 @@ class AppServiceProvider extends ServiceProvider
 
         $this->app->singleton(\App\Services\ProcessingPipeline\Stages\PipelineStageRegistry::class, function ($app) {
             $registry = new \App\Services\ProcessingPipeline\Stages\PipelineStageRegistry();
-            
+
             // Prioritas 10: Mapper
             $mapper = $app->make(\App\Services\Mappers\Contracts\DataMapperInterface::class);
             $registry->register(new \App\Services\ProcessingPipeline\Stages\MapperStage($mapper), 10);
-            
+
             // Prioritas 20: Validator
             $validator = $app->make(\App\Services\SchemaValidators\Contracts\SchemaValidatorInterface::class);
             $registry->register(new \App\Services\ProcessingPipeline\Stages\ValidatorStage($validator), 20);
-            
+
             // Prioritas 30: Change Detection
             $detector = $app->make(\App\Services\ChangeDetection\Contracts\ChangeDetectionEngineInterface::class);
             $registry->register(new \App\Services\ProcessingPipeline\Stages\ChangeDetectionStage($detector), 30);
-            
+
             // Prioritas 40: Batch Planner
             $planner = $app->make(\App\Services\BatchPlanning\Contracts\BatchPlannerInterface::class);
             $registry->register(new \App\Services\ProcessingPipeline\Stages\BatchPlannerStage($planner), 40);
-            
+
             // Prioritas 50: Batch Execution
             $engine = $app->make(\App\Services\BatchProcessing\Contracts\BatchProcessingEngineInterface::class);
             $registry->register(new \App\Services\ProcessingPipeline\Stages\BatchExecutionStage($engine), 50);
-            
+
             return $registry;
         });
 
@@ -172,20 +172,20 @@ class AppServiceProvider extends ServiceProvider
 
         $this->app->singleton(\App\Services\Persistence\DeleteStrategyResolver::class, function ($app) {
             $resolver = new \App\Services\Persistence\DeleteStrategyResolver();
-            
+
             $adapterResolver = $app->make(\App\Services\Persistence\PersistenceAdapterResolver::class);
-            
+
             $resolver->register(\App\Services\Persistence\DeletePolicy::HARD, new \App\Services\Persistence\Strategies\HardDeleteStrategy($adapterResolver));
             $resolver->register(\App\Services\Persistence\DeletePolicy::SOFT, new \App\Services\Persistence\Strategies\SoftDeleteStrategy($adapterResolver));
             $resolver->register(\App\Services\Persistence\DeletePolicy::ARCHIVE, new \App\Services\Persistence\Strategies\ArchiveDeleteStrategy($adapterResolver));
             $resolver->register(\App\Services\Persistence\DeletePolicy::IGNORE, new \App\Services\Persistence\Strategies\IgnoreDeleteStrategy());
-            
+
             return $resolver;
         });
 
         $this->app->singleton(\App\Services\Persistence\Strategies\Conflicts\ConflictResolutionStrategyRegistry::class, function ($app) {
             $registry = new \App\Services\Persistence\Strategies\Conflicts\ConflictResolutionStrategyRegistry();
-            
+
             $registry->register(\App\Services\Persistence\ConflictResolutionPolicy::LAST_WRITE_WINS, new \App\Services\Persistence\Strategies\Conflicts\LastWriteWinsStrategy());
             $registry->register(\App\Services\Persistence\ConflictResolutionPolicy::FIRST_WRITE_WINS, new \App\Services\Persistence\Strategies\Conflicts\FirstWriteWinsStrategy());
             $registry->register(\App\Services\Persistence\ConflictResolutionPolicy::SOURCE_PRIORITY, new \App\Services\Persistence\Strategies\Conflicts\LastWriteWinsStrategy()); // Alias Last Write
@@ -194,7 +194,7 @@ class AppServiceProvider extends ServiceProvider
             $registry->register(\App\Services\Persistence\ConflictResolutionPolicy::VERSION_COMPARISON, new \App\Services\Persistence\Strategies\Conflicts\VersionComparisonStrategy());
             $registry->register(\App\Services\Persistence\ConflictResolutionPolicy::SKIP_CONFLICT, new \App\Services\Persistence\Strategies\Conflicts\SkipConflictStrategy());
             $registry->register(\App\Services\Persistence\ConflictResolutionPolicy::FAIL_FAST, new \App\Services\Persistence\Strategies\Conflicts\FailFastStrategy());
-            
+
             return $registry;
         });
 
@@ -223,7 +223,7 @@ class AppServiceProvider extends ServiceProvider
 
         $this->app->singleton(\App\Services\Persistence\Pipeline\PersistenceStageRegistry::class, function ($app) {
             $registry = new \App\Services\Persistence\Pipeline\PersistenceStageRegistry();
-            
+
             // Urutan Pipa: Transaksi Membungkus -> Konflik -> Hapus -> Sisip
             $registry->addStage($app->make(\App\Services\Persistence\Pipeline\Stages\TransactionStage::class));
             $registry->addStage($app->make(\App\Services\Persistence\Pipeline\Stages\ConflictResolutionStage::class));
@@ -298,7 +298,7 @@ class AppServiceProvider extends ServiceProvider
 
         $this->app->singleton(\App\Services\Reliability\Pipeline\ReliabilityStageRegistry::class, function ($app) {
             $registry = new \App\Services\Reliability\Pipeline\ReliabilityStageRegistry();
-            
+
             // Urutan Pipa Keandalan: Klasifikasi -> Retry -> Resume
             $registry->addStage($app->make(\App\Services\Reliability\Pipeline\Stages\FailureClassificationStage::class));
             $registry->addStage($app->make(\App\Services\Reliability\Pipeline\Stages\RetryPolicyStage::class));
@@ -321,7 +321,7 @@ class AppServiceProvider extends ServiceProvider
 
         $this->app->singleton(\App\Services\Orchestration\SynchronizationStageRegistry::class, function ($app) {
             $registry = new \App\Services\Orchestration\SynchronizationStageRegistry();
-            
+
             // Urutan Orkestrasi End-to-End
             $registry->addStage($app->make(\App\Services\Orchestration\Stages\IncrementalCoordinationStage::class));
             $registry->addStage($app->make(\App\Services\Orchestration\Stages\ProcessingPipelineStage::class));
@@ -340,7 +340,7 @@ class AppServiceProvider extends ServiceProvider
         // Scheduler Engine Bindings
         $this->app->singleton(\App\Services\Scheduling\ScheduleRegistry::class, function ($app) {
             $registry = new \App\Services\Scheduling\ScheduleRegistry();
-            
+
             $registry->registerPolicy(new \App\Services\Scheduling\Policies\CronSchedulePolicy());
             $registry->registerPolicy(new \App\Services\Scheduling\Policies\FixedIntervalSchedulePolicy());
             $registry->registerPolicy(new \App\Services\Scheduling\Policies\ManualTriggerPolicy());
@@ -356,7 +356,7 @@ class AppServiceProvider extends ServiceProvider
         // Observability Foundation Bindings
         $this->app->singleton(\App\Services\Observability\ObservabilityRegistry::class, function ($app) {
             $registry = new \App\Services\Observability\ObservabilityRegistry();
-            
+
             // Registrasi provider bawaan (Ke Log)
             $registry->registerProvider(new \App\Services\Observability\Providers\LogObservabilityProvider());
 
@@ -372,7 +372,7 @@ class AppServiceProvider extends ServiceProvider
         // Monitoring Engine Bindings
         $this->app->singleton(\App\Services\Monitoring\MonitoringRegistry::class, function ($app) {
             $registry = new \App\Services\Monitoring\MonitoringRegistry();
-            
+
             // Daftarkan aturan diagnostik bawaan
             $registry->registerRule(new \App\Services\Monitoring\Rules\RepeatedFailureRule());
             $registry->registerRule(new \App\Services\Monitoring\Rules\StalledExecutionRule());
@@ -383,7 +383,7 @@ class AppServiceProvider extends ServiceProvider
         // Monitoring Engine Bindings
         $this->app->singleton(\App\Services\Monitoring\MonitoringRegistry::class, function ($app) {
             $registry = new \App\Services\Monitoring\MonitoringRegistry();
-            
+
             // Daftarkan aturan diagnostik bawaan
             $registry->registerRule(new \App\Services\Monitoring\Rules\RepeatedFailureRule());
             $registry->registerRule(new \App\Services\Monitoring\Rules\StalledExecutionRule());
@@ -399,7 +399,7 @@ class AppServiceProvider extends ServiceProvider
         // Metrics & Telemetry Engine Bindings
         $this->app->singleton(\App\Services\Telemetry\MetricRegistry::class, function ($app) {
             $registry = new \App\Services\Telemetry\MetricRegistry();
-            
+
             // Registrasi Exporter bawaan (Null/Hampa)
             $registry->registerExporter(new \App\Services\Telemetry\Exporters\NullExporter());
 
@@ -423,7 +423,7 @@ class AppServiceProvider extends ServiceProvider
         // Alerting & Notification Engine Bindings
         $this->app->singleton(\App\Services\Alerting\AlertRegistry::class, function ($app) {
             $registry = new \App\Services\Alerting\AlertRegistry();
-            
+
             // Registrasi aturan deteksi
             $registry->registerRule(new \App\Services\Alerting\Rules\ExecutionFailureRule());
             $registry->registerRule(new \App\Services\Alerting\Rules\MemoryThresholdRule());
@@ -450,6 +450,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        if (config('app.env') === 'production') {
+            \Illuminate\Support\Facades\URL::forceScheme('https');
+        }
+
         try {
             // Only proceed if the connections table exists
             if (!\Illuminate\Support\Facades\Schema::hasTable('connections')) {
