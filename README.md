@@ -15,6 +15,12 @@ A powerful synchronization engine built on Laravel to bridge Acumatica ERP (ODat
 
 ## Changelog
 
+### v1.4.3 (ChatEDP Intelligence & UI/UX Overhaul)
+- **Feature: Modern Conversational UI**: Completely redesigned ChatEDP (`resources/views/chatedp/index.blade.php`) with a premium glassmorphism aesthetic, gradient charts, avatar-based chat bubbles, and smooth fade-in animations.
+- **Feature: Chat History Management**: Implemented a `DELETE` endpoint (`/api/chatedp/conversations/{id}`) and sidebar UI to allow users to permanently delete chat histories.
+- **Bugfix: Semantic Alias Resolution for Sorting**: Fixed a critical SQL exception (`Unknown column 'X_SUM' in 'order clause'`) in `QueryValidatorService`. The validator now correctly uses the generated semantic alias rather than attempting to sort by the physical column name when interpreting aggregated metrics.
+- **Enhancement: Dynamic Narrative Sizing**: Increased the hardcoded limit for LLM narrative context in `ChatEDPController` from 3 to 10 rows. This ensures that when users request "Top 5" or "Top 10", the AI actually narrates all requested items rather than truncating its response.
+
 ### v1.4.2 (Default Migrations & Seeders Standardization)
 - **Menu & Seeder Synchronization**: Standardized `DefaultMenuSeeder` and `MenuSeeder` to include all modern application modules:
   - **Dashboard**: `dashboard`
