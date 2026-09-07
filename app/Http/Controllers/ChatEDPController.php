@@ -14,6 +14,7 @@ use App\Services\AI\QueryCostGuardService;
 use App\Services\AI\QueryCompilerService;
 use App\Services\AI\QueryLibraryService;
 use App\Services\AI\OpenRouterClient;
+use App\Services\AI\SemanticLearningService;
 use App\Models\QueryRepository;
 use App\Services\QueryRepositoryService;
 use Illuminate\Support\Facades\Cache;
@@ -28,6 +29,7 @@ class ChatEDPController extends Controller
     protected $libraryService;
     protected $executor;
     protected $openRouter;
+    protected $learningService;
 
     public function __construct(
         QueryPlannerService $planner,
@@ -36,7 +38,8 @@ class ChatEDPController extends Controller
         QueryCompilerService $compiler,
         QueryLibraryService $libraryService,
         QueryRepositoryService $executor,
-        OpenRouterClient $openRouter
+        OpenRouterClient $openRouter,
+        SemanticLearningService $learningService
     ) {
         $this->planner = $planner;
         $this->validator = $validator;
@@ -45,6 +48,7 @@ class ChatEDPController extends Controller
         $this->libraryService = $libraryService;
         $this->executor = $executor;
         $this->openRouter = $openRouter;
+        $this->learningService = $learningService;
     }
 
     public function index(Request $request)
@@ -352,27 +356,67 @@ class ChatEDPController extends Controller
             }
 
             // 3. Validation and Table Discovery
-            try {
-                $validatedPlan = $this->validator->validate($plan, $connection, $domainContext);
-            } catch (\App\Exceptions\AI\SemanticAmbiguityException $e) {
-                $duration = microtime(true) - $startTime;
-                
-                $assistantMessage = AiMessage::create([
-                    'conversation_id' => $conversation->id,
-                    'role' => 'assistant',
-                    'content' => $e->getMessage(),
-                    'metadata' => ['intent' => 'semantic_ambiguity']
-                ]);
-                
-                return response()->json([
-                    'message' => $assistantMessage,
-                    'results' => [],
-                    'export_token' => null,
-                    'chart_config' => null
-                ]);
-            } catch (\App\Exceptions\AI\TableResolutionException $e) {
-                // Let other exceptions bubble up or handle them specifically if needed
-                throw $e;
+            $validatedPlan = null;
+            $maxRetries = 1;
+            $retries = 0;
+
+            while (true) {
+                try {
+                    $validatedPlan = $this->validator->validate($plan, $connection, $domainContext);
+                    break;
+                } catch (\App\Exceptions\AI\SemanticNotFoundException $e) {
+                    if ($retries < $maxRetries) {
+                        $retries++;
+                        
+                        // Try to auto-learn
+                        $learned = $this->learningService->learn(
+                            $connection,
+                            $e->getTerm(),
+                            $e->getType(),
+                            !empty($plan->tables) ? $plan->tables[0] : null
+                        );
+                        
+                        if ($learned) {
+                            continue; // Retry validation with the newly learned definition
+                        }
+                    }
+                    
+                    $duration = microtime(true) - $startTime;
+                    
+                    $assistantMessage = AiMessage::create([
+                        'conversation_id' => $conversation->id,
+                        'role' => 'assistant',
+                        'content' => "Maaf, saya tidak mengenali istilah '{$e->getTerm()}'. Sistem juga tidak dapat menemukan kecocokan di database untuk mempelajarinya secara otomatis.",
+                        'metadata' => ['intent' => 'semantic_not_found']
+                    ]);
+                    
+                    return response()->json([
+                        'message' => $assistantMessage,
+                        'results' => [],
+                        'export_token' => null,
+                        'chart_config' => null
+                    ]);
+
+                } catch (\App\Exceptions\AI\SemanticAmbiguityException $e) {
+                    $duration = microtime(true) - $startTime;
+                    
+                    $assistantMessage = AiMessage::create([
+                        'conversation_id' => $conversation->id,
+                        'role' => 'assistant',
+                        'content' => $e->getMessage(),
+                        'metadata' => ['intent' => 'semantic_ambiguity']
+                    ]);
+                    
+                    return response()->json([
+                        'message' => $assistantMessage,
+                        'results' => [],
+                        'export_token' => null,
+                        'chart_config' => null
+                    ]);
+                } catch (\App\Exceptions\AI\TableResolutionException $e) {
+                    // Let other exceptions bubble up or handle them specifically if needed
+                    throw $e;
+                }
             }
 
             if ($validatedPlan->intent === 'data_unavailable') {

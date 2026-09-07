@@ -162,7 +162,7 @@ class QueryValidatorService
                         $this->autoLearnSemantic($connection->id, $physicalTable, 'dimension', $dimension, $llmMatch);
                     }
                 } else {
-                    throw new \Exception("Validation Failed: Dimension '{$dimension}' is not recognized in the Semantic Layer for the selected tables.");
+                    throw new \App\Exceptions\AI\SemanticNotFoundException("Validation Failed: Dimension '{$dimension}' is not recognized in the Semantic Layer for the selected tables.", $dimension, 'dimension');
                 }
             }
         }
@@ -239,7 +239,7 @@ class QueryValidatorService
                                 $this->autoLearnSemantic($connection->id, $physicalTable, 'dimension', $field, $llmMatch);
                             }
                         } else {
-                            throw new \Exception("Validation Failed: Filter field '{$field}' is not recognized in the Semantic Layer for the selected tables.");
+                            throw new \App\Exceptions\AI\SemanticNotFoundException("Validation Failed: Filter field '{$field}' is not recognized in the Semantic Layer for the selected tables.", $field, 'dimension');
                         }
                     }
                 }
@@ -420,7 +420,7 @@ class QueryValidatorService
                 } elseif ($result['ambiguous']) {
                     throw new \App\Exceptions\AI\SemanticAmbiguityException("Ambiguous metric '{$metricName}'. " . $result['message']);
                 } else {
-                    throw new \Exception("Validation Failed: Metric '{$metricName}' is not recognized in the Semantic Layer for the selected tables.");
+                    throw new \App\Exceptions\AI\SemanticNotFoundException("Validation Failed: Metric '{$metricName}' is not recognized in the Semantic Layer for the selected tables.", $metricName, 'metric');
                 }
                 $resolvedMetrics[] = $metric;
             }
