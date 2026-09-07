@@ -19,6 +19,7 @@ class Connection extends Model
         'deletable',
         'editable',
         'status',
+        'is_analytics_source',
     ];
 
     protected $casts = [
@@ -30,5 +31,6 @@ class Connection extends Model
         'read_only'    => 'boolean',
         'deletable'    => 'boolean',
         'editable'     => 'boolean',
+        'is_analytics_source' => 'boolean',
     ];
 }

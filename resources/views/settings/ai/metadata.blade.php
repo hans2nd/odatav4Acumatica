@@ -211,7 +211,7 @@
                         </h3>
                         <div class="space-y-4">
                             <!-- metrics -->
-                            <template x-if="aiSuggestions.metrics && aiSuggestions.metrics.length > 0">
+                            <template x-if="aiSuggestions?.metrics?.length > 0">
                                 <div>
                                     <label class="block text-[10px] font-medium text-indigo-500 uppercase tracking-wider mb-2">Suggested Metrics</label>
                                     <div class="space-y-2">
@@ -239,7 +239,7 @@
                                 </div>
                             </template>
                             <!-- dimensions -->
-                            <template x-if="aiSuggestions.dimensions && aiSuggestions.dimensions.length > 0">
+                            <template x-if="aiSuggestions?.dimensions?.length > 0">
                                 <div>
                                     <label class="block text-[10px] font-medium text-indigo-500 uppercase tracking-wider mb-2">Suggested Dimensions</label>
                                     <div class="space-y-2">

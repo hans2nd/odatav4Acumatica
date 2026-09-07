@@ -71,6 +71,7 @@ IMPORTANT INSTRUCTIONS:
 - Resolve any ranking parameters into "sorts" and "limit" (e.g. "top 10" -> limit: 10, direction: "desc").
 - Resolve comparison operations into the "comparison" object.
 - For transaction count queries, set "aggregation": "count".
+- CRITICAL: Do NOT copy 'dimensions', 'filters', or 'sorts' from the Previous Analytical Context unless the user explicitly asks to group, break down, or filter by them in the new question. For a fresh question like "bandingkan total penjualan", reset "dimensions": [] and "sorts": [].
 PROMPT;
 
         $messages = [

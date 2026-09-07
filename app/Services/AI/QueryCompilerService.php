@@ -192,29 +192,21 @@ class QueryCompilerService
                 $dateDataType = $dateFieldMeta ? strtolower($dateFieldMeta->data_type ?? '') : '';
                 
                 $isDateTime = false;
-                if ($semanticType === 'datetime') {
+                if (in_array($semanticType, ['date', 'datetime'])) {
                     $isDateTime = true;
-                } elseif (empty($semanticType) && in_array($dateDataType, ['datetime', 'timestamp', 'datetime2', 'smalldatetime'])) {
+                } elseif (empty($semanticType) && in_array($dateDataType, ['date', 'datetime', 'timestamp', 'datetime2', 'smalldatetime'])) {
+                    $isDateTime = true;
+                } elseif (stripos($dateField, 'date') !== false || stripos($dateField, 'tanggal') !== false || stripos($dateField, 'waktu') !== false) {
                     $isDateTime = true;
                 }
                 
                 if ($isDateTime) {
-                    // Always use standard SQL datetime format 'Y-m-d H:i:s' which matches the sync engine's output
-                    $suffixStart = ' 00:00:00';
-                    if (isset($currentRange['start']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $currentRange['start'])) {
-                        $currentRange['start'] .= $suffixStart;
-                    }
-                    if (isset($prevRange['start']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $prevRange['start'])) {
-                        $prevRange['start'] .= $suffixStart;
-                    }
-                    
-                    $formatOut = 'Y-m-d H:i:s';
                     if (isset($currentRange['end']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $currentRange['end'])) {
-                        $currentRange['end_next'] = (new \DateTime($currentRange['end']))->modify('+1 day')->format($formatOut);
+                        $currentRange['end_next'] = (new \DateTime($currentRange['end']))->modify('+1 day')->format('Y-m-d');
                         unset($currentRange['end']);
                     }
                     if (isset($prevRange['end']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $prevRange['end'])) {
-                        $prevRange['end_next'] = (new \DateTime($prevRange['end']))->modify('+1 day')->format($formatOut);
+                        $prevRange['end_next'] = (new \DateTime($prevRange['end']))->modify('+1 day')->format('Y-m-d');
                         unset($prevRange['end']);
                     }
                 }
@@ -338,9 +330,11 @@ class QueryCompilerService
                     $dataType = $fieldMeta ? strtolower($fieldMeta->data_type ?? '') : '';
                     
                     $hasTimeComponent = false;
-                    if ($semanticType === 'datetime') {
+                    if (in_array($semanticType, ['date', 'datetime'])) {
                         $hasTimeComponent = true;
-                    } elseif (empty($semanticType) && in_array($dataType, ['datetime', 'timestamp', 'datetime2', 'smalldatetime'])) {
+                    } elseif (empty($semanticType) && in_array($dataType, ['date', 'datetime', 'timestamp', 'datetime2', 'smalldatetime'])) {
+                        $hasTimeComponent = true;
+                    } elseif (stripos($field, 'date') !== false || stripos($field, 'tanggal') !== false || stripos($field, 'waktu') !== false) {
                         $hasTimeComponent = true;
                     }
 
@@ -361,13 +355,20 @@ class QueryCompilerService
                             $q->whereBetween($field, $value);
                         }
                     } else {
-                        if ($hasTimeComponent && $operator === '=' && is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
-                            $suffixStart = ' 00:00:00';
-                            $formatOut = 'Y-m-d H:i:s';
-                            
-                            $nextDay = (new \DateTime($value))->modify('+1 day')->format($formatOut);
-                            $q->where(function ($subQ) use ($field, $value, $nextDay, $suffixStart) {
-                                $subQ->where($field, '>=', $value . $suffixStart)
+                        $isDateMatch = false;
+                        $normalizedDate = null;
+                        if ($hasTimeComponent && $operator === '=' && is_string($value)) {
+                            // Extract just the YYYY-MM-DD part if LLM returned datetime or time suffix
+                            if (preg_match('/^(\d{4}-\d{2}-\d{2})/', $value, $matches)) {
+                                $isDateMatch = true;
+                                $normalizedDate = $matches[1];
+                            }
+                        }
+
+                        if ($isDateMatch) {
+                            $nextDay = (new \DateTime($normalizedDate))->modify('+1 day')->format('Y-m-d');
+                            $q->where(function ($subQ) use ($field, $normalizedDate, $nextDay) {
+                                $subQ->where($field, '>=', $normalizedDate)
                                      ->where($field, '<', $nextDay);
                             });
                         } else {

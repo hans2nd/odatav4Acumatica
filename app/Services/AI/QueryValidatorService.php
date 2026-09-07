@@ -101,6 +101,13 @@ class QueryValidatorService
             $resolvedTables[] = $candidates[0];
         }
         
+        // Fetch all semantic definitions for the tables
+        $semanticDefinitions = \App\Models\AiSemanticDefinition::where('connection_id', $connection->id)
+            ->whereIn('source_table', $resolvedTables)
+            ->get();
+            
+        $semanticDimensions = $semanticDefinitions->where('type', 'dimension');
+
         // Resolve Semantic Dimensions
         $resolvedDimensions = [];
         $semanticResolver = app(\App\Services\Metadata\SemanticResolutionService::class);
@@ -110,14 +117,53 @@ class QueryValidatorService
         $entityContext = $syncEntity ? $syncEntity->code : $physicalTable;
 
         foreach ($plan->dimensions as $dimension) {
+            $dimLower = strtolower(trim($dimension));
+            $matched = false;
+
+            // 1. Check AiSemanticDefinition
+            foreach ($semanticDimensions as $sm) {
+                $metadata = is_string($sm->metadata) ? json_decode($sm->metadata, true) : ($sm->metadata ?? []);
+                $aliases = array_map('trim', array_map('strtolower', $metadata['aliases'] ?? []));
+                if (strtolower(trim($sm->name)) === $dimLower || in_array($dimLower, $aliases)) {
+                    $resolvedDimensions[] = $sm->source_column;
+                    $matched = true;
+                    break;
+                }
+            }
+            if ($matched) continue;
+
+            // 2. Check Physical Columns
+            $physicalField = DB::table('sync_metadata_fields')
+                ->join('sync_metadata_definitions', 'sync_metadata_definitions.id', '=', 'sync_metadata_fields.definition_id')
+                ->where('sync_metadata_definitions.connection_id', $connection->id)
+                ->whereIn('sync_metadata_definitions.entity_key', $resolvedTables)
+                ->where('sync_metadata_fields.field_name', $dimension)
+                ->first();
+            if ($physicalField) {
+                $resolvedDimensions[] = $physicalField->field_name;
+                continue;
+            }
+
+            // 3. Fallback to SemanticResolutionService
             $result = $semanticResolver->resolveTerm($dimension, $entityContext);
-            
             if ($result['matched']) {
                 $resolvedDimensions[] = $result['destination_field'];
+                if ($physicalTable) {
+                    $this->autoLearnSemantic($connection->id, $physicalTable, 'dimension', $dimension, $result['destination_field']);
+                }
             } elseif ($result['ambiguous']) {
                 throw new \App\Exceptions\AI\SemanticAmbiguityException("Ambiguous dimension '{$dimension}'. " . $result['message']);
             } else {
-                throw new \Exception("Validation Failed: Dimension '{$dimension}' is not recognized in the Semantic Layer for the selected tables.");
+                // 4. LLM Smart Fallback
+                $llmMatch = $this->smartLlmFallback($connection->id, $resolvedTables, $dimension);
+                if ($llmMatch) {
+                    $resolvedDimensions[] = $llmMatch;
+                    if ($physicalTable) {
+                        $this->autoLearnSemantic($connection->id, $physicalTable, 'dimension', $dimension, $llmMatch);
+                    }
+                } else {
+                    throw new \Exception("Validation Failed: Dimension '{$dimension}' is not recognized in the Semantic Layer for the selected tables.");
+                }
             }
         }
 
@@ -125,14 +171,77 @@ class QueryValidatorService
         foreach ($plan->filters as $filter) {
             if (isset($filter['field'])) {
                 $field = $filter['field'];
-                $result = $semanticResolver->resolveTerm($field, $entityContext);
+                $fieldLower = strtolower(trim($field));
+                $matched = false;
 
-                if ($result['matched']) {
-                    $filter['field'] = $result['destination_field'];
-                } elseif ($result['ambiguous']) {
-                    throw new \App\Exceptions\AI\SemanticAmbiguityException("Ambiguous filter field '{$field}'. " . $result['message']);
-                } else {
-                    throw new \Exception("Validation Failed: Filter field '{$field}' is not recognized in the Semantic Layer for the selected tables.");
+                // 1. Check AiSemanticDefinition
+                foreach ($semanticDimensions as $sm) {
+                    $metadata = is_string($sm->metadata) ? json_decode($sm->metadata, true) : ($sm->metadata ?? []);
+                    $aliases = array_map('trim', array_map('strtolower', $metadata['aliases'] ?? []));
+                    if (strtolower(trim($sm->name)) === $fieldLower || in_array($fieldLower, $aliases)) {
+                        $filter['field'] = $sm->source_column;
+                        $matched = true;
+                        break;
+                    }
+                }
+
+                // 1.5. Special handling for 'date'
+                if (!$matched && $fieldLower === 'date') {
+                    $dateField = DB::table('sync_metadata_fields')
+                        ->join('sync_metadata_definitions', 'sync_metadata_definitions.id', '=', 'sync_metadata_fields.definition_id')
+                        ->where('sync_metadata_definitions.connection_id', $connection->id)
+                        ->whereIn('sync_metadata_definitions.entity_key', $resolvedTables)
+                        ->where(function($q) {
+                            $q->where('sync_metadata_fields.semantic_type', 'date')
+                              ->orWhere('sync_metadata_fields.semantic_type', 'datetime')
+                              ->orWhere('sync_metadata_fields.field_name', 'like', '%date%')
+                              ->orWhere('sync_metadata_fields.field_name', 'like', '%tanggal%');
+                        })
+                        ->orderBy('sync_metadata_fields.is_primary', 'desc')
+                        ->first();
+                        
+                    if ($dateField) {
+                        $filter['field'] = $dateField->field_name;
+                        $matched = true;
+                    }
+                }
+
+                if (!$matched) {
+                    // 2. Check Physical Columns
+                    $physicalField = DB::table('sync_metadata_fields')
+                        ->join('sync_metadata_definitions', 'sync_metadata_definitions.id', '=', 'sync_metadata_fields.definition_id')
+                        ->where('sync_metadata_definitions.connection_id', $connection->id)
+                        ->whereIn('sync_metadata_definitions.entity_key', $resolvedTables)
+                        ->where('sync_metadata_fields.field_name', $field)
+                        ->first();
+                    if ($physicalField) {
+                        $filter['field'] = $physicalField->field_name;
+                        $matched = true;
+                    }
+                }
+
+                if (!$matched) {
+                    // 3. Fallback to SemanticResolutionService
+                    $result = $semanticResolver->resolveTerm($field, $entityContext);
+                    if ($result['matched']) {
+                        $filter['field'] = $result['destination_field'];
+                        if ($physicalTable) {
+                            $this->autoLearnSemantic($connection->id, $physicalTable, 'dimension', $field, $result['destination_field']);
+                        }
+                    } elseif ($result['ambiguous']) {
+                        throw new \App\Exceptions\AI\SemanticAmbiguityException("Ambiguous filter field '{$field}'. " . $result['message']);
+                    } else {
+                        // 4. LLM Smart Fallback
+                        $llmMatch = $this->smartLlmFallback($connection->id, $resolvedTables, $field);
+                        if ($llmMatch) {
+                            $filter['field'] = $llmMatch;
+                            if ($physicalTable) {
+                                $this->autoLearnSemantic($connection->id, $physicalTable, 'dimension', $field, $llmMatch);
+                            }
+                        } else {
+                            throw new \Exception("Validation Failed: Filter field '{$field}' is not recognized in the Semantic Layer for the selected tables.");
+                        }
+                    }
                 }
             }
             $resolvedFilters[] = $filter;
@@ -178,8 +287,25 @@ class QueryValidatorService
                             'expression' => null,
                             'metadata' => ['aggregation' => 'SUM']
                         ];
+                        if ($physicalTable) {
+                            $this->autoLearnSemantic($connection->id, $physicalTable, 'metric', $term, $result['destination_field']);
+                        }
                     } elseif ($result['ambiguous']) {
                         throw new \App\Exceptions\AI\SemanticAmbiguityException("Ambiguous metric '{$term}'. " . $result['message']);
+                    } else {
+                        // 4. LLM Smart Fallback
+                        $llmMatch = $this->smartLlmFallback($connection->id, $resolvedTables, $term);
+                        if ($llmMatch) {
+                            $chosenMetric = (object) [
+                                'name' => $term,
+                                'source_column' => $llmMatch,
+                                'expression' => null,
+                                'metadata' => ['aggregation' => 'SUM']
+                            ];
+                            if ($physicalTable) {
+                                $this->autoLearnSemantic($connection->id, $physicalTable, 'metric', $term, $llmMatch);
+                            }
+                        }
                     }
                 }
             } else {
@@ -208,9 +334,25 @@ class QueryValidatorService
                 if (empty($agg) && empty($chosenMetric->expression)) {
                     $agg = 'SUM'; // Fallback for simple columns
                 }
+                $name = $chosenMetric->source_column;
+                $isExpr = false;
+                if (!empty($chosenMetric->expression) && $chosenMetric->expression !== $chosenMetric->source_column) {
+                    $expr = trim($chosenMetric->expression);
+                    // MySQL compatibility patch for SQLServer/OData expressions
+                    $expr = str_ireplace('AS NUMERIC', 'AS DECIMAL(18,4)', $expr);
+                    
+                    if ($agg && preg_match('/^' . preg_quote($agg, '/') . '\s*\((.*)\)$/i', $expr, $matches)) {
+                        $name = $matches[1];
+                        $isExpr = !preg_match('/^[a-zA-Z0-9_]+$/', $name);
+                    } else {
+                        $name = $expr;
+                        $isExpr = true;
+                    }
+                }
+
                 $resolvedMetrics[] = [
-                    'name' => $chosenMetric->expression ?? $chosenMetric->source_column,
-                    'is_expression' => !empty($chosenMetric->expression) && $chosenMetric->expression !== $chosenMetric->source_column,
+                    'name' => $name,
+                    'is_expression' => $isExpr,
                     'aggregation' => $agg,
                     'alias' => preg_replace('/[^a-zA-Z0-9_]/', '_', $chosenMetric->name ?? 'metric')
                 ];
@@ -244,13 +386,26 @@ class QueryValidatorService
                 }
 
                 if ($semanticMetric && ($semanticMetric->expression || $semanticMetric->source_column)) {
-                    $metric['name'] = $semanticMetric->expression ?? $semanticMetric->source_column;
-                    $metric['is_expression'] = !empty($semanticMetric->expression) && $semanticMetric->expression !== $semanticMetric->source_column;
-                    $metadata = is_string($semanticMetric->metadata) ? json_decode($semanticMetric->metadata, true) : ($semanticMetric->metadata ?? []);
                     $metric['aggregation'] = strtoupper($metadata['aggregation'] ?? '');
                     if (empty($metric['aggregation']) && empty($semanticMetric->expression)) {
                         $metric['aggregation'] = 'SUM';
                     }
+                    
+                    $name = $semanticMetric->source_column;
+                    $isExpr = false;
+                    if (!empty($semanticMetric->expression) && $semanticMetric->expression !== $semanticMetric->source_column) {
+                        $expr = trim($semanticMetric->expression);
+                        if ($metric['aggregation'] && preg_match('/^' . preg_quote($metric['aggregation'], '/') . '\s*\((.*)\)$/i', $expr, $matches)) {
+                            $name = $matches[1];
+                            $isExpr = !preg_match('/^[a-zA-Z0-9_]+$/', $name);
+                        } else {
+                            $name = $expr;
+                            $isExpr = true;
+                        }
+                    }
+
+                    $metric['name'] = $name;
+                    $metric['is_expression'] = $isExpr;
                     $metric['alias'] = preg_replace('/[^a-zA-Z0-9_]/', '_', $semanticMetric->name);
                     $resolvedMetrics[] = $metric;
                     continue;
@@ -308,8 +463,10 @@ class QueryValidatorService
                         if ($matchedMetric && $matchedMetric->source_column) {
                             $meta = is_string($matchedMetric->metadata) ? json_decode($matchedMetric->metadata, true) : ($matchedMetric->metadata ?? []);
                             $agg = strtoupper($meta['aggregation'] ?? 'SUM');
-                            // QueryCompilerService aliases aggregated metrics as {$col}_{$agg}
-                            $sort['field'] = $matchedMetric->source_column . '_' . $agg;
+                            $alias = preg_replace('/[^a-zA-Z0-9_]/', '_', $matchedMetric->name);
+                            $suffix = empty($agg) ? "" : "_{$agg}";
+                            // QueryCompilerService aliases aggregated metrics as {$alias}{$suffix}
+                            $sort['field'] = $alias . $suffix;
                         } else {
                             // Fallback, assume it's already a physical column
                             $sort['field'] = $sortKey;

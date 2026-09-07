@@ -56,6 +56,12 @@ class AiSettingsController extends Controller
         AiSetting::setConfig('openrouter_timeout', $validated['timeout']);
         AiSetting::setConfig('analytics_connection_id', $validated['analytics_connection_id']);
 
+        try {
+            app(\App\Services\ConnectionService::class)->setAnalyticsSource($validated['analytics_connection_id']);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::warning('Failed to sync analytics source flag: ' . $e->getMessage());
+        }
+
         return redirect()->back()->with('success', 'AI configuration saved successfully.');
     }
 
@@ -536,7 +542,44 @@ class AiSettingsController extends Controller
         $dimensions = [];
         $dataRole = strtolower($def->data_role ?? 'other');
 
-        foreach ($fields as $f) {
+        try {
+            $openRouter = app(\App\Services\AI\OpenRouterClient::class);
+            $prompt = [
+                ['role' => 'system', 'content' => 'You are an expert BI Data Architect. Given a database table schema, you will suggest useful metrics and dimensions for analytics. Generate a strictly valid JSON response.'],
+                ['role' => 'user', 'content' => "Table Name: {$def->entity_key}\nLogical Name: {$def->logical_name}\nData Role: {$dataRole}\nDescription: {$def->description}\n\nFields:\n" . json_encode($fields) . "\n\nProvide your suggestions strictly as a JSON object with the following schema:\n{\n  \"metrics\": [\n    {\n      \"name\": \"Total Revenue\",\n      \"source_column\": \"NetAmount\",\n      \"aggregation\": \"SUM\",\n      \"expression\": \"SUM(NetAmount)\",\n      \"description\": \"Total revenue amount\",\n      \"aliases\": [\"sales\", \"revenue\"],\n      \"is_default\": true,\n      \"reason\": \"Main transaction amount\",\n      \"confidence\": \"high\"\n    }\n  ],\n  \"dimensions\": [\n    {\n      \"name\": \"Customer\",\n      \"source_column\": \"CustomerID\",\n      \"aliases\": [\"client\", \"buyer\"]\n    }\n  ]\n}"]
+            ];
+
+            $response = $openRouter->getCompletion($prompt, true);
+            $parsed = json_decode($response, true);
+
+            if (is_array($parsed) && (isset($parsed['metrics']) || isset($parsed['dimensions']))) {
+                if (isset($parsed['metrics']) && is_array($parsed['metrics'])) {
+                    foreach ($parsed['metrics'] as $m) {
+                        if (!in_array(strtolower($m['name'] ?? ''), $existingMetricNames) && !in_array($m['source_column'] ?? '', $existingMetricCols)) {
+                            $metrics[] = $m;
+                        }
+                    }
+                }
+                
+                if (isset($parsed['dimensions']) && is_array($parsed['dimensions'])) {
+                    foreach ($parsed['dimensions'] as $d) {
+                        if (!in_array($d['source_column'] ?? '', $existingDimCols)) {
+                            $dimensions[] = $d;
+                        }
+                    }
+                }
+                
+                return response()->json([
+                    'metrics' => $metrics,
+                    'dimensions' => $dimensions
+                ]);
+            }
+            throw new \Exception("Invalid JSON format returned from LLM.");
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::warning("LLM Suggest Semantics failed, falling back to rule-based: " . $e->getMessage());
+            
+            // Fallback to rule-based logic
+            foreach ($fields as $f) {
             $col = $f->field_name;
             $type = strtolower($f->semantic_type ?? '');
             $cleanName = ucwords(str_replace(['_', '-'], ' ', preg_replace('/(?<!^)[A-Z]/', ' $0', $col)));
@@ -633,6 +676,7 @@ class AiSettingsController extends Controller
                 }
             }
         }
+        }
 
         return response()->json([
             'metrics' => $metrics,
@@ -648,8 +692,18 @@ class AiSettingsController extends Controller
         }
 
         $connection = \App\Models\Connection::find($connectionId);
-        if (!$connection || !$connection->is_analytics_source) {
-            return back()->with('error', 'Configured analytics connection is invalid or not an analytics source.');
+        if (!$connection) {
+            return back()->with('error', 'Configured analytics connection is invalid.');
+        }
+        
+        // Auto-heal if the flag is out of sync due to previous bugs
+        if (!$connection->is_analytics_source) {
+            try {
+                app(\App\Services\ConnectionService::class)->setAnalyticsSource($connectionId);
+                $connection->is_analytics_source = true;
+            } catch (\Exception $e) {
+                return back()->with('error', 'Failed to auto-heal analytics connection flag.');
+            }
         }
 
         try {

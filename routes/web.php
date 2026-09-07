@@ -322,6 +322,7 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/api/chatedp/messages', [\App\Http\Controllers\ChatEDPController::class, 'sendMessage'])->name('api.chatedp.messages.send');
         Route::get('/api/chatedp/export', [\App\Http\Controllers\ChatEDPController::class, 'exportExcel'])->name('api.chatedp.export');
         Route::get('/api/chatedp/report', [\App\Http\Controllers\ChatEDPController::class, 'generateReport'])->name('api.chatedp.report');
+        Route::delete('/api/chatedp/conversations/{id}', [\App\Http\Controllers\ChatEDPController::class, 'deleteConversation'])->name('api.chatedp.conversations.delete');
     });
     // Auto-generated route for AI Settings
     Route::get('/ai-settings/index', [\App\Http\Controllers\AiSettingsIndexController::class, 'index'])->name('ai-settings.index');

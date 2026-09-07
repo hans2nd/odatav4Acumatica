@@ -53,97 +53,107 @@ class ChatEDPController extends Controller
         $suggestedQuestions = [];
         
         if ($connectionId) {
-            // Get enabled tables only
-            $enabledTables = \Illuminate\Support\Facades\DB::table('sync_metadata_definitions')
-                ->where('connection_id', $connectionId)
-                ->where('chatedp_enabled', true)
-                ->pluck('entity_key');
-                
-            if ($enabledTables->isNotEmpty()) {
-                $definitions = \App\Models\AiSemanticDefinition::where('connection_id', $connectionId)
-                    ->whereIn('source_table', $enabledTables)
-                    ->get();
-                    
-                $metrics = $definitions->where('type', 'metric');
-                $dimensions = $definitions->where('type', 'dimension');
-                
-                $primaryMetric = $metrics->first(function($m) {
-                    return !empty($m->metadata['is_default']);
-                }) ?? $metrics->first();
-                
-                // Fallback to categorical field dimension only if no AiSemanticDefinition dimension
-                $primaryDimension = $dimensions->first();
-                if (!$primaryDimension) {
-                    $dimField = \Illuminate\Support\Facades\DB::table('sync_metadata_fields')
-                        ->join('sync_metadata_definitions', 'sync_metadata_fields.definition_id', '=', 'sync_metadata_definitions.id')
-                        ->where('sync_metadata_definitions.connection_id', $connectionId)
-                        ->whereIn('sync_metadata_definitions.entity_key', $enabledTables)
-                        ->whereIn('sync_metadata_fields.semantic_type', ['dimension', 'categorical'])
-                        ->first();
-                    if ($dimField) {
-                        $primaryDimension = (object)[
-                            'name' => $dimField->logical_name ?: ucwords(str_replace(['_', '-'], ' ', preg_replace('/(?<!^)[A-Z]/', ' $0', $dimField->field_name)))
-                        ];
-                    }
-                }
-                
-                // Check if any date/datetime field exists in enabled tables
-                $hasDateField = \Illuminate\Support\Facades\DB::table('sync_metadata_fields')
-                    ->join('sync_metadata_definitions', 'sync_metadata_fields.definition_id', '=', 'sync_metadata_definitions.id')
-                    ->where('sync_metadata_definitions.connection_id', $connectionId)
-                    ->whereIn('sync_metadata_definitions.entity_key', $enabledTables)
-                    ->where(function($q) {
-                        $q->whereIn('sync_metadata_fields.semantic_type', ['date', 'datetime'])
-                          ->orWhereIn('sync_metadata_fields.data_type', ['date', 'datetime', 'timestamp', 'datetime2', 'smalldatetime'])
-                          ->orWhere('sync_metadata_fields.field_name', 'like', '%date%')
-                          ->orWhere('sync_metadata_fields.field_name', 'like', '%tanggal%');
-                    })
-                    ->exists();
-
-                if ($primaryMetric) {
-                    $metricName = $primaryMetric->name;
-                    
-                    // 1. Metric + Date (if date capability exists)
-                    if ($hasDateField) {
-                        $suggestedQuestions[] = [
-                            'title' => "{$metricName} Bulan Ini",
-                            'prompt' => "Berapa {$metricName} bulan ini?"
-                        ];
-                    } else {
-                        // Metric-only scalar (if no date field exists)
-                        $suggestedQuestions[] = [
-                            'title' => "Total {$metricName}",
-                            'prompt' => "Berapa total {$metricName}?"
-                        ];
-                    }
-                    
-                    // 2. Metric + Dimension (if dimension capability exists)
-                    if ($primaryDimension) {
-                        $dimName = $primaryDimension->name;
-                        $suggestedQuestions[] = [
-                            'title' => "{$metricName} per {$dimName}",
-                            'prompt' => "Berapa {$metricName} per {$dimName}?"
-                        ];
-                        
-                        // 3. Top N (if dimension capability exists)
-                        $suggestedQuestions[] = [
-                            'title' => "Top 5 {$dimName}",
-                            'prompt' => "Top 5 {$dimName} berdasarkan {$metricName}"
-                        ];
-                    }
-                    
-                    // 4. Period Comparison (if date capability exists)
-                    if ($hasDateField) {
-                        $suggestedQuestions[] = [
-                            'title' => "Perbandingan {$metricName}",
-                            'prompt' => "Bandingkan {$metricName} bulan ini dengan bulan lalu"
-                        ];
-                    }
-                }
-            }
+            $suggestedQuestions = $this->getSuggestedQuestions($connectionId);
         }
 
         return view('chatedp.index', compact('suggestedQuestions'));
+    }
+
+    protected function getSuggestedQuestions(int $connectionId): array
+    {
+        $suggestedQuestions = [];
+        // Get enabled tables only
+        $enabledTables = \Illuminate\Support\Facades\DB::table('sync_metadata_definitions')
+            ->where('connection_id', $connectionId)
+            ->where('chatedp_enabled', true)
+            ->pluck('entity_key');
+            
+        if ($enabledTables->isEmpty()) {
+            return [];
+        }
+
+        $definitions = \App\Models\AiSemanticDefinition::where('connection_id', $connectionId)
+            ->whereIn('source_table', $enabledTables)
+            ->get();
+            
+        $metrics = $definitions->where('type', 'metric');
+        $dimensions = $definitions->where('type', 'dimension');
+        
+        $primaryMetric = $metrics->first(function($m) {
+            return !empty($m->metadata['is_default']);
+        }) ?? $metrics->first();
+        
+        // Fallback to categorical field dimension only if no AiSemanticDefinition dimension
+        $primaryDimension = $dimensions->first();
+        if (!$primaryDimension) {
+            $dimField = \Illuminate\Support\Facades\DB::table('sync_metadata_fields')
+                ->join('sync_metadata_definitions', 'sync_metadata_fields.definition_id', '=', 'sync_metadata_definitions.id')
+                ->where('sync_metadata_definitions.connection_id', $connectionId)
+                ->whereIn('sync_metadata_definitions.entity_key', $enabledTables)
+                ->whereIn('sync_metadata_fields.semantic_type', ['dimension', 'categorical'])
+                ->first();
+            if ($dimField) {
+                $primaryDimension = (object)[
+                    'name' => $dimField->logical_name ?: ucwords(str_replace(['_', '-'], ' ', preg_replace('/(?<!^)[A-Z]/', ' $0', $dimField->field_name)))
+                ];
+            }
+        }
+        
+        // Check if any date/datetime field exists in enabled tables
+        $hasDateField = \Illuminate\Support\Facades\DB::table('sync_metadata_fields')
+            ->join('sync_metadata_definitions', 'sync_metadata_fields.definition_id', '=', 'sync_metadata_definitions.id')
+            ->where('sync_metadata_definitions.connection_id', $connectionId)
+            ->whereIn('sync_metadata_definitions.entity_key', $enabledTables)
+            ->where(function($q) {
+                $q->whereIn('sync_metadata_fields.semantic_type', ['date', 'datetime'])
+                  ->orWhereIn('sync_metadata_fields.data_type', ['date', 'datetime', 'timestamp', 'datetime2', 'smalldatetime'])
+                  ->orWhere('sync_metadata_fields.field_name', 'like', '%date%')
+                  ->orWhere('sync_metadata_fields.field_name', 'like', '%tanggal%');
+            })
+            ->exists();
+
+        if ($primaryMetric) {
+            $metricName = $primaryMetric->name;
+            
+            // 1. Metric + Date (if date capability exists)
+            if ($hasDateField) {
+                $suggestedQuestions[] = [
+                    'title' => "{$metricName} Bulan Ini",
+                    'prompt' => "Berapa {$metricName} bulan ini?"
+                ];
+            } else {
+                // Metric-only scalar (if no date field exists)
+                $suggestedQuestions[] = [
+                    'title' => "Total {$metricName}",
+                    'prompt' => "Berapa total {$metricName}?"
+                ];
+            }
+            
+            // 2. Metric + Dimension (if dimension capability exists)
+            if ($primaryDimension) {
+                $dimName = $primaryDimension->name;
+                $suggestedQuestions[] = [
+                    'title' => "{$metricName} per {$dimName}",
+                    'prompt' => "Berapa {$metricName} per {$dimName}?"
+                ];
+                
+                // 3. Top N (if dimension capability exists)
+                $suggestedQuestions[] = [
+                    'title' => "Top 5 {$dimName}",
+                    'prompt' => "Top 5 {$dimName} berdasarkan {$metricName}"
+                ];
+            }
+            
+            // 4. Period Comparison (if date capability exists)
+            if ($hasDateField) {
+                $suggestedQuestions[] = [
+                    'title' => "Perbandingan {$metricName}",
+                    'prompt' => "Bandingkan {$metricName} bulan ini dengan bulan lalu"
+                ];
+            }
+        }
+
+        return $suggestedQuestions;
     }
 
     public function conversations(Request $request)
@@ -178,6 +188,15 @@ class ChatEDPController extends Controller
             'conversation' => $conversation,
             'messages' => $messages,
         ]);
+    }
+
+    public function deleteConversation(Request $request, $id)
+    {
+        $conversation = AiConversation::where('user_id', $request->user()->id)->findOrFail($id);
+        $conversation->messages()->delete();
+        $conversation->delete();
+
+        return response()->json(['success' => true]);
     }
 
     public function sendMessage(Request $request)
@@ -262,8 +281,11 @@ class ChatEDPController extends Controller
                 $assistantMessage = AiMessage::create([
                     'conversation_id' => $conversation->id,
                     'role' => 'assistant',
-                    'content' => 'Data tersebut belum tersedia pada sumber data yang terhubung atau tidak ditemukan dalam schema.',
-                    'metadata' => ['intent' => 'data_unavailable']
+                    'content' => 'Pertanyaan tidak dapat diproses. Mungkin pertanyaan Anda berada di luar konteks atau menggunakan istilah data yang belum dikonfigurasi.',
+                    'metadata' => [
+                        'intent' => 'data_unavailable',
+                        'suggestions' => $this->getSuggestedQuestions($connection->id)
+                    ]
                 ]);
                 
                 return response()->json([
@@ -616,7 +638,7 @@ class ChatEDPController extends Controller
             // 8. Summary & Insight Generation
             // Create a compact summary context for the LLM using clean business semantics
             $compactTop = [];
-            $limit = min(count($results), 3); // top 3 for narrative
+            $limit = min(count($results), 10); // up to top 10 for narrative
             for ($i = 0; $i < $limit; $i++) {
                 $rowArray = (array)$results[$i];
                 $compactRow = [];
@@ -873,7 +895,7 @@ skip_llm_summary:
         $typeMap = [];
 
         // 1. Physical + field-level semantic labels from SyncEntity & SyncEntityField
-        $entities = \App\Models\SyncEntity::whereIn('table', $plan->tables)->get();
+        $entities = \App\Models\SyncEntity::whereIn('destination_table', $plan->tables)->get();
         if ($entities->isNotEmpty()) {
             $fields = \App\Models\SyncEntityField::whereIn('sync_entity_id', $entities->pluck('id'))
                 ->where('is_enabled', true)

@@ -71,7 +71,53 @@ class SemanticResolutionService
         }
 
         if (empty($candidates)) {
-            return $this->noMatchResult("No field matched the term '{$term}'.");
+            // FALLBACK TO LLM FOR SMART RESOLUTION
+            try {
+                $openRouter = app(\App\Services\AI\OpenRouterClient::class);
+                $availableFields = $fields->map(function($f) {
+                    return [
+                        'id' => $f->id,
+                        'name' => $f->destination_field,
+                        'label' => $f->label,
+                        'type' => $f->semantic_type
+                    ];
+                })->toJson();
+                
+                $prompt = [
+                    ['role' => 'system', 'content' => "You are an AI mapping assistant. Match the user's business term to the closest logical physical database column from the provided list. Return ONLY a valid JSON object with the matched 'id'. If there's no reasonable match, return {\"id\": null}."],
+                    ['role' => 'user', 'content' => "Available Fields:\n{$availableFields}\n\nMap the term: '{$term}'\n\nReturn strictly valid JSON: {\"id\": integer_or_null}"]
+                ];
+                
+                $response = $openRouter->getCompletion($prompt, true);
+                // Clean potential markdown code blocks
+                $response = preg_replace('/^```json\s*/i', '', $response);
+                $response = preg_replace('/```$/', '', $response);
+                
+                $parsed = json_decode(trim($response), true);
+                
+                if (isset($parsed['id']) && $parsed['id'] !== null) {
+                    $matchedField = $fields->firstWhere('id', $parsed['id']);
+                    if ($matchedField) {
+                        $entity = $entities->firstWhere('id', $matchedField->sync_entity_id);
+                        $candidates[] = [
+                            'entity' => $entity->code,
+                            'field_id' => $matchedField->id,
+                            'destination_field' => $matchedField->destination_field,
+                            'semantic_type' => $matchedField->semantic_type,
+                            'label' => $matchedField->label,
+                            'description' => $matchedField->description,
+                            'match_reason' => 'llm_smart_fallback',
+                            'confidence' => 85,
+                        ];
+                    }
+                }
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::warning("LLM Semantic Resolution fallback failed: " . $e->getMessage());
+            }
+            
+            if (empty($candidates)) {
+                return $this->noMatchResult("No field matched the term '{$term}'.");
+            }
         }
 
         // Sort candidates by confidence descending
