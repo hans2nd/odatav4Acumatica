@@ -155,7 +155,7 @@ class QueryValidatorService
                 throw new \App\Exceptions\AI\SemanticAmbiguityException("Ambiguous dimension '{$dimension}'. " . $result['message']);
             } else {
                 // 4. LLM Smart Fallback
-                $llmMatch = $this->smartLlmFallback($connection->id, $resolvedTables, $dimension);
+                $llmMatch = $this->smartLlmFallback($connection->id, $resolvedTables, $dimension, 'dimension');
                 if ($llmMatch) {
                     $resolvedDimensions[] = $llmMatch;
                     if ($physicalTable) {
@@ -197,7 +197,7 @@ class QueryValidatorService
                               ->orWhere('sync_metadata_fields.field_name', 'like', '%date%')
                               ->orWhere('sync_metadata_fields.field_name', 'like', '%tanggal%');
                         })
-                        ->orderBy('sync_metadata_fields.is_primary', 'desc')
+                        ->orderBy('sync_metadata_fields.is_primary_key', 'desc')
                         ->first();
                         
                     if ($dateField) {
@@ -232,7 +232,7 @@ class QueryValidatorService
                         throw new \App\Exceptions\AI\SemanticAmbiguityException("Ambiguous filter field '{$field}'. " . $result['message']);
                     } else {
                         // 4. LLM Smart Fallback
-                        $llmMatch = $this->smartLlmFallback($connection->id, $resolvedTables, $field);
+                        $llmMatch = $this->smartLlmFallback($connection->id, $resolvedTables, $field, 'dimension');
                         if ($llmMatch) {
                             $filter['field'] = $llmMatch;
                             if ($physicalTable) {
@@ -420,7 +420,13 @@ class QueryValidatorService
                 } elseif ($result['ambiguous']) {
                     throw new \App\Exceptions\AI\SemanticAmbiguityException("Ambiguous metric '{$metricName}'. " . $result['message']);
                 } else {
-                    throw new \App\Exceptions\AI\SemanticNotFoundException("Validation Failed: Metric '{$metricName}' is not recognized in the Semantic Layer for the selected tables.", $metricName, 'metric');
+                    $llmMatch = $this->smartLlmFallback($connection->id, $resolvedTables, $metricName, 'metric');
+                    if ($llmMatch) {
+                        $metric['name'] = $llmMatch;
+                        $metric['is_expression'] = false;
+                    } else {
+                        throw new \App\Exceptions\AI\SemanticNotFoundException("Validation Failed: Metric '{$metricName}' is not recognized in the Semantic Layer for the selected tables.", $metricName, 'metric');
+                    }
                 }
                 $resolvedMetrics[] = $metric;
             }
@@ -434,8 +440,11 @@ class QueryValidatorService
                     continue;
                 }
 
+                // Remove suffix like _SUM if LLM hallucinated it
+                $cleanSortKey = preg_replace('/_(SUM|COUNT|AVG|MIN|MAX)$/i', '', $sortKey);
+
                 // Check with SemanticResolutionService first
-                $result = $semanticResolver->resolveTerm($sortKey, $entityContext);
+                $result = $semanticResolver->resolveTerm($cleanSortKey, $entityContext);
                 
                 if ($result['matched']) {
                     $sort['field'] = $result['destination_field'];
@@ -443,34 +452,42 @@ class QueryValidatorService
                     throw new \App\Exceptions\AI\SemanticAmbiguityException("Ambiguous sort field '{$sortKey}'. " . $result['message']);
                 } else {
                     // Check if it's a known metric (fallback for calculated/business aggregation rules)
-                        // Allow matching by name or aliases
-                        $semanticMetrics = \App\Models\AiSemanticDefinition::where('connection_id', $connection->id)
-                            ->where('type', 'metric')
-                            ->whereIn('source_table', $resolvedTables)
-                            ->get();
-                            
-                        $matchedMetric = null;
-                        $termLower = strtolower(trim($sortKey));
-                        foreach ($semanticMetrics as $m) {
-                            $meta = is_string($m->metadata) ? json_decode($m->metadata, true) : ($m->metadata ?? []);
-                            $aliases = array_map('trim', array_map('strtolower', $meta['aliases'] ?? []));
-                            if (strtolower(trim($m->name)) === $termLower || in_array($termLower, $aliases)) {
-                                $matchedMetric = $m;
-                                break;
-                            }
+                    // Allow matching by name or aliases
+                    $semanticMetrics = \App\Models\AiSemanticDefinition::where('connection_id', $connection->id)
+                        ->where('type', 'metric')
+                        ->whereIn('source_table', $resolvedTables)
+                        ->get();
+                        
+                    $matchedMetric = null;
+                    $termLower = strtolower(trim($cleanSortKey));
+                    foreach ($semanticMetrics as $m) {
+                        $meta = is_string($m->metadata) ? json_decode($m->metadata, true) : ($m->metadata ?? []);
+                        $aliases = array_map('trim', array_map('strtolower', $meta['aliases'] ?? []));
+                        if (strtolower(trim($m->name)) === $termLower || in_array($termLower, $aliases)) {
+                            $matchedMetric = $m;
+                            break;
                         }
+                    }
 
-                        if ($matchedMetric && $matchedMetric->source_column) {
-                            $meta = is_string($matchedMetric->metadata) ? json_decode($matchedMetric->metadata, true) : ($matchedMetric->metadata ?? []);
-                            $agg = strtoupper($meta['aggregation'] ?? 'SUM');
-                            $alias = preg_replace('/[^a-zA-Z0-9_]/', '_', $matchedMetric->name);
-                            $suffix = empty($agg) ? "" : "_{$agg}";
-                            // QueryCompilerService aliases aggregated metrics as {$alias}{$suffix}
-                            $sort['field'] = $alias . $suffix;
+                    if ($matchedMetric && $matchedMetric->source_column) {
+                        $meta = is_string($matchedMetric->metadata) ? json_decode($matchedMetric->metadata, true) : ($matchedMetric->metadata ?? []);
+                        $agg = strtoupper($meta['aggregation'] ?? 'SUM');
+                        $alias = preg_replace('/[^a-zA-Z0-9_]/', '_', $matchedMetric->name);
+                        $suffix = empty($agg) ? "" : "_{$agg}";
+                        // QueryCompilerService aliases aggregated metrics as {$alias}{$suffix}
+                        $sort['field'] = $alias . $suffix;
+                    } else {
+                        // Smart LLM Fallback
+                        $llmMatch = $this->smartLlmFallback($connection->id, $resolvedTables, $cleanSortKey, 'metric');
+                        if ($llmMatch) {
+                            $sort['field'] = $llmMatch;
+                            if ($physicalTable) {
+                                $this->autoLearnSemantic($connection->id, $physicalTable, 'metric', $cleanSortKey, $llmMatch);
+                            }
                         } else {
-                            // Fallback, assume it's already a physical column
-                            $sort['field'] = $sortKey;
+                            throw new \App\Exceptions\AI\SemanticNotFoundException("Validation Failed: Sort field '{$sortKey}' is not recognized in the Semantic Layer for the selected tables.", $cleanSortKey, 'metric');
                         }
+                    }
                 }
                 $resolvedSorts[] = $sort;
             }
@@ -518,5 +535,30 @@ class QueryValidatorService
         }
         
         return $validatedPlan;
+    }
+
+    private function smartLlmFallback($connectionId, $resolvedTables, $term, $type = 'dimension')
+    {
+        try {
+            $learningService = app(\App\Services\AI\SemanticLearningService::class);
+            $connection = \App\Models\Connection::find($connectionId);
+            if (!$connection) {
+                return null;
+            }
+            
+            $tableContext = !empty($resolvedTables) ? $resolvedTables[0] : null;
+            
+            $matchedColumn = $learningService->learnAndReturnMatch($connection, $term, $type, $tableContext);
+            return $matchedColumn;
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error("Smart LLM Fallback Error: " . $e->getMessage());
+            return null;
+        }
+    }
+
+    private function autoLearnSemantic($connectionId, $physicalTable, $type, $source, $destination)
+    {
+        // Auto learning is now handled synchronously inside SemanticLearningService::learnAndReturnMatch.
+        // Therefore, we don't need to do anything here to prevent duplicate entries.
     }
 }

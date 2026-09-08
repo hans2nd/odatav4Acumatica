@@ -273,6 +273,17 @@ class ChatEDPController extends Controller
             'content' => $validated['message'],
         ]);
 
+        // Dynamically update conversation title on first message
+        if ($conversation->title === 'Analisis Baru' || empty($conversation->title)) {
+            $words = explode(' ', $validated['message']);
+            $shortTitle = implode(' ', array_slice($words, 0, 5));
+            if (count($words) > 5) {
+                $shortTitle .= '...';
+            }
+            $conversation->title = $shortTitle;
+            $conversation->save();
+        }
+
         $conversation->touch();
 
         try {

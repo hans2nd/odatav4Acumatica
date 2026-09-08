@@ -29,6 +29,21 @@ class SemanticLearningService
      */
     public function learn(Connection $connection, string $term, string $type = 'dimension', ?string $tableContext = null): bool
     {
+        $match = $this->learnAndReturnMatch($connection, $term, $type, $tableContext);
+        return $match !== null;
+    }
+
+    /**
+     * Attempt to learn a new semantic definition and return the matched physical column.
+     *
+     * @param Connection $connection
+     * @param string $term The unrecognized term
+     * @param string $type The type of term
+     * @param string|null $tableContext The table context
+     * @return string|null The matched column name or null if not found
+     */
+    public function learnAndReturnMatch(Connection $connection, string $term, string $type = 'dimension', ?string $tableContext = null): ?string
+    {
         try {
             // Get schema for the connection
             $schema = $this->schemaCache->getSchema($connection);
@@ -60,21 +75,21 @@ class SemanticLearningService
                 $table = $result['table'];
 
                 if (!$matchedColumn || !$table) {
-                    return false;
+                    return null;
                 }
 
                 // Save to ai_semantic_definitions
                 $this->saveSemanticAlias($connection->id, $table, $matchedColumn, $term, $type);
                 
                 Log::info("ChatEDP Smart Learning: Successfully learned '{$term}' as '{$matchedColumn}' in table '{$table}'.");
-                return true;
+                return $matchedColumn;
             }
 
-            return false;
+            return null;
 
         } catch (\Exception $e) {
             Log::error("ChatEDP Smart Learning Failed for term '{$term}': " . $e->getMessage());
-            return false;
+            return null;
         }
     }
 
@@ -105,8 +120,8 @@ EOT;
     {
         // First check if the column is already defined in semantic definitions
         $existing = AiSemanticDefinition::where('connection_id', $connectionId)
-            ->where('physical_table', $table)
-            ->where('physical_column', $column)
+            ->where('source_table', $table)
+            ->where('source_column', $column)
             ->where('type', $type)
             ->first();
 
@@ -138,10 +153,9 @@ EOT;
                 'connection_id' => $connectionId,
                 'type' => $type,
                 'name' => ucfirst($column), // User friendly name
-                'physical_table' => $table,
-                'physical_column' => $column,
+                'source_table' => $table,
+                'source_column' => $column,
                 'metadata' => $metadata,
-                'is_active' => true
             ]);
         }
     }
