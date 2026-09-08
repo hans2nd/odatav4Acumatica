@@ -9,12 +9,15 @@ use App\Models\AiAuditLog;
 use App\Models\AiUsageMetric;
 use App\Models\Connection;
 use App\Services\AI\QueryPlannerService;
+use App\Services\AI\DateContextResolverService;
 use App\Services\AI\QueryValidatorService;
 use App\Services\AI\QueryCostGuardService;
 use App\Services\AI\QueryCompilerService;
 use App\Services\AI\QueryLibraryService;
 use App\Services\AI\OpenRouterClient;
 use App\Services\AI\SemanticLearningService;
+use App\Services\AI\ResultInterpretationService;
+use App\Services\AI\QueryRecognitionService;
 use App\Models\QueryRepository;
 use App\Services\QueryRepositoryService;
 use Illuminate\Support\Facades\Cache;
@@ -23,6 +26,7 @@ use Illuminate\Support\Str;
 class ChatEDPController extends Controller
 {
     protected $planner;
+    protected $dateResolver;
     protected $validator;
     protected $costGuard;
     protected $compiler;
@@ -30,18 +34,24 @@ class ChatEDPController extends Controller
     protected $executor;
     protected $openRouter;
     protected $learningService;
+    protected $interpreter;
+    protected $recognizer;
 
     public function __construct(
         QueryPlannerService $planner,
+        DateContextResolverService $dateResolver,
         QueryValidatorService $validator,
         QueryCostGuardService $costGuard,
         QueryCompilerService $compiler,
         QueryLibraryService $libraryService,
         QueryRepositoryService $executor,
         OpenRouterClient $openRouter,
-        SemanticLearningService $learningService
+        SemanticLearningService $learningService,
+        ResultInterpretationService $interpreter,
+        QueryRecognitionService $recognizer
     ) {
         $this->planner = $planner;
+        $this->dateResolver = $dateResolver;
         $this->validator = $validator;
         $this->costGuard = $costGuard;
         $this->compiler = $compiler;
@@ -49,6 +59,8 @@ class ChatEDPController extends Controller
         $this->executor = $executor;
         $this->openRouter = $openRouter;
         $this->learningService = $learningService;
+        $this->interpreter = $interpreter;
+        $this->recognizer = $recognizer;
     }
 
     public function index(Request $request)
@@ -287,8 +299,45 @@ class ChatEDPController extends Controller
         $conversation->touch();
 
         try {
-            // 2. Intent to QueryPlan
-            $plan = $this->planner->plan($validated['message'], $connection->id, $compactHistory, $domainContext);
+            $executionSource = 'llm';
+            // 1.5 Fast Query Recognition with Exception Safety
+            $recognized = null;
+            try {
+                $recognized = $this->recognizer->recognize($validated['message'], $connection->id, $domainContext);
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error('ChatEDP_Telemetry', [
+                    'event' => 'fast_path_error', 
+                    'connection_id' => $connection->id, 
+                    'error' => $e->getMessage()
+                ]);
+            }
+            
+            $minConfidence = config('chatedp.query_recognition.min_fast_path_confidence', 0.95);
+            
+            if ($recognized && $recognized['status'] === 'recognized' && $recognized['confidence'] >= $minConfidence && $recognized['plan']) {
+                $plan = $recognized['plan'];
+                $executionSource = 'fast_path';
+                
+                \Illuminate\Support\Facades\Log::info('ChatEDP_Telemetry', [
+                    'event' => 'fast_path_hit', 
+                    'connection_id' => $connection->id, 
+                    'confidence' => $recognized['confidence'],
+                    'reasons' => $recognized['reasons'] ?? []
+                ]);
+            } else {
+                \Illuminate\Support\Facades\Log::info('ChatEDP_Telemetry', [
+                    'event' => 'fast_path_miss', 
+                    'connection_id' => $connection->id, 
+                    'confidence' => $recognized['confidence'] ?? 0,
+                    'reasons' => $recognized['reasons'] ?? [],
+                    'status' => $recognized['status'] ?? 'error'
+                ]);
+                
+                // 2. Intent to QueryPlan via LLM (Fallback)
+                $plan = $this->planner->plan($validated['message'], $connection->id, $compactHistory, $domainContext);
+                
+                \Illuminate\Support\Facades\Log::info('ChatEDP_Telemetry', ['event' => 'llm_planner_call', 'connection_id' => $connection->id]);
+            }
 
             if ($plan->intent === 'data_unavailable') {
                 $duration = microtime(true) - $startTime;
@@ -366,7 +415,9 @@ class ChatEDPController extends Controller
                 }
             }
 
-            // 3. Validation and Table Discovery
+            // 3. Date Context Resolution & Semantic Validation
+            $plan = $this->dateResolver->resolve($plan);
+
             $validatedPlan = null;
             $maxRetries = 1;
             $retries = 0;
@@ -451,41 +502,20 @@ class ChatEDPController extends Controller
             // 4. Cost Guard
             $this->costGuard->guard($validatedPlan);
 
-            // 5. Query Library Lookup & Query Compiler or Repository Reuse
+            // 5. Query Compiler & Library Check
             try {
                 $libraryHit = $this->libraryService->lookup($validatedPlan, $connection, $domainContext);
-                $matchedRepository = null;
                 $executionSource = 'compiler';
+                $matchedRepository = null;
 
                 if ($libraryHit) {
-                    // Library HIT: Validated QueryRepository definition loaded directly without QueryCompilerService
                     $executionSource = 'library_hit';
-                    $repo = $libraryHit->queryRepository;
-                    $matchedRepository = $repo;
-                    $reuseMatch = $this->executor->findCompatibleRepositoryQuery($validatedPlan, $connection);
-                    
-                    if ($reuseMatch['matched']) {
-                        $sql = $reuseMatch['sql'];
-                        $bindings = $reuseMatch['bindings'];
-                    } else {
-                        $sql = $repo->sql_text;
-                        $bindings = [];
-                    }
-                    
+                    $matchedRepository = $libraryHit->queryRepository;
                     $libraryHit->recordHit();
-                } else {
-                    // Library MISS: Check compatible repository or compile SQL fresh
-                    $reuseMatch = $this->executor->findCompatibleRepositoryQuery($validatedPlan, $connection);
-                    
-                    if ($reuseMatch['matched']) {
-                        $executionSource = 'repository_match';
-                        $sql = $reuseMatch['sql'];
-                        $bindings = $reuseMatch['bindings'];
-                        $matchedRepository = QueryRepository::find($reuseMatch['repository_id']);
-                    } else {
-                        [$sql, $bindings] = $this->compiler->compile($validatedPlan, $connection);
-                    }
                 }
+
+                // Always safely compile parameterized SQL for the current plan's specific bindings
+                [$sql, $bindings] = $this->compiler->compile($validatedPlan, $connection);
 
                 // 6. Secure Execution
                 $executionResult = $this->executor->executeForAnalytics($sql, $bindings, $validatedPlan->limit ?? 500);
@@ -533,245 +563,67 @@ class ChatEDPController extends Controller
 
             $duration = microtime(true) - $startTime;
 
-            // 7. Result Evaluation (Empty vs NULL handling)
-            $totalRows = count($results);
-            $chartConfig = null;
-            
-            // Check for empty or null responses for aggregated queries
-            if (!empty($validatedPlan->metrics)) {
-                $firstRow = $results[0] ?? null;
-                $isGrouped = !empty($validatedPlan->dimensions);
-                $isComparison = !empty($validatedPlan->comparison);
-                
-                $totalRowsAgg = null;
-                if ($firstRow) {
-                    $totalRowsAgg = is_array($firstRow) ? ($firstRow['_total_rows'] ?? null) : ($firstRow->_total_rows ?? null);
-                }
-                
-                if ($isComparison && !$isGrouped && $totalRows > 0) {
-                    $metricConfig = $validatedPlan->metrics[0];
-                    $alias = $metricConfig['alias'] ?? preg_replace('/[^a-zA-Z0-9_]/', '_', $metricConfig['name']);
-                    $col = $metricConfig['name'];
-                    
-                    $valCurrent = is_array($firstRow) ? ($firstRow[$alias . '_current'] ?? $firstRow[$col . '_current'] ?? null) : ($firstRow->{$alias . '_current'} ?? $firstRow->{$col . '_current'} ?? null);
-                    $valPrev = is_array($firstRow) ? ($firstRow[$alias . '_previous'] ?? $firstRow[$col . '_previous'] ?? null) : ($firstRow->{$alias . '_previous'} ?? $firstRow->{$col . '_previous'} ?? null);
-                    $diff = is_array($firstRow) ? ($firstRow[$alias . '_difference'] ?? $firstRow[$col . '_difference'] ?? null) : ($firstRow->{$alias . '_difference'} ?? $firstRow->{$col . '_difference'} ?? null);
-                    $pct = is_array($firstRow) ? ($firstRow[$alias . '_percentage_change'] ?? $firstRow[$col . '_percentage_change'] ?? null) : ($firstRow->{$alias . '_percentage_change'} ?? $firstRow->{$col . '_percentage_change'} ?? null);
-                    
-                    $rowCountCurrent = is_array($firstRow) ? ($firstRow[$alias . '_current_row_count'] ?? $firstRow[$col . '_current_row_count'] ?? 0) : ($firstRow->{$alias . '_current_row_count'} ?? $firstRow->{$col . '_current_row_count'} ?? 0);
-                    $rowCountPrev = is_array($firstRow) ? ($firstRow[$alias . '_previous_row_count'] ?? $firstRow[$col . '_previous_row_count'] ?? 0) : ($firstRow->{$alias . '_previous_row_count'} ?? $firstRow->{$col . '_previous_row_count'} ?? 0);
-                    $nonNullCurrent = is_array($firstRow) ? ($firstRow[$alias . '_current_non_null_count'] ?? $firstRow[$col . '_current_non_null_count'] ?? 0) : ($firstRow->{$alias . '_current_non_null_count'} ?? $firstRow->{$col . '_current_non_null_count'} ?? 0);
-                    $nonNullPrev = is_array($firstRow) ? ($firstRow[$alias . '_previous_non_null_count'] ?? $firstRow[$col . '_previous_non_null_count'] ?? 0) : ($firstRow->{$alias . '_previous_non_null_count'} ?? $firstRow->{$col . '_previous_non_null_count'} ?? 0);
-
-                    // Map to conceptual JSON structure (useful for debug and history)
-                    $conceptualResult = [
-                        'current' => [
-                            'value' => $rowCountCurrent == 0 ? null : $valCurrent,
-                            'row_count' => $rowCountCurrent,
-                            'metric_non_null_count' => $nonNullCurrent
-                        ],
-                        'comparison' => [
-                            'value' => $rowCountPrev == 0 ? null : $valPrev,
-                            'row_count' => $rowCountPrev,
-                            'metric_non_null_count' => $nonNullPrev
-                        ],
-                        'difference' => ($rowCountCurrent == 0 || $rowCountPrev == 0) ? null : $diff,
-                        'percentage_change' => ($rowCountCurrent == 0 || $rowCountPrev == 0) ? null : $pct
-                    ];
-                    
-                    $comparisonConf = $validatedPlan->comparison;
-                    $compType = $comparisonConf['type'] ?? 'previous_period';
-                    $periodType = $comparisonConf['period'] ?? 'month';
-                    
-                    $currentLabel = 'Periode Saat Ini';
-                    $prevLabel = 'Periode Pembanding';
-                    
-                    if ($compType === 'explicit_periods' && !empty($comparisonConf['periods'])) {
-                        $p1 = $comparisonConf['periods'][0] ?? null;
-                        $p2 = $comparisonConf['periods'][1] ?? null;
-                        
-                        $formatDate = function($p) {
-                            if (is_array($p) && count($p) === 2) {
-                                return $p[0] === $p[1] ? $p[0] : "{$p[0]} s/d {$p[1]}";
-                            }
-                            return is_string($p) ? $p : 'Periode';
-                        };
-                        
-                        if ($p1) $currentLabel = $formatDate($p1);
-                        if ($p2) $prevLabel = $formatDate($p2);
-                    } else {
-                        if ($periodType === 'day') {
-                            $currentLabel = 'Hari Ini';
-                            $prevLabel = 'Hari Sebelumnya';
-                        } elseif ($periodType === 'month') {
-                            $currentLabel = 'Bulan Ini';
-                            $prevLabel = 'Bulan Sebelumnya';
-                        } elseif ($periodType === 'year') {
-                            $currentLabel = 'Tahun Ini';
-                            $prevLabel = 'Tahun Sebelumnya';
-                        } elseif ($periodType === 'week') {
-                            $currentLabel = 'Minggu Ini';
-                            $prevLabel = 'Minggu Sebelumnya';
-                        }
-                        
-                        if ($compType === 'same_period_previous_year') {
-                            $prevLabel = 'Tahun Sebelumnya (Periode Sama)';
-                        }
-                    }
-
-                    // Replace results array so UI sees a clean flat table instead of [object Object]
-                    $results = [[
-                        $currentLabel => $rowCountCurrent == 0 ? '-' : $valCurrent,
-                        $prevLabel => $rowCountPrev == 0 ? '-' : $valPrev,
-                        'Selisih' => ($rowCountCurrent == 0 || $rowCountPrev == 0) ? '-' : $diff,
-                        'Persentase (%)' => ($rowCountCurrent == 0 || $rowCountPrev == 0 || ($pct === null && $valPrev == 0)) ? '-' : round((float)$pct, 2) . '%'
-                    ]];
-                    
-                    // Deterministic Interpretation
-                    if ($rowCountCurrent == 0) {
-                        $assistantReply = "Tidak ada transaksi pada periode saat ini.";
-                        goto skip_llm_summary;
-                    } elseif ($rowCountPrev == 0) {
-                        $valFmt = number_format((float)$valCurrent, 0, ',', '.');
-                        $assistantReply = "Nilai pada periode saat ini sebesar {$valFmt}. Tidak ada transaksi pada periode pembanding, sehingga persentase perubahan tidak dapat dihitung.";
-                        goto skip_llm_summary;
-                    } elseif ($nonNullCurrent == 0) {
-                        $assistantReply = "Transaksi ditemukan, tetapi nilai tidak tersedia.";
-                        goto skip_llm_summary;
-                    } else {
-                        // Both valid
-                        $valFmt = number_format((float)$valCurrent, 0, ',', '.');
-                        $prevFmt = number_format((float)$valPrev, 0, ',', '.');
-                        
-                        if ($pct === null && $valPrev == 0) {
-                            $assistantReply = "Nilai periode saat ini sebesar {$valFmt}. Nilai periode pembanding adalah 0, sehingga persentase perubahan tidak dapat dihitung.";
-                        } else {
-                            $diffFmt = number_format((float)abs($diff), 0, ',', '.');
-                            $pctFmt = round((float)$pct, 2) . '%';
-                            
-                            $trend = $diff > 0 ? "naik" : ($diff < 0 ? "turun" : "sama");
-                            if ($trend === "sama") {
-                                $assistantReply = "Nilai periode saat ini sebesar {$valFmt}, sama dengan periode pembanding yang juga sebesar {$prevFmt}.";
-                            } else {
-                                $assistantReply = "Nilai periode saat ini sebesar {$valFmt}, sedangkan periode pembanding sebesar {$prevFmt}. Terdapat selisih sebesar {$diffFmt} ({$trend} {$pctFmt}).";
-                            }
-                        }
-                        goto skip_llm_summary;
-                    }
-                }
-                
-                if ($totalRows === 0 || ($totalRows === 1 && !$isGrouped && $totalRowsAgg !== null && $totalRowsAgg == 0)) {
-                    // No matching rows at all
-                    $assistantReply = "Tidak ada transaksi pada tanggal tersebut.";
-                    goto skip_llm_summary;
-                } else if ($totalRows > 0 && !$isComparison) {
-                    // Rows exist. Are the metrics NULL?
-                    $metricConfig = $validatedPlan->metrics[0];
-                    $alias = $metricConfig['alias'] ?? preg_replace('/[^a-zA-Z0-9_]/', '_', $metricConfig['name']);
-                    $aggSuffix = empty($metricConfig['aggregation']) ? '' : '_' . strtoupper($metricConfig['aggregation']);
-                    
-                    $possibleKeys = [
-                        $alias . $aggSuffix,
-                        $alias,
-                        $metricConfig['name'] . $aggSuffix,
-                        $metricConfig['name'],
-                    ];
-                    
-                    $aggValue = null;
-                    foreach ($possibleKeys as $pk) {
-                        $val = is_array($firstRow) ? ($firstRow[$pk] ?? null) : ($firstRow->$pk ?? null);
-                        if ($val !== null) {
-                            $aggValue = $val;
-                            break;
-                        }
-                    }
-                    
-                    if ($aggValue === null) {
-                        $assistantReply = "Transaksi ditemukan, tetapi nilai penjualan tidak tersedia.";
-                        goto skip_llm_summary;
-                    }
-                }
-            }
-
-            $resultsFormatted = false;
-
-            // Format results headers for natural UI and generate presentation metadata
-            $formattedPayload = $this->formatResultHeaders($results, $validatedPlan, $connection->id);
-            $results = $formattedPayload['data'];
-            $presentationMetadata = $formattedPayload['metadata'];
-            $columnMap = $formattedPayload['column_map'] ?? [];
+            // 7. Result Evaluation & Formatting
+            $interpretation = $this->interpreter->interpret($results, $validatedPlan, $connection->id);
+            $results = $interpretation['results'];
+            $assistantReply = $interpretation['assistantReply'];
+            $presentationMetadata = $interpretation['presentationMetadata'];
+            $columnMap = $interpretation['columnMap'];
             $resultsFormatted = true;
 
-            // Handle Deterministic Scalar (Non-Grouped, Non-Comparison)
-            $isGrouped = !empty($validatedPlan->dimensions);
-            $isComparison = !empty($validatedPlan->comparison);
-            if (!$isGrouped && !$isComparison && $totalRows === 1) {
-                // Scalar result
-                $scalarTexts = [];
-                $firstRowArray = (array)$results[0];
-                foreach ($firstRowArray as $colKey => $colData) {
-                    if ($colKey !== 'Jumlah Transaksi' && $colKey !== '_total_rows' && $colKey !== '#') {
-                        $label = $columnMap[$colKey] ?? (is_string($colKey) ? ucwords(str_replace(['_', '-'], ' ', $colKey)) : $colKey);
-                        $formattedVal = is_array($colData) ? ($colData['formatted_value'] ?? $colData['value'] ?? '-') : (is_object($colData) ? ($colData->formatted_value ?? $colData->value ?? '-') : $colData);
-                        $scalarTexts[] = "{$label}: {$formattedVal}";
-                    }
-                }
-                if (!empty($scalarTexts)) {
-                    $assistantReply = implode("\n", $scalarTexts);
-                    goto skip_llm_summary;
-                }
-            }
-
             // 8. Summary & Insight Generation
-            // Create a compact summary context for the LLM using clean business semantics
-            $compactTop = [];
-            $limit = min(count($results), 10); // up to top 10 for narrative
-            for ($i = 0; $i < $limit; $i++) {
-                $rowArray = (array)$results[$i];
-                $compactRow = [];
-                foreach ($rowArray as $colKey => $colData) {
-                    if ($colKey === '#' || $colKey === '_total_rows') continue;
-                    $label = $columnMap[$colKey] ?? (is_string($colKey) ? ucwords(str_replace(['_', '-'], ' ', $colKey)) : $colKey);
-                    if (is_array($colData) && isset($colData['value'])) {
-                        $compactRow[$label] = $colData['formatted_value'];
-                    } elseif (is_object($colData) && isset($colData->value)) {
-                        $compactRow[$label] = $colData->formatted_value;
-                    } else {
-                        $compactRow[$label] = $colData;
+            if (empty($assistantReply)) {
+                // Create a compact summary context for the LLM using clean business semantics
+                $compactTop = [];
+                $limit = min(count($results), 10); // up to top 10 for narrative
+                for ($i = 0; $i < $limit; $i++) {
+                    $rowArray = (array)$results[$i];
+                    $compactRow = [];
+                    foreach ($rowArray as $colKey => $colData) {
+                        if ($colKey === '#' || $colKey === '_total_rows') continue;
+                        $label = $columnMap[$colKey] ?? (is_string($colKey) ? ucwords(str_replace(['_', '-'], ' ', $colKey)) : $colKey);
+                        if (is_array($colData) && isset($colData['value'])) {
+                            $compactRow[$label] = $colData['formatted_value'];
+                        } elseif (is_object($colData) && isset($colData->value)) {
+                            $compactRow[$label] = $colData->formatted_value;
+                        } else {
+                            $compactRow[$label] = $colData;
+                        }
                     }
+                    $compactTop[] = $compactRow;
                 }
-                $compactTop[] = $compactRow;
+
+                $semanticMetricNames = array_map(function($m) use ($columnMap) {
+                    $alias = $m['alias'] ?? preg_replace('/[^a-zA-Z0-9_]/', '_', $m['name']);
+                    $agg = strtoupper($m['aggregation'] ?? '');
+                    $key = empty($agg) ? $alias : "{$alias}_{$agg}";
+                    return $columnMap[$key] ?? $columnMap[$alias] ?? str_replace('_', ' ', $alias);
+                }, $validatedPlan->metrics ?? []);
+
+                $semanticDimensionNames = array_map(function($d) use ($columnMap) {
+                    return $columnMap[$d] ?? ucwords(str_replace(['_', '-'], ' ', $d));
+                }, $validatedPlan->dimensions ?? []);
+
+                $summaryContext = [
+                    'type' => !empty($validatedPlan->dimensions) ? 'grouped_ranking' : 'scalar',
+                    'total_rows' => count($results),
+                    'top_items' => $compactTop,
+                    'metrics' => $semanticMetricNames,
+                    'dimensions' => $semanticDimensionNames
+                ];
+                
+                $summaryPrompt = "Berikan ringkasan singkat dalam bahasa Indonesia menggunakan format unit ringkas (misal: Rp66,27 juta) berdasarkan data berikut. Sebutkan urutan ranking jika ini adalah data ranking. Jangan buat data fiktif atau hitung ulang angkanya:\n\n" . json_encode($summaryContext);
+                $messages = [
+                    ['role' => 'system', 'content' => 'Kamu adalah asisten data analisis bisnis. Berikan penjelasan natural yang akurat, singkat, dan langsung pada intinya berdasarkan data JSON yang diberikan. Hindari menyebutkan struktur teknis JSON.'],
+                    ['role' => 'user', 'content' => $summaryPrompt]
+                ];
+
+                $assistantReply = $this->openRouter->getCompletion($messages, false);
             }
-
-            $semanticMetricNames = array_map(function($m) use ($columnMap) {
-                $alias = $m['alias'] ?? preg_replace('/[^a-zA-Z0-9_]/', '_', $m['name']);
-                $agg = strtoupper($m['aggregation'] ?? '');
-                $key = empty($agg) ? $alias : "{$alias}_{$agg}";
-                return $columnMap[$key] ?? $columnMap[$alias] ?? str_replace('_', ' ', $alias);
-            }, $validatedPlan->metrics ?? []);
-
-            $semanticDimensionNames = array_map(function($d) use ($columnMap) {
-                return $columnMap[$d] ?? ucwords(str_replace(['_', '-'], ' ', $d));
-            }, $validatedPlan->dimensions ?? []);
-
-            $summaryContext = [
-                'type' => $isGrouped ? 'grouped_ranking' : 'scalar',
-                'total_rows' => count($results),
-                'top_items' => $compactTop,
-                'metrics' => $semanticMetricNames,
-                'dimensions' => $semanticDimensionNames
-            ];
-            
-            $summaryPrompt = "Berikan ringkasan singkat dalam bahasa Indonesia menggunakan format unit ringkas (misal: Rp66,27 juta) berdasarkan data berikut. Sebutkan urutan ranking jika ini adalah data ranking. Jangan buat data fiktif atau hitung ulang angkanya:\n\n" . json_encode($summaryContext);
-            $messages = [
-                ['role' => 'system', 'content' => 'Kamu adalah asisten data analisis bisnis. Berikan penjelasan natural yang akurat, singkat, dan langsung pada intinya berdasarkan data JSON yang diberikan. Hindari menyebutkan struktur teknis JSON.'],
-                ['role' => 'user', 'content' => $summaryPrompt]
-            ];
-
-            $assistantReply = $this->openRouter->getCompletion($messages, false);
             
             // Extract chart recommendation if any (simplified chart config for now)
             $chartConfig = null;
+            $isGrouped = !empty($validatedPlan->dimensions);
             if ($isGrouped && count($results) > 0) {
                 $firstRow = (array)$results[0];
                 $dims = array_keys(array_filter($firstRow, fn($k) => $k !== '#' && $k !== 'Jumlah Transaksi' && (!isset($presentationMetadata['columns']) || count(array_filter($presentationMetadata['columns'], fn($c) => $c['key'] === $k && $c['type'] === 'text')) > 0), ARRAY_FILTER_USE_KEY));
@@ -964,212 +816,4 @@ skip_llm_summary:
         ]);
     }
 
-    protected function formatResultHeaders(array $results, \App\DTO\AI\QueryPlan $plan, int $connectionId): array
-    {
-        if (empty($results)) {
-            return [
-                'metadata' => [
-                    'columns' => [],
-                    'sort' => null,
-                    'ranking' => false
-                ],
-                'data' => [],
-                'column_map' => []
-            ];
-        }
-        
-        $columnMap = [];
-        $typeMap = [];
-
-        // 1. Physical + field-level semantic labels from SyncEntity & SyncEntityField
-        $entities = \App\Models\SyncEntity::whereIn('destination_table', $plan->tables)->get();
-        if ($entities->isNotEmpty()) {
-            $fields = \App\Models\SyncEntityField::whereIn('sync_entity_id', $entities->pluck('id'))
-                ->where('is_enabled', true)
-                ->whereNotNull('destination_field')
-                ->get();
-                
-            foreach ($fields as $field) {
-                $columnMap[$field->destination_field] = $field->label ?? $field->destination_field;
-                $typeMap[$field->destination_field] = $field->semantic_type;
-            }
-        }
-
-        // 2. Business metrics and dimension definitions from AiSemanticDefinition
-        $semanticDefinitions = \App\Models\AiSemanticDefinition::where('connection_id', $connectionId)
-            ->whereIn('source_table', $plan->tables)
-            ->get();
-
-        foreach ($semanticDefinitions as $semDef) {
-            if ($semDef->type === 'dimension' && !empty($semDef->source_column)) {
-                $columnMap[$semDef->source_column] = $semDef->name;
-            }
-        }
-        
-        $columnMap['_total_rows'] = 'Jumlah Transaksi';
-        $typeMap['_total_rows'] = 'integer';
-
-        $metricCols = [];
-        
-        if (!empty($plan->metrics)) {
-            foreach ($plan->metrics as $m) {
-                $alias = $m['alias'] ?? preg_replace('/[^a-zA-Z0-9_]/', '_', $m['name']);
-                $agg = strtoupper($m['aggregation'] ?? '');
-                $aggSuffix = empty($agg) ? '' : "_{$agg}";
-
-                $targetKeys = array_unique([
-                    $alias . $aggSuffix,
-                    $alias,
-                    $m['name'] . $aggSuffix,
-                    $m['name']
-                ]);
-
-                foreach ($targetKeys as $k) {
-                    $metricCols[] = $k;
-                }
-
-                // Check if this metric is an AiSemanticDefinition
-                $semMatch = $semanticDefinitions->first(function($s) use ($m, $alias) {
-                    return $s->type === 'metric' && (
-                        strtolower($s->name) === strtolower(str_replace('_', ' ', $alias))
-                        || strtolower($s->name) === strtolower($m['name'])
-                        || strtolower($s->expression ?? '') === strtolower($m['name'])
-                        || strtolower($s->source_column ?? '') === strtolower($m['name'])
-                    );
-                });
-
-                $cleanMetricLabel = $semMatch ? $semMatch->name : str_replace('_', ' ', $alias);
-                if (isset($columnMap[$m['name']]) && !$semMatch) {
-                    $baseSemanticName = $columnMap[$m['name']];
-                } else {
-                    $baseSemanticName = $cleanMetricLabel;
-                }
-
-                $type = ($agg === 'COUNT') ? 'integer' : 'currency';
-
-                $displayLabel = $cleanMetricLabel;
-                // If it's a standard physical column without custom business metric name, prepend aggregation
-                if (!$semMatch && !empty($agg) && !str_starts_with(strtolower($cleanMetricLabel), strtolower($agg))) {
-                    if ($agg === 'SUM') {
-                        $displayLabel = 'Total ' . $baseSemanticName;
-                    } elseif ($agg === 'AVG') {
-                        $displayLabel = 'Rata-rata ' . $baseSemanticName;
-                    } elseif ($agg === 'COUNT') {
-                        $displayLabel = 'Jumlah ' . $baseSemanticName;
-                    } elseif ($agg === 'MAX') {
-                        $displayLabel = $baseSemanticName . ' Tertinggi';
-                    } elseif ($agg === 'MIN') {
-                        $displayLabel = $baseSemanticName . ' Terendah';
-                    } else {
-                        $displayLabel = $baseSemanticName . ' (' . $agg . ')';
-                    }
-                }
-
-                foreach ($targetKeys as $k) {
-                    $columnMap[$k] = $displayLabel;
-                    $typeMap[$k] = $type;
-                }
-            }
-        }
-        
-        // Setup Sort and Ranking
-        $isGrouped = !empty($plan->dimensions);
-        $sortField = null;
-        $sortDir = 'desc';
-        
-        if ($isGrouped) {
-            if (!empty($plan->sorts)) {
-                $sortField = $plan->sorts[0]['field'];
-                $sortDir = strtolower($plan->sorts[0]['direction'] ?? 'desc');
-            } elseif (!empty($metricCols)) {
-                $sortField = $metricCols[0];
-                $sortDir = 'desc';
-            }
-            
-            // Execute PHP-side sorting
-            if ($sortField) {
-                usort($results, function($a, $b) use ($sortField, $sortDir) {
-                    $valA = is_array($a) ? ($a[$sortField] ?? 0) : ($a->$sortField ?? 0);
-                    $valB = is_array($b) ? ($b[$sortField] ?? 0) : ($b->$sortField ?? 0);
-                    if ($valA == $valB) return 0;
-                    if ($sortDir === 'asc') {
-                        return ($valA < $valB) ? -1 : 1;
-                    } else {
-                        return ($valA > $valB) ? -1 : 1;
-                    }
-                });
-            }
-            
-            // Apply Limit if exists
-            if (isset($plan->limit) && $plan->limit > 0) {
-                $results = array_slice($results, 0, $plan->limit);
-            }
-        }
-
-        $formattedResults = [];
-        $rank = 1;
-        
-        foreach ($results as $row) {
-            $newRow = [];
-            if ($isGrouped && count($plan->metrics) > 0) {
-                $newRow['#'] = $rank++;
-            }
-            
-            foreach ((array)$row as $key => $value) {
-                // Formatting value
-                $t = $typeMap[$key] ?? 'text';
-                $formattedValue = $value;
-                if ($t === 'currency' && is_numeric($value)) {
-                    $formattedValue = 'Rp' . number_format((float)$value, 2, ',', '.');
-                } elseif ($t === 'integer' && is_numeric($value)) {
-                    $formattedValue = number_format((float)$value, 0, ',', '.') . ($key === '_total_rows' ? ' transaksi' : '');
-                }
-                
-                $newRow[$key] = [
-                    'value' => $value,
-                    'formatted_value' => $formattedValue
-                ];
-            }
-            $formattedResults[] = (object)$newRow;
-        }
-        
-        // Build Presentation Metadata
-        $columns = [];
-        if ($isGrouped && count($plan->metrics) > 0) {
-            $columns[] = [
-                'key' => '#',
-                'label' => '#',
-                'type' => 'integer'
-            ];
-        }
-        
-        if (!empty($results)) {
-            $firstRow = (array)$results[0];
-            foreach (array_keys($firstRow) as $key) {
-                $label = $columnMap[$key] ?? $key;
-                if (!isset($columnMap[$key])) {
-                    $label = ucwords(str_replace(['_', '-'], ' ', preg_replace('/(?<!^)[A-Z]/', ' $0', $key)));
-                }
-                $type = $typeMap[$key] ?? 'text';
-                
-                $columns[] = [
-                    'key' => $key,
-                    'label' => $label,
-                    'type' => $type,
-                    'format' => $type === 'currency' ? 'IDR' : null,
-                    'unit' => $key === '_total_rows' ? 'transaksi' : null
-                ];
-            }
-        }
-        
-        return [
-            'metadata' => [
-                'columns' => $columns,
-                'sort' => $sortField ? ['field' => $sortField, 'direction' => $sortDir] : null,
-                'ranking' => $isGrouped && count($plan->metrics) > 0
-            ],
-            'data' => $formattedResults,
-            'column_map' => $columnMap
-        ];
-    }
 }

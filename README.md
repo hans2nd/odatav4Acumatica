@@ -15,6 +15,13 @@ A powerful synchronization engine built on Laravel to bridge Acumatica ERP (ODat
 
 ## Changelog
 
+### v1.4.4 (RBAC Security Observability & Dynamic Permission Fixes)
+- **Feature: RBAC Audit Trail**: Implemented a comprehensive, append-only `RbacAuditLog` system to track all security-sensitive mutations without altering authorization semantics. Tracks `actor`, `target`, `action`, `before_state`, `after_state`, and environment metadata.
+- **Feature: Security Observability**: Added automated audit logging for user creation, deletion, activation toggles, role assignments, and role permission matrix updates.
+- **Enhancement: Audit Redaction**: Ensured sensitive fields (like `password`, `api_token`, `remember_token`) are automatically redacted from `before_state` and `after_state` payloads prior to persistence.
+- **Bugfix: Menu vs Dynamic Entity Permission Separation**: Separated Dynamic API Endpoint permissions from standard generic module permissions in the UI. Endpoints are now logically grouped and cleanly persisted without overlapping.
+- **Bugfix: API Endpoint Case Sensitivity**: Fixed an issue where accessing API endpoints with mixed-case URL slugs resulted in 403 Unauthorized errors despite holding the valid permissions. `DataEndpointController` now strictly constructs the permission check using the canonical `endpoint_slug` from the database.
+
 ### v1.4.3 (ChatEDP Intelligence & UI/UX Overhaul)
 - **Feature: Modern Conversational UI**: Completely redesigned ChatEDP (`resources/views/chatedp/index.blade.php`) with a premium glassmorphism aesthetic, gradient charts, avatar-based chat bubbles, and smooth fade-in animations.
 - **Feature: Chat History Management**: Implemented a `DELETE` endpoint (`/api/chatedp/conversations/{id}`) and sidebar UI to allow users to permanently delete chat histories.

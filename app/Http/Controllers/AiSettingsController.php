@@ -15,10 +15,6 @@ class AiSettingsController extends Controller
      */
     public function index(Request $request)
     {
-        if (!$request->user()->hasPermission('ai_settings.view')) {
-            abort(403, 'Unauthorized.');
-        }
-
         $isConfigured = AiSetting::where('key', 'openrouter_api_key')->exists();
         $baseUrl = AiSetting::getConfig('openrouter_base_url', 'https://openrouter.ai/api/v1');
         $model = AiSetting::getConfig('openrouter_model', 'openai/gpt-4o');
@@ -35,10 +31,6 @@ class AiSettingsController extends Controller
 
     public function update(Request $request)
     {
-        if (!$request->user()->hasPermission('ai_settings.update')) {
-            abort(403, 'Unauthorized.');
-        }
-
         $validated = $request->validate([
             'api_key' => 'nullable|string',
             'base_url' => 'required|url',
@@ -67,10 +59,6 @@ class AiSettingsController extends Controller
 
     public function disconnect(Request $request)
     {
-        if (!$request->user()->hasPermission('ai_settings.update')) {
-            abort(403, 'Unauthorized.');
-        }
-
         AiSetting::where('key', 'openrouter_api_key')->delete();
         AiSetting::setConfig('openrouter_last_test_result', 'Disconnected');
         AiSetting::setConfig('openrouter_last_test_time', now()->format('Y-m-d H:i:s'));
@@ -80,10 +68,6 @@ class AiSettingsController extends Controller
 
     public function testConnection(Request $request)
     {
-        if (!$request->user()->hasPermission('ai_settings.test')) {
-            return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
-        }
-
         $inputKey = $request->input('api_key');
         // If empty in request, fallback to DB
         $apiKey = !empty($inputKey) ? $inputKey : AiSetting::getConfig('openrouter_api_key', null, true);
@@ -219,10 +203,6 @@ class AiSettingsController extends Controller
 
     public function getModelProviders(Request $request, $modelId)
     {
-        if (!$request->user()->hasPermission('ai_settings.view')) {
-            abort(403, 'Unauthorized.');
-        }
-
         // We decode the model ID as it might have slashes (e.g., openai/gpt-4o)
         $modelId = urldecode($modelId);
         

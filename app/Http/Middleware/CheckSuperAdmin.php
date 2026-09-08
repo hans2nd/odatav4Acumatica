@@ -22,6 +22,10 @@ class CheckSuperAdmin
 
         $user = Auth::user();
 
+        if (array_key_exists('is_active', $user->getAttributes()) && !$user->is_active) {
+            abort(403, 'Your account has been deactivated.');
+        }
+
         // Strict enforcement: User must genuinely be a Super Admin
         // This bypasses granular permissions (like settings.manage) which could have been mistakenly granted.
         if (!method_exists($user, 'isSuperAdmin') || !$user->isSuperAdmin()) {

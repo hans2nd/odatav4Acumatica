@@ -39,51 +39,53 @@ class QueryCompilerService
         
         // 1. Identify date context for comparison
         if ($isComparison) {
+            $compType = strtolower($plan->comparison['type'] ?? 'explicit_periods');
+            
+            if ($compType === 'explicit_periods' && !empty($plan->comparison['periods'])) {
+                $periods = $plan->comparison['periods'];
+                if (count($periods) === 2) {
+                    $p1 = $periods[0];
+                    $p2 = $periods[1];
+                    $currentRange = is_array($p1) ? ['start' => $p1[0], 'end' => $p1[1]] : ['start' => $p1, 'end' => $p1];
+                    $prevRange = is_array($p2) ? ['start' => $p2[0], 'end' => $p2[1]] : ['start' => $p2, 'end' => $p2];
+                }
+            }
+            
+            // Find which field in filters represents the date range
             foreach ($plan->filters as $filter) {
-                if (stripos($filter['field'], 'date') !== false || stripos($filter['field'], 'tanggal') !== false || stripos($filter['field'], 'waktu') !== false) {
+                if (!empty($currentRange) && isset($filter['value']) && is_array($filter['value'])) {
+                    if (strtoupper($filter['operator']) === 'BETWEEN' && $filter['value'] === [$currentRange['start'], $currentRange['end']]) {
+                        $dateField = $filter['field'];
+                        break;
+                    }
+                }
+                
+                // Fallback: look for common date field keywords if we couldn't match the exact value
+                if (!$dateField && (stripos($filter['field'], 'date') !== false || stripos($filter['field'], 'tanggal') !== false || stripos($filter['field'], 'waktu') !== false)) {
                     $dateField = $filter['field'];
-                    $op = strtoupper($filter['operator']);
-                    if ($op === '=') {
-                        $hasSingleDateContext = true;
-                        $currentRange = ['start' => $filter['value'], 'end' => $filter['value']];
-                    } elseif ($op === '>=' || $op === '>') {
-                        $currentRange['start'] = $filter['value'];
-                    } elseif ($op === '<=' || $op === '<') {
-                        $currentRange['end'] = $filter['value'];
-                    } elseif ($op === 'BETWEEN' && is_array($filter['value']) && count($filter['value']) == 2) {
-                        $currentRange['start'] = $filter['value'][0];
-                        $currentRange['end'] = $filter['value'][1];
+                    if (empty($currentRange)) {
+                        $op = strtoupper($filter['operator']);
+                        if ($op === '=') {
+                            $hasSingleDateContext = true;
+                            $currentRange = ['start' => $filter['value'], 'end' => $filter['value']];
+                        } elseif ($op === '>=' || $op === '>') {
+                            $currentRange['start'] = $filter['value'];
+                        } elseif ($op === '<=' || $op === '<') {
+                            $currentRange['end'] = $filter['value'];
+                        } elseif ($op === 'BETWEEN' && is_array($filter['value']) && count($filter['value']) == 2) {
+                            $currentRange['start'] = $filter['value'][0];
+                            $currentRange['end'] = $filter['value'][1];
+                        }
                     }
                 }
             }
             
             if (!$dateField) {
-                // Fallback to table's default date field
-                $definition = \Illuminate\Support\Facades\DB::table('sync_metadata_definitions')
-                    ->where('connection_id', $connection->id)
-                    ->where('entity_key', $plan->tables[0])
-                    ->first();
-                $semanticProfile = $definition && $definition->semantic_profile ? json_decode($definition->semantic_profile, true) : null;
-                
-                if ($semanticProfile && !empty($semanticProfile['date_fields'])) {
-                    $dateField = $semanticProfile['date_fields'][0];
-                } elseif ($definition) {
-                    $dateFieldMeta = \Illuminate\Support\Facades\DB::table('sync_metadata_fields')
-                        ->where('definition_id', $definition->id)
-                        ->whereIn('semantic_type', ['datetime', 'date'])
-                        ->first();
-                    if ($dateFieldMeta) {
-                        $dateField = $dateFieldMeta->field_name;
-                    } else {
-                        // Fallback by name
-                        $dateFieldMeta = \Illuminate\Support\Facades\DB::table('sync_metadata_fields')
-                            ->where('definition_id', $definition->id)
-                            ->where('field_name', 'like', '%date%')
-                            ->first();
-                        if ($dateFieldMeta) {
-                            $dateField = $dateFieldMeta->field_name;
-                        }
-                    }
+                // Fallback to table's default date field via SemanticResolutionService or Schema
+                $semanticResolver = app(\App\Services\AI\SemanticResolutionService::class);
+                $dateResult = $semanticResolver->resolveDateField($connection, $plan->tables);
+                if ($dateResult['matched']) {
+                    $dateField = $dateResult['physical_mapping'];
                 }
             }
             
@@ -91,92 +93,8 @@ class QueryCompilerService
                 throw new \App\Exceptions\AI\SemanticAmbiguityException("Tidak dapat melakukan perbandingan karena rentang waktu atau tanggal acuan tidak ditentukan dalam konteks.");
             }
             
-            $compType = strtolower($plan->comparison['type'] ?? 'previous_period');
-            $period = strtolower($plan->comparison['period'] ?? 'month');
-            
-            if ($compType === 'explicit_periods' && !empty($plan->comparison['periods'])) {
-                $periods = $plan->comparison['periods'];
-                if (count($periods) === 2) {
-                    $p1 = $periods[0];
-                    $p2 = $periods[1];
-                    if (is_array($p1) && count($p1) === 2) {
-                        $currentRange = ['start' => $p1[0], 'end' => $p1[1]];
-                    } else {
-                        $currentRange = ['start' => $p1, 'end' => $p1];
-                    }
-                    if (is_array($p2) && count($p2) === 2) {
-                        $prevRange = ['start' => $p2[0], 'end' => $p2[1]];
-                    } else {
-                        $prevRange = ['start' => $p2, 'end' => $p2];
-                    }
-                }
-            } else {
-                if (empty($currentRange)) {
-                    throw new \App\Exceptions\AI\SemanticAmbiguityException("Tidak dapat melakukan perbandingan karena rentang waktu acuan tidak ditemukan.");
-                }
-                
-                if ($hasSingleDateContext && $compType !== 'same_period_previous_year' && $period !== 'day') {
-                    throw new \App\Exceptions\AI\SemanticAmbiguityException("Terdapat konteks satu hari spesifik ({$currentRange['start']}). Apakah Anda ingin membandingkannya dengan tanggal yang sama (misal hari sebelumnya), atau membandingkan total seluruh bulan?");
-                }
-                
-                if ($compType === 'same_period_previous_year') {
-                    $period = 'year';
-                }
-                
-                $start = $currentRange['start'] ?? null;
-                $end = $currentRange['end'] ?? null;
-                
-                if ($period === 'month') {
-                    if ($start) {
-                        $dt = new \DateTime($start);
-                        $dt->modify('-1 month');
-                        $prevRange['start'] = $dt->format('Y-m-d');
-                    }
-                    if ($end) {
-                        $dt = new \DateTime($end);
-                        if ($dt->format('t') === $dt->format('d')) {
-                            $dt->modify('last day of previous month');
-                        } else {
-                            $dt->modify('-1 month');
-                        }
-                        $prevRange['end'] = $dt->format('Y-m-d');
-                    }
-                } elseif ($period === 'year') {
-                    if ($start) {
-                        $dt = new \DateTime($start);
-                        $dt->modify('-1 year');
-                        $prevRange['start'] = $dt->format('Y-m-d');
-                    }
-                    if ($end) {
-                        $dt = new \DateTime($end);
-                        $dt->modify('-1 year');
-                        $prevRange['end'] = $dt->format('Y-m-d');
-                    }
-                } elseif ($period === 'week') {
-                    if ($start) {
-                        $dt = new \DateTime($start);
-                        $dt->modify('-1 week');
-                        $prevRange['start'] = $dt->format('Y-m-d');
-                    }
-                    if ($end) {
-                        $dt = new \DateTime($end);
-                        $dt->modify('-1 week');
-                        $prevRange['end'] = $dt->format('Y-m-d');
-                    }
-                } elseif ($period === 'day') {
-                    if ($start) {
-                        $dt = new \DateTime($start);
-                        $dt->modify('-1 day');
-                        $prevRange['start'] = $dt->format('Y-m-d');
-                    }
-                    if ($end) {
-                        $dt = new \DateTime($end);
-                        $dt->modify('-1 day');
-                        $prevRange['end'] = $dt->format('Y-m-d');
-                    }
-                } else {
-                    throw new \App\Exceptions\AI\SemanticAmbiguityException("Periode perbandingan '{$period}' belum didukung.");
-                }
+            if (empty($currentRange) || empty($prevRange)) {
+                 throw new \App\Exceptions\AI\SemanticAmbiguityException("Tidak dapat melakukan perbandingan karena periode tidak terdefinisi secara eksplisit. Harap tentukan periode (misal: bulan ini, minggu lalu).");
             }
             
             // Adjust ranges for datetime fields to ensure full day coverage

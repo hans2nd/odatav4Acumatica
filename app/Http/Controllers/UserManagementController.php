@@ -30,17 +30,28 @@ class UserManagementController extends Controller
         ]);
     }
 
-    /**
-     * Create a new user.
-     */
     public function storeUser(Request $request): JsonResponse
     {
+        // Backward compatibility
+        if ($request->has('role_id') && !$request->has('role_ids')) {
+            $request->merge(['role_ids' => [$request->input('role_id')]]);
+        }
+
         $validated = $request->validate([
-            'name'     => 'required|string|max:255',
-            'email'    => 'required|email|unique:users,email',
-            'password' => 'required|string|min:6',
-            'role_id'  => 'required|exists:roles,id',
+            'name'       => 'required|string|max:255',
+            'email'      => 'required|email|unique:users,email',
+            'password'   => 'required|string|min:6',
+            'role_ids'   => 'required|array|min:1',
+            'role_ids.*' => 'exists:roles,id',
         ]);
+
+        $targetRoles = Role::whereIn('id', $validated['role_ids'])->get();
+        $targetHasSuperAdmin = $targetRoles->where('is_superadmin', true)->isNotEmpty();
+
+        if ($targetHasSuperAdmin && (!auth()->user() || !auth()->user()->isSuperAdmin())) {
+            app(\App\Services\RbacAuditService::class)->auditDeniedAttempt('Unauthorized Super Administrator role assignment in storeUser');
+            abort(403, 'You are not authorized to assign the Super Administrator role.');
+        }
 
         $user = User::create([
             'name'     => $validated['name'],
@@ -48,7 +59,9 @@ class UserManagementController extends Controller
             'password' => $validated['password'],
         ]);
 
-        $user->roles()->attach($validated['role_id']);
+        $user->roles()->sync($validated['role_ids']);
+        app(\App\Services\RbacAuditService::class)->auditUserCreated($user);
+        app(\App\Services\RbacAuditService::class)->auditUserRoleChange($user, [], $validated['role_ids']);
 
         return response()->json([
             'success' => true,
@@ -57,28 +70,61 @@ class UserManagementController extends Controller
         ]);
     }
 
-    /**
-     * Update a user.
-     */
     public function updateUser(Request $request, User $user): JsonResponse
     {
-        $validated = $request->validate([
-            'name'     => 'required|string|max:255',
-            'email'    => ['required', 'email', Rule::unique('users', 'email')->ignore($user->id)],
-            'password' => 'nullable|string|min:6',
-            'role_id'  => 'required|exists:roles,id',
-        ]);
-
-        $user->update([
-            'name'  => $validated['name'],
-            'email' => $validated['email'],
-        ]);
-
-        if (!empty($validated['password'])) {
-            $user->update(['password' => $validated['password']]);
+        // Backward compatibility
+        if ($request->has('role_id') && !$request->has('role_ids')) {
+            $request->merge(['role_ids' => [$request->input('role_id')]]);
         }
 
-        $user->roles()->sync([$validated['role_id']]);
+        $validated = $request->validate([
+            'name'       => 'required|string|max:255',
+            'email'      => ['required', 'email', Rule::unique('users', 'email')->ignore($user->id)],
+            'password'   => 'nullable|string|min:6',
+            'role_ids'   => 'required|array|min:1',
+            'role_ids.*' => 'exists:roles,id',
+        ]);
+
+        $targetRoles = Role::whereIn('id', $validated['role_ids'])->get();
+        $targetHasSuperAdmin = $targetRoles->where('is_superadmin', true)->isNotEmpty();
+
+        if ($targetHasSuperAdmin && (!auth()->user() || !auth()->user()->isSuperAdmin())) {
+            app(\App\Services\RbacAuditService::class)->auditDeniedAttempt('Unauthorized Super Administrator role assignment in updateUser', $user->id);
+            abort(403, 'You are not authorized to assign the Super Administrator role.');
+        }
+
+        if ($user->isSuperAdmin() && (!auth()->user() || !auth()->user()->isSuperAdmin())) {
+            app(\App\Services\RbacAuditService::class)->auditDeniedAttempt('Unauthorized modification of Super Administrator in updateUser', $user->id);
+            abort(403, 'You are not authorized to modify a Super Administrator.');
+        }
+
+        \Illuminate\Support\Facades\DB::transaction(function () use ($user, $validated, $targetHasSuperAdmin) {
+            $user->update([
+                'name'  => $validated['name'],
+                'email' => $validated['email'],
+            ]);
+
+            if (!empty($validated['password'])) {
+                $user->update(['password' => $validated['password']]);
+            }
+
+            if ($user->isSuperAdmin() && !$targetHasSuperAdmin) {
+                $activeSuperAdminCount = User::where('is_active', true)
+                    ->whereHas('roles', function($q) {
+                        $q->where('roles.is_superadmin', true)->where('roles.is_active', true);
+                    })->lockForUpdate()->count();
+                    
+                if ($activeSuperAdminCount <= 1) {
+                    app(\App\Services\RbacAuditService::class)->auditDeniedAttempt('Attempted to remove the last active Super Administrator role', $user->id);
+                    abort(403, 'At least one active Super Administrator must remain.');
+                }
+            }
+
+            $beforeRoleIds = $user->roles()->pluck('roles.id')->toArray();
+            $user->roles()->sync($validated['role_ids']);
+            app(\App\Services\RbacAuditService::class)->auditUserRoleChange($user, $beforeRoleIds, $validated['role_ids']);
+            $user->clearAuthorizationCache();
+        });
 
         return response()->json([
             'success' => true,
@@ -100,9 +146,32 @@ class UserManagementController extends Controller
             ], 422);
         }
 
+        if ($user->isSuperAdmin() && (!auth()->user() || !auth()->user()->isSuperAdmin())) {
+            app(\App\Services\RbacAuditService::class)->auditDeniedAttempt('Unauthorized deletion of Super Administrator', $user->id);
+            abort(403, 'You are not authorized to delete a Super Administrator.');
+        }
+
         $name = $user->name;
-        $user->roles()->detach();
-        $user->delete();
+
+        if ($user->isSuperAdmin()) {
+            \Illuminate\Support\Facades\DB::transaction(function () use ($user) {
+                $activeSuperAdminCount = User::where('is_active', true)
+                    ->whereHas('roles', function($q) {
+                        $q->where('roles.is_superadmin', true)->where('roles.is_active', true);
+                    })->lockForUpdate()->count();
+                if ($activeSuperAdminCount <= 1) {
+                    app(\App\Services\RbacAuditService::class)->auditDeniedAttempt('Attempted to delete the last active Super Administrator', $user->id);
+                    abort(403, 'At least one active Super Administrator must remain.');
+                }
+                $user->roles()->detach();
+                $user->delete();
+                app(\App\Services\RbacAuditService::class)->auditUserDeleted($user);
+            });
+        } else {
+            $user->roles()->detach();
+            $user->delete();
+            app(\App\Services\RbacAuditService::class)->auditUserDeleted($user);
+        }
 
         return response()->json([
             'success' => true,
@@ -118,6 +187,11 @@ class UserManagementController extends Controller
         $validated = $request->validate([
             'password' => 'required|string|min:6',
         ]);
+
+        if ($user->isSuperAdmin() && (!auth()->user() || !auth()->user()->isSuperAdmin())) {
+            app(\App\Services\RbacAuditService::class)->auditDeniedAttempt('Unauthorized password reset of Super Administrator', $user->id);
+            abort(403, 'You are not authorized to reset password for a Super Administrator.');
+        }
 
         $user->update(['password' => $validated['password']]);
 
@@ -145,9 +219,17 @@ class UserManagementController extends Controller
     public function updateRolePermissions(Request $request, Role $role): JsonResponse
     {
         if ($role->is_superadmin) {
+            if (!auth()->user() || !auth()->user()->isSuperAdmin()) {
+                app(\App\Services\RbacAuditService::class)->auditDeniedAttempt('Unauthorized modification of Super Administrator role permissions', null, $role->id);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You are not authorized to modify Super Administrator permissions.',
+                ], 403);
+            }
+            app(\App\Services\RbacAuditService::class)->auditDeniedAttempt('Attempted to modify immutable Super Administrator role permissions', null, $role->id);
             return response()->json([
                 'success' => false,
-                'message' => 'Cannot modify permissions for superadmin role.',
+                'message' => 'Cannot modify permissions for superadmin role. Full access is implicit.',
             ], 422);
         }
 
@@ -156,7 +238,9 @@ class UserManagementController extends Controller
             'permission_ids.*' => 'exists:permissions,id',
         ]);
 
+        $beforePermissionIds = $role->permissions()->pluck('permissions.id')->toArray();
         $role->permissions()->sync($validated['permission_ids']);
+        app(\App\Services\RbacAuditService::class)->auditPermissionChange($role, $beforePermissionIds, $validated['permission_ids']);
 
         return response()->json([
             'success' => true,
@@ -171,12 +255,12 @@ class UserManagementController extends Controller
     public function storeRole(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'name'         => 'required|string|max:50|unique:roles,name|regex:/^[a-z][a-z0-9_]*$/',
-            'name' => 'required|string|max:100',
+            'name'         => 'required|string|max:100|unique:roles,name',
             'description'  => 'nullable|string|max:255',
         ]);
 
         $role = Role::create($validated);
+        app(\App\Services\RbacAuditService::class)->auditRoleCreated($role);
 
         return response()->json([
             'success' => true,
@@ -207,10 +291,54 @@ class UserManagementController extends Controller
         $name = $role->name;
         $role->permissions()->detach();
         $role->delete();
+        app(\App\Services\RbacAuditService::class)->auditRoleDeleted($role);
 
         return response()->json([
             'success' => true,
             'message' => "Role '{$name}' deleted successfully.",
+        ]);
+    }
+
+    public function toggleActiveStatus(Request $request, User $user): JsonResponse
+    {
+        if ($user->isSuperAdmin() && (!auth()->user() || !auth()->user()->isSuperAdmin())) {
+            app(\App\Services\RbacAuditService::class)->auditDeniedAttempt('Unauthorized modification of Super Administrator status', $user->id);
+            abort(403, 'You are not authorized to modify a Super Administrator.');
+        }
+
+        if ($user->id === auth()->id() && $user->is_active) {
+            app(\App\Services\RbacAuditService::class)->auditDeniedAttempt('Attempted self-deactivation', $user->id);
+            abort(403, 'You cannot deactivate your own account.');
+        }
+
+        $newState = !$user->is_active;
+
+        $beforeStatus = $user->is_active;
+
+        if ($user->isSuperAdmin() && !$newState) {
+            \Illuminate\Support\Facades\DB::transaction(function () use ($user, $newState, $beforeStatus) {
+                $activeSuperAdminCount = User::where('is_active', true)
+                    ->whereHas('roles', function($q) {
+                        $q->where('roles.is_superadmin', true)->where('roles.is_active', true);
+                    })->lockForUpdate()->count();
+                if ($activeSuperAdminCount <= 1) {
+                    app(\App\Services\RbacAuditService::class)->auditDeniedAttempt('Attempted to deactivate the last active Super Administrator', $user->id);
+                    abort(403, 'At least one active Super Administrator must remain.');
+                }
+                $user->update(['is_active' => $newState]);
+                $user->clearAuthorizationCache();
+                app(\App\Services\RbacAuditService::class)->auditUserStatusChange($user, $beforeStatus, $newState);
+            });
+        } else {
+            $user->update(['is_active' => $newState]);
+            $user->clearAuthorizationCache();
+            app(\App\Services\RbacAuditService::class)->auditUserStatusChange($user, $beforeStatus, $newState);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => "User '{$user->name}' status updated successfully.",
+            'is_active' => $user->is_active
         ]);
     }
 
@@ -287,10 +415,29 @@ class UserManagementController extends Controller
 
         // Map remaining other permissions directly to their matching menus
         $finalOther = [];
+        $apiEndpointPermissions = [];
+
         foreach ($remainingOther as $perm) {
             $parts = explode('.', $perm->permission_key);
             $prefix = $parts[0];
             
+            // Extract api.endpoint.* permissions
+            if ($prefix === 'api' && isset($parts[1]) && $parts[1] === 'endpoint') {
+                $endpointSlug = $parts[2] ?? '';
+                if ($endpointSlug) {
+                    if (!isset($apiEndpointPermissions[$endpointSlug])) {
+                        $apiEndpointPermissions[$endpointSlug] = [
+                            'entity' => $endpointSlug,
+                            'permissions' => []
+                        ];
+                    }
+                    $apiEndpointPermissions[$endpointSlug]['permissions'][] = $perm;
+                } else {
+                    $finalOther[] = $perm;
+                }
+                continue;
+            }
+
             $assigned = false;
 
             // Special case: sync_engine goes to Synchronization
@@ -343,9 +490,10 @@ class UserManagementController extends Controller
         $menuTree = $buildArrayTree($menusArray);
 
         return response()->json([
-            'success'          => true,
-            'menus'            => $menuTree,
-            'otherPermissions' => $finalOther,
+            'success'                => true,
+            'menus'                  => $menuTree,
+            'otherPermissions'       => $finalOther,
+            'apiEndpointPermissions' => array_values($apiEndpointPermissions),
         ]);
     }
 }

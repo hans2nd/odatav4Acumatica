@@ -124,24 +124,30 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/report/sales-order', [ReportController::class, 'salesOrder'])->name('report.sales-order');
     });
 
-    Route::middleware(['permission:report_builder.manage'])->group(function () {
+    Route::middleware(['permission:report_builder.view'])->group(function () {
         Route::get('/report-builder', [ReportBuilderController::class, 'index'])->name('report.builder');
         Route::get('/api/report-builder/connections', [ReportBuilderController::class, 'connections']);
         Route::get('/api/report-builder/tables', [ReportBuilderController::class, 'tables']);
         Route::get('/api/report-builder/columns', [ReportBuilderController::class, 'columns']);
-        Route::post('/api/report-builder/prepare', [ReportBuilderController::class, 'prepare']);
         Route::get('/api/report-builder/progress', [ReportBuilderController::class, 'checkProgress']);
         Route::get('/api/report-builder/download/{token}', [ReportBuilderController::class, 'download'])->name('report.builder.download');
     });
 
-    Route::middleware(['permission:query_builder.manage'])->group(function () {
+    Route::middleware(['permission:report_builder.manage'])->group(function () {
+        Route::post('/api/report-builder/prepare', [ReportBuilderController::class, 'prepare']);
+    });
+
+    Route::middleware(['permission:query_builder.view'])->group(function () {
         Route::get('/query-builder', [QueryBuilderController::class, 'index'])->name('query.builder');
         Route::get('/api/query-builder/tables', [QueryBuilderController::class, 'tables']);
         Route::get('/api/query-builder/columns', [QueryBuilderController::class, 'columns']);
+        Route::get('/api/query-builder/download/{token}', [QueryBuilderController::class, 'download'])->name('query.builder.download');
+    });
+
+    Route::middleware(['permission:query_builder.manage'])->group(function () {
         Route::post('/api/query-builder/execute', [QueryBuilderController::class, 'execute']);
         Route::post('/api/query-builder/export', [QueryBuilderController::class, 'export']);
         Route::post('/api/query-builder/save', [QueryBuilderController::class, 'save']);
-        Route::get('/api/query-builder/download/{token}', [QueryBuilderController::class, 'download'])->name('query.builder.download');
     });
 
     // Query Repository (Create)
@@ -175,11 +181,14 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/api/report/query-repository/download/{token}', [\App\Http\Controllers\QueryRepositoryController::class, 'download'])->name('api.query-repository.download');
     });
 
-    Route::middleware(['permission:endpoint_api.manage'])->group(function () {
+    Route::middleware(['permission:endpoint_api.view'])->group(function () {
         Route::get('/endpoint-api', [\App\Http\Controllers\EndpointApiController::class, 'index'])->name('endpoint.api.index');
         Route::get('/endpoint-api/create', [\App\Http\Controllers\EndpointApiController::class, 'create'])->name('endpoint.api.create');
-        Route::post('/endpoint-api', [\App\Http\Controllers\EndpointApiController::class, 'store'])->name('endpoint.api.store');
         Route::get('/endpoint-api/{id}/edit', [\App\Http\Controllers\EndpointApiController::class, 'edit'])->name('endpoint.api.edit');
+    });
+
+    Route::middleware(['permission:endpoint_api.manage'])->group(function () {
+        Route::post('/endpoint-api', [\App\Http\Controllers\EndpointApiController::class, 'store'])->name('endpoint.api.store');
         Route::put('/endpoint-api/{id}', [\App\Http\Controllers\EndpointApiController::class, 'update'])->name('endpoint.api.update');
         Route::delete('/endpoint-api/{id}', [\App\Http\Controllers\EndpointApiController::class, 'destroy'])->name('endpoint.api.destroy');
         Route::post('/endpoint-api/{id}/toggle', [\App\Http\Controllers\EndpointApiController::class, 'toggle'])->name('endpoint.api.toggle');
@@ -202,8 +211,11 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/api/sync/logs/{id}/details', [\App\Http\Controllers\LogApiController::class, 'show'])->name('api.sync.logs.details');
     });
 
-    Route::middleware(['permission:settings.manage'])->group(function () {
+    Route::middleware(['permission:settings.view'])->group(function () {
         Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
+    });
+
+    Route::middleware(['permission:settings.manage'])->group(function () {
         Route::get('/settings/system-utilities', [SettingsController::class, 'systemUtilities'])->name('settings.system-utilities');
 
         // System Utilities endpoints (Strict Super Admin Only)
@@ -237,19 +249,22 @@ Route::middleware(['auth'])->group(function () {
     |--------------------------------------------------------------------------
     */
 
-    Route::middleware(['permission:users.manage'])->group(function () {
+    Route::middleware(['permission:users.view'])->group(function () {
         Route::get('/users', [UserManagementController::class, 'index'])->name('users.index');
+        Route::get('/api/roles/{role}', [UserManagementController::class, 'showRole'])->name('api.roles.show');
+        Route::get('/api/permissions', [UserManagementController::class, 'permissions'])->name('api.permissions.index');
+    });
+
+    Route::middleware(['permission:users.manage'])->group(function () {
         Route::post('/api/users', [UserManagementController::class, 'storeUser'])->name('api.users.store');
         Route::put('/api/users/{user}', [UserManagementController::class, 'updateUser'])->name('api.users.update');
         Route::delete('/api/users/{user}', [UserManagementController::class, 'destroyUser'])->name('api.users.destroy');
         Route::post('/api/users/{user}/reset-password', [UserManagementController::class, 'resetPassword'])->name('api.users.reset-password');
+        Route::post('/api/users/{user}/toggle-active', [UserManagementController::class, 'toggleActiveStatus'])->name('api.users.toggle-active');
 
-        Route::get('/api/roles/{role}', [UserManagementController::class, 'showRole'])->name('api.roles.show');
         Route::post('/api/roles', [UserManagementController::class, 'storeRole'])->name('api.roles.store');
         Route::put('/api/roles/{role}/permissions', [UserManagementController::class, 'updateRolePermissions'])->name('api.roles.permissions');
         Route::delete('/api/roles/{role}', [UserManagementController::class, 'destroyRole'])->name('api.roles.destroy');
-
-        Route::get('/api/permissions', [UserManagementController::class, 'permissions'])->name('api.permissions.index');
     });
     /*
     |--------------------------------------------------------------------------
@@ -325,5 +340,7 @@ Route::middleware(['auth'])->group(function () {
         Route::delete('/api/chatedp/conversations/{id}', [\App\Http\Controllers\ChatEDPController::class, 'deleteConversation'])->name('api.chatedp.conversations.delete');
     });
     // Auto-generated route for AI Settings
-    Route::get('/ai-settings/index', [\App\Http\Controllers\AiSettingsIndexController::class, 'index'])->name('ai-settings.index');
+    Route::middleware(['permission:ai_settings.view'])->group(function () {
+        Route::get('/ai-settings/index', [\App\Http\Controllers\AiSettingsIndexController::class, 'index'])->name('ai-settings.index');
+    });
 });

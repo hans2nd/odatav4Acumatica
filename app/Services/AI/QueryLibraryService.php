@@ -40,17 +40,10 @@ class QueryLibraryService
         // 4. Filters (sorted by field + operator)
         $filters = [];
         foreach ($plan->filters ?? [] as $f) {
-            $val = $f['value'] ?? '';
-            if (is_array($val)) {
-                $val = array_map(fn($v) => is_string($v) ? strtolower(trim($v)) : $v, $val);
-                sort($val);
-            } elseif (is_string($val)) {
-                $val = strtolower(trim($val));
-            }
             $filters[] = [
                 'field'    => strtolower(trim($f['field'] ?? '')),
                 'operator' => strtoupper(trim($f['operator'] ?? '=')),
-                'value'    => $val,
+                // Omit value to allow structural matching for parameterized queries
             ];
         }
         usort($filters, function ($a, $b) {
@@ -79,7 +72,7 @@ class QueryLibraryService
                 'type'    => strtolower($comp['type'] ?? 'previous_period'),
                 'period'  => strtolower($comp['period'] ?? 'month'),
                 'output'  => $outputs,
-                'periods' => $comp['periods'] ?? null,
+                // Omit explicit 'periods' dates to allow structural matching for parameterized queries
             ];
         }
 

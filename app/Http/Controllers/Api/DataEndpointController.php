@@ -28,7 +28,7 @@ class DataEndpointController extends Controller
             ], 404);
         }
 
-        $permName = "api.endpoint.{$slug}.view";
+        $permName = "api.endpoint.{$endpoint->endpoint_slug}.view";
         if (!$request->user() || !$request->user()->hasPermission($permName)) {
             return response()->json([
                 'success' => false,

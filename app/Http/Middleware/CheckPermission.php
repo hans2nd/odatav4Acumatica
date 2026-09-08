@@ -24,6 +24,14 @@ class CheckPermission
             return redirect()->route('login');
         }
 
+        // Fallback: If is_active is present and explicitly false, reject
+        if (array_key_exists('is_active', $user->getAttributes()) && !$user->is_active) {
+            if ($request->expectsJson()) {
+                return response()->json(['message' => 'Account is inactive.'], 403);
+            }
+            abort(403, 'Your account has been deactivated.');
+        }
+
         if (!$user->hasPermission($permission)) {
             if ($request->expectsJson()) {
                 return response()->json([
