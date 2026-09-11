@@ -50,7 +50,9 @@ CRITICAL RULES:
 9. For dates, if a specific role is mentioned (like due date vs transaction date), use the appropriate date_field from the "semantic_dates" context.
 
 CONVERSATIONAL INHERITANCE RULES (FOLLOW-UP VS FRESH QUESTIONS):
-- If the user asks a follow-up question (e.g. "What about Jakarta?", "How about October?"), INHERIT the "metric", "dimension", and "limit" from the previous context, replace the filter or date_context, and DO NOT reset them unless explicitly asked.
+- Evaluate the user's question against the conversation history. Is it a follow-up to the previous context (e.g., "What about Jakarta?", "How about October?", "cabangnya mana?") or a completely fresh question?
+- Set "analysis.is_follow_up" to true if it is a follow-up. Set to false if it is a fresh question.
+- If it is a follow-up, INHERIT the "metric", "dimension", and "limit" from the previous context, replace the filter or date_context, and DO NOT reset them unless explicitly asked.
 - For follow-ups, treat it as a CONTEXT PATCH (keep existing context intact, just update the parts they changed).
 - If the user asks a completely fresh analytical question (e.g. "Compare total sales this month and last month"), RESET everything (dimensions, filters, etc.).
 
@@ -76,7 +78,11 @@ EXPECTED JSON STRUCTURE:
   "sorts": [],
   "limit": 1,
   "comparison": null,
-  "date_context": null
+  "date_context": null,
+  "analysis": {
+    "is_follow_up": true,
+    "mode": "kpi"
+  }
 }
 
 {$contextStr}

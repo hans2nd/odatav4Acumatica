@@ -112,7 +112,7 @@ class ResultInterpretationService
                 $probeResult = $this->buildNoTransactionMessage($plan, $connectionId);
                 $assistantReply = $probeResult['message'];
                 $availabilityContext = $probeResult['availability_context'];
-            } else if ($totalRows > 0 && !$isComparison) {
+            } else if ($totalRows > 0 && !$isComparison && !$isGrouped) {
                 $metricConfig = $plan->metrics[0];
                 $alias = $metricConfig['alias'] ?? preg_replace('/[^a-zA-Z0-9_]/', '_', $metricConfig['name']);
                 $aggSuffix = empty($metricConfig['aggregation']) ? '' : '_' . strtoupper($metricConfig['aggregation']);
@@ -145,18 +145,19 @@ class ResultInterpretationService
         $columnMap = $formattedPayload['column_map'] ?? [];
 
         if (!$isGrouped && !$isComparison && $totalRows === 1 && empty($assistantReply)) {
-            $scalarTexts = [];
-            $firstRowArray = (array)$results[0];
-            foreach ($firstRowArray as $colKey => $colData) {
-                if ($colKey !== 'Jumlah Transaksi' && $colKey !== '_total_rows' && $colKey !== '#') {
-                    $label = $columnMap[$colKey] ?? (is_string($colKey) ? ucwords(str_replace(['_', '-'], ' ', $colKey)) : $colKey);
-                    $formattedVal = is_array($colData) ? ($colData['formatted_value'] ?? $colData['value'] ?? '-') : (is_object($colData) ? ($colData->formatted_value ?? $colData->value ?? '-') : $colData);
-                    $scalarTexts[] = "{$label}: {$formattedVal}";
-                }
-            }
-            if (!empty($scalarTexts)) {
-                $assistantReply = implode("\n", $scalarTexts);
-            }
+            // // Let the LLM handle scalar formatting for better conversational tone
+            // $scalarTexts = [];
+            // $firstRowArray = (array)$results[0];
+            // foreach ($firstRowArray as $colKey => $colData) {
+            //     if ($colKey !== 'Jumlah Transaksi' && $colKey !== '_total_rows' && $colKey !== '#') {
+            //         $label = $columnMap[$colKey] ?? (is_string($colKey) ? ucwords(str_replace(['_', '-'], ' ', $colKey)) : $colKey);
+            //         $formattedVal = is_array($colData) ? ($colData['formatted_value'] ?? $colData['value'] ?? '-') : (is_object($colData) ? ($colData->formatted_value ?? $colData->value ?? '-') : $colData);
+            //         $scalarTexts[] = "{$label}: {$formattedVal}";
+            //     }
+            // }
+            // if (!empty($scalarTexts)) {
+            //     $assistantReply = implode("\n", $scalarTexts);
+            // }
         }
 
         return [

@@ -651,10 +651,9 @@ class ChatEDPController extends Controller
                 'analysis_mode' => $validatedPlan->analysis['mode'] ?? ($validatedPlan->comparison ? 'comparison' : 'kpi'),
             ];
             
-            $userMessage = strtolower($request->input('message') ?? '');
-            $hasReference = preg_match('/\b(tersebut|ini|itu|diatas|di atas|sebelumnya|nya|bagaimana|kalau|sedangkan|bandingkan|lalu|berikutnya|kemarin|tadi)\b/i', $userMessage);
+            $isFollowUp = $validatedPlan->analysis['is_follow_up'] ?? false;
             
-            $analysisContext = $this->conversationContext->merge($conversation, $analysisContext, !$hasReference);
+            $analysisContext = $this->conversationContext->merge($conversation, $analysisContext, !$isFollowUp);
 
             // 4. Cost Guard
             $this->costGuard->guard($validatedPlan);
@@ -798,7 +797,7 @@ class ChatEDPController extends Controller
                 $summaryPrompt = "Berdasarkan data JSON berikut, berikan ringkasan analitik singkat dalam bahasa Indonesia menggunakan angka ringkas (misal: Rp66,27 juta).\n\n" . 
                                  "INSTRUKSI UTAMA:\n" .
                                  "1. Awali jawaban Anda dengan kalimat pembuka yang SANGAT kontekstual berdasarkan 'original_question'. Misalnya: \"Berikut adalah ringkasan penjualan untuk tanggal 2 September 2026 berdasarkan pelanggan:\" atau kalimat serupa yang relevan dengan filter/waktu yang ditanyakan.\n" .
-                                 "2. Jika ini adalah data ranking, sebutkan urutan rankingnya.\n" .
+                                 "2. Jika ini adalah data ranking atau grouping, sebutkan urutan rankingnya DAN PASTIKAN ANDA MENYEBUTKAN SEMUA DIMENSI YANG ADA (misalnya jika ada dimensi cabang, sebutkan nama cabangnya untuk setiap entri).\n" .
                                  "3. Jangan membuat data fiktif atau mengubah angka aktual yang diberikan.\n\n" .
                                  "Data JSON:\n" . json_encode($summaryContext, JSON_UNESCAPED_UNICODE);
                 $messages = [
