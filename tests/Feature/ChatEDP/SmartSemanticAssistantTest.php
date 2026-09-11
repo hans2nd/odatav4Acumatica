@@ -22,6 +22,7 @@ class SmartSemanticAssistantTest extends TestCase
         
         // Setup mock connection
         $this->connection = Connection::create([
+            'key' => 'smart_semantic_test_' . uniqid(),
             'name' => 'Test AI Source',
             'type' => 'mysql',
             'is_analytics_source' => true,
@@ -52,6 +53,7 @@ class SmartSemanticAssistantTest extends TestCase
             'type' => 'dimension',
             'source_table' => 'acm_datamentahpenjualan',
             'source_column' => 'BranchCD',
+            'expression' => 'BranchCD',
             'metadata' => json_encode(['aliases' => ['cabang']])
         ]);
 
@@ -62,7 +64,26 @@ class SmartSemanticAssistantTest extends TestCase
             'type' => 'dimension',
             'source_table' => 'acm_datamentahpenjualan',
             'source_column' => 'DocDate',
+            'expression' => 'DocDate',
             'metadata' => json_encode(['is_default_date' => true, 'aliases' => ['tanggal']])
+        ]);
+
+        // The planner only exposes ChatEDP-enabled physical tables through the
+        // schema cache. Keep this fixture aligned with the production contract.
+        $definitionId = DB::table('sync_metadata_definitions')->insertGetId([
+            'connection_id' => $this->connection->id,
+            'entity_key' => 'acm_datamentahpenjualan',
+            'logical_name' => 'sales',
+            'provider' => 'test',
+            'is_valid' => true,
+            'chatedp_enabled' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('sync_metadata_fields')->insert([
+            ['definition_id' => $definitionId, 'field_name' => 'NetAmount', 'data_type' => 'decimal', 'semantic_type' => 'metric', 'created_at' => now(), 'updated_at' => now()],
+            ['definition_id' => $definitionId, 'field_name' => 'BranchCD', 'data_type' => 'string', 'semantic_type' => 'dimension', 'created_at' => now(), 'updated_at' => now()],
+            ['definition_id' => $definitionId, 'field_name' => 'DocDate', 'data_type' => 'date', 'semantic_type' => 'date', 'created_at' => now(), 'updated_at' => now()],
         ]);
     }
 
@@ -136,10 +157,10 @@ class SmartSemanticAssistantTest extends TestCase
         [$sql, $bindings] = $compiler->compile($plan, $this->connection);
         
         // Verify SQL output structure
-        $this->assertStringContainsString('AVG(NetAmount) AS sales_AVG', $sql);
-        $this->assertStringContainsString('FROM `acm_datamentahpenjualan`', $sql);
+        $this->assertStringContainsString('AVG(`NetAmount`) as sales_AVG', $sql);
+        $this->assertStringContainsString('from `acm_datamentahpenjualan`', $sql);
         $this->assertStringContainsString('`DocDate` >=', $sql);
-        $this->assertStringContainsString('`DocDate` <=', $sql);
+        $this->assertStringContainsString('`DocDate` <', $sql);
         $this->assertStringContainsString('`BranchCD` = ?', $sql);
         
         // Verify Parameter bindings

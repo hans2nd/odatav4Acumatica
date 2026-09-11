@@ -171,18 +171,31 @@ class EntityConfigService
         }
 
         DB::transaction(function () use ($entity, $fields) {
-            foreach ($fields as $fieldName) {
-                SyncEntityField::updateOrCreate(
-                    [
-                        'sync_entity_id' => $entity->id,
-                        'source_field'   => $fieldName,
-                    ],
-                    [
-                        // Only set defaults for new records; existing records keep their values
-                        // updateOrCreate only writes the second array on insert,
-                        // so we need a conditional approach:
-                    ]
-                );
+            foreach ($fields as $fieldData) {
+                $fieldName = is_array($fieldData) ? $fieldData['name'] : $fieldData;
+                $record = SyncEntityField::firstOrNew([
+                    'sync_entity_id' => $entity->id,
+                    'source_field'   => $fieldName,
+                ]);
+
+                if (!$record->exists) {
+                    $record->data_type = is_array($fieldData) ? ($fieldData['data_type'] ?? null) : null;
+                    $record->semantic_type = is_array($fieldData) ? ($fieldData['semantic_type'] ?? null) : null;
+                    $record->save();
+                } else {
+                    $dirty = false;
+                    if (is_array($fieldData)) {
+                        if (empty($record->data_type) && !empty($fieldData['data_type'])) {
+                            $record->data_type = $fieldData['data_type'];
+                            $dirty = true;
+                        }
+                        if (empty($record->semantic_type) && !empty($fieldData['semantic_type'])) {
+                            $record->semantic_type = $fieldData['semantic_type'];
+                            $dirty = true;
+                        }
+                    }
+                    if ($dirty) $record->save();
+                }
             }
         });
     }

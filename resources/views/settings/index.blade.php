@@ -475,6 +475,11 @@
                         <input type="text" id="fields-search" onkeyup="filterFieldsTable()" placeholder="Search fields..." class="w-full bg-white border border-surface-200 rounded-xl pl-9 pr-3 py-2 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
                     </div>
                     <div class="flex gap-2">
+                        <button type="button" onclick="suggestFieldsAI()" id="btn-suggest-fields-ai"
+                            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-600 border border-indigo-200 text-label-sm hover:bg-indigo-100 transition-all duration-200">
+                            <span class="material-symbols-outlined text-[14px]">auto_awesome</span>
+                            <span>Auto-Suggest (AI)</span>
+                        </button>
                         <button type="button" onclick="discoverFields()" id="btn-discover-fields"
                             class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-100 text-surface-600 border border-surface-200 text-label-sm hover:bg-surface-200 transition-all duration-200">
                             <span class="material-symbols-outlined text-[14px]">sync</span>
@@ -948,6 +953,55 @@
                 await loadFields(currentFieldsEntity);
             } else {
                 showToast(data.message || 'Discovery failed', 'error');
+            }
+        } catch (e) {
+            showToast('Error: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            document.getElementById('fields-loading').classList.add('hidden');
+        }
+    }
+
+    async function suggestFieldsAI() {
+        if (!currentFieldsEntity) return;
+        
+        const btn = document.getElementById('btn-suggest-fields-ai');
+        btn.disabled = true;
+        document.getElementById('fields-loading').classList.remove('hidden');
+        document.getElementById('fields-loading-text').textContent = 'AI is analyzing and suggesting fields...';
+        
+        try {
+            const res = await fetch(`/api/entities/${currentFieldsEntity}/suggest-fields`, { 
+                method: 'POST', 
+                headers: { 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' } 
+            });
+            const data = await res.json();
+            
+            if (res.ok && data.success && data.suggestions) {
+                showToast('AI suggestions generated successfully', 'success');
+                
+                // Update currentFieldsData with suggestions
+                currentFieldsData.forEach((field, index) => {
+                    const suggestion = data.suggestions[field.source_field];
+                    if (suggestion) {
+                        if (suggestion.data_type) field.data_type = suggestion.data_type;
+                        if (suggestion.semantic_type) field.semantic_type = suggestion.semantic_type;
+                        if (suggestion.label) field.label = suggestion.label;
+                        if (suggestion.description) field.description = suggestion.description;
+                        if (suggestion.aliases) {
+                            if (typeof suggestion.aliases === 'string') {
+                                field.aliases = suggestion.aliases.split(',').map(s => s.trim()).filter(s => s.length > 0);
+                            } else if (Array.isArray(suggestion.aliases)) {
+                                field.aliases = suggestion.aliases;
+                            }
+                        }
+                    }
+                });
+                
+                // Re-render the table
+                renderFieldsTable();
+            } else {
+                showToast(data.message || 'AI Suggestion failed', 'error');
             }
         } catch (e) {
             showToast('Error: ' + e.message, 'error');

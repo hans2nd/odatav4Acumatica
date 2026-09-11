@@ -3,7 +3,7 @@
 namespace App\Services\AI;
 
 use App\Models\Connection;
-use App\Models\AiSemanticDefinition;
+use App\Models\AiLearningCandidate;
 use Illuminate\Support\Facades\Log;
 
 class SemanticLearningService
@@ -77,8 +77,8 @@ EOT;
 
                 // Only auto-learn on high confidence
                 if ($confidence === 'high') {
-                    $this->saveSemanticAlias($connection->id, $matchedLogical, $term);
-                    Log::info("ChatEDP Smart Learning: Successfully learned '{$term}' as logical concept '{$matchedLogical}'.");
+                    $this->captureCandidate($connection->id, $term, $type, $matchedLogical, 0.95, $result['reason'] ?? null, $domainContext);
+                    Log::info("ChatEDP controlled learning candidate captured for '{$term}' as '{$matchedLogical}'.");
                     return $matchedLogical;
                 }
             }
@@ -91,44 +91,14 @@ EOT;
         }
     }
 
-    /**
-     * Add the new term as an alias to the matching AiSemanticDefinition.
-     */
-    protected function saveSemanticAlias(int $connectionId, string $logicalTerm, string $alias)
+    public function captureCandidate(int $connectionId, string $term, string $type, string $mapping, float $confidence, ?string $reason = null, ?string $domain = null, ?int $conversationId = null, ?int $messageId = null): AiLearningCandidate
     {
-        // Find by exact logical name or existing alias
-        $existing = AiSemanticDefinition::where('connection_id', $connectionId)
-            ->where('name', $logicalTerm)
-            ->first();
-
-        if ($existing) {
-            $aliasLower = strtolower(trim($alias));
-            
-            // Check if this alias already exists in ANY other definition
-            $conflict = AiSemanticDefinition::where('connection_id', $connectionId)
-                ->where('metadata', 'LIKE', '%"' . $aliasLower . '"%')
-                ->first();
-                
-            if ($conflict) {
-                Log::info("ChatEDP Smart Learning: Alias '{$alias}' already exists on '{$conflict->name}'. Aborting save.");
-                return;
-            }
-
-            $metadata = is_string($existing->metadata) ? json_decode($existing->metadata, true) : ($existing->metadata ?? []);
-            
-            if (!isset($metadata['aliases'])) {
-                $metadata['aliases'] = [];
-            }
-            
-            $existingAliases = array_map('strtolower', $metadata['aliases']);
-            
-            if (!in_array($aliasLower, $existingAliases)) {
-                $metadata['aliases'][] = $aliasLower;
-                $existing->metadata = $metadata;
-                $existing->save();
-            }
-        }
-        // Note: If no existing logical definition is found (e.g., if it's purely from SyncEntityField fallback), 
-        // we skip saving to AiSemanticDefinition for now. AiSemanticDefinition is the authority for learned aliases.
+        $term = strtolower(trim($term));
+        $candidate = AiLearningCandidate::firstOrNew(['connection_id' => $connectionId, 'term' => $term, 'term_type' => $type]);
+        $candidate->fill(['domain' => $domain, 'candidate_mapping' => ['logical_term' => $mapping], 'confidence' => $confidence, 'reason' => $reason, 'source_conversation_id' => $conversationId, 'source_message_id' => $messageId, 'status' => $candidate->exists ? $candidate->status : 'pending', 'first_seen_at' => $candidate->first_seen_at ?? now(), 'last_seen_at' => now()]);
+        $candidate->occurrence_count = $candidate->exists ? $candidate->occurrence_count + 1 : 1;
+        $candidate->save();
+        return $candidate;
     }
+
 }

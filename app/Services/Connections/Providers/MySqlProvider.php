@@ -90,7 +90,10 @@ class MySqlProvider implements ConnectionProviderInterface
         
         $properties = [];
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            $properties[] = $row['Field'];
+            $properties[] = [
+                'name' => $row['Field'],
+                'type' => $row['Type'],
+            ];
         }
 
         return new MetadataNode(name: $objectName, type: 'table', properties: $properties);

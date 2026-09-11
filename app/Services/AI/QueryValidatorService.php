@@ -10,7 +10,8 @@ class QueryValidatorService
 {
     public function __construct(
         protected SemanticResolutionService $semanticResolver,
-        protected SemanticLearningService $learningService
+        protected SemanticLearningService $learningService,
+        protected RelationshipValidationService $relationshipValidator
     ) {}
 
     public function validate(QueryPlan $plan, Connection $connection, ?string $domainContext = null): QueryPlan
@@ -19,9 +20,32 @@ class QueryValidatorService
             throw new \Exception("Unauthorized: The selected connection is not the designated analytics source.");
         }
 
+        if (strtolower((string) ($plan->comparison['type'] ?? '')) === 'table') {
+            return $this->validateTableComparison($plan, $connection, $domainContext);
+        }
+
         // 1. Resolve Tables
+        $requestedTables = $plan->tables;
+        // A fast-path/legacy plan may omit its table. Derive it only from an exact
+        // AI Semantic Definition; this is metadata resolution, not LLM inference.
+        if (empty($requestedTables) && !empty($plan->metrics)) {
+            foreach ($plan->metrics as $metric) {
+                $term = strtolower(trim((string) ($metric['name'] ?? '')));
+                $definitions = \App\Models\AiSemanticDefinition::where('connection_id', $connection->id)->where('type', 'metric')->get();
+                foreach ($definitions as $definition) {
+                    $metadata = (array) ($definition->metadata ?? []);
+                    $aliases = array_map('strtolower', (array) ($metadata['aliases'] ?? []));
+                    if (strtolower($definition->name) === $term || in_array($term, $aliases, true)) $requestedTables[] = $definition->source_table;
+                }
+            }
+            $requestedTables = array_values(array_unique($requestedTables));
+        }
+        if (empty($requestedTables)) {
+            throw new \App\Exceptions\AI\TableResolutionException('Validation Failed: no table can be resolved from approved AI Metadata.', \App\Exceptions\AI\TableResolutionException::TYPE_NOT_FOUND);
+        }
+
         $resolvedTables = [];
-        foreach ($plan->tables as $table) {
+        foreach ($requestedTables as $table) {
             $query = DB::table('sync_metadata_definitions')
                 ->where('connection_id', $connection->id)
                 ->where('chatedp_enabled', true);
@@ -111,6 +135,20 @@ class QueryValidatorService
                     }
                 }
                 throw new \App\Exceptions\AI\SemanticNotFoundException("Validation Failed: Dimension '{$dimension}' is not recognized in the Semantic Layer for the selected tables.", $dimension, 'dimension');
+            }
+        }
+
+        // Detail dimensions are resolved with the same semantic allowlist, but
+        // remain outside GROUP BY so they cannot alter a ranking's grain.
+        $resolvedDetailDimensions = [];
+        foreach ($plan->detail_dimensions as $dimension) {
+            $result = $this->semanticResolver->resolve($dimension, $connection, $resolvedTables, 'dimension');
+            if ($result['matched']) {
+                $resolvedDetailDimensions[] = $result['physical_mapping'];
+            } elseif ($result['ambiguous']) {
+                throw new \App\Exceptions\AI\SemanticAmbiguityException("Ambiguous detail dimension '{$dimension}'. " . $result['message']);
+            } else {
+                throw new \App\Exceptions\AI\SemanticNotFoundException("Validation Failed: Detail dimension '{$dimension}' is not recognized.", $dimension, 'dimension');
             }
         }
 
@@ -263,21 +301,88 @@ class QueryValidatorService
             }
         }
 
+        $relationships = $this->relationshipValidator->validate($connection, $resolvedTables);
+
         $validatedPlan = new QueryPlan(
             intent: $intent,
             metrics: $resolvedMetrics,
             dimensions: $resolvedDimensions,
+            detail_dimensions: $resolvedDetailDimensions,
             filters: $resolvedFilters,
             sorts: $resolvedSorts,
             limit: $plan->limit,
             comparison: $plan->comparison,
             date_context: $plan->date_context,
+            domain: $plan->domain,
+            relationships: $relationships,
+            analysis: $plan->analysis,
+            columns: $plan->columns,
             tables: $resolvedTables,
             internal_metadata: [
-                'logical_dimensions' => $plan->dimensions
+                'logical_dimensions' => $plan->dimensions,
+                'logical_detail_dimensions' => $plan->detail_dimensions,
+                'ranking' => strtolower($plan->intent) === 'ranking' ? [
+                    'primary_label' => $plan->dimensions[0] ?? null,
+                    'detail_label' => $plan->detail_dimensions[0] ?? null,
+                    'metric_label' => $plan->metrics[0]['name'] ?? null,
+                ] : null,
             ]
         );
 
         return $validatedPlan;
+    }
+
+    /** Legacy alias retained for callers created before validate() was renamed. */
+    public function validateAndResolve(QueryPlan $plan, Connection $connection, ?string $domainContext = null): QueryPlan
+    {
+        return $this->validate($plan, $connection, $domainContext);
+    }
+
+    private function validateTableComparison(QueryPlan $plan, Connection $connection, ?string $domainContext): QueryPlan
+    {
+        $comparison = $plan->comparison ?? [];
+        $left = (array) ($comparison['left'] ?? []);
+        $right = (array) ($comparison['right'] ?? []);
+        if (empty($left['table']) || empty($right['table']) || empty($left['metric']) || empty($right['metric'])) {
+            throw new \App\Exceptions\AI\SemanticAmbiguityException('Perbandingan tabel memerlukan tabel dan metrik untuk kedua sisi.');
+        }
+
+        $sidePlan = function (array $side) use ($plan): QueryPlan {
+            $metric = is_array($side['metric']) ? $side['metric'] : ['name' => $side['metric'], 'aggregation' => 'sum'];
+            return new QueryPlan(
+                intent: $plan->intent,
+                metrics: [$metric],
+                filters: $plan->filters,
+                date_context: $plan->date_context,
+                domain: $plan->domain,
+                tables: [(string) $side['table']],
+                analysis: $plan->analysis
+            );
+        };
+
+        // Reuse the normal single-table validator: enabled table/domain/field rules
+        // remain authoritative for each independent aggregate.
+        $leftPlan = $this->validate($sidePlan($left), $connection, $domainContext);
+        $rightPlan = $this->validate($sidePlan($right), $connection, $domainContext);
+        $relationships = $this->relationshipValidator->validate($connection, [$leftPlan->tables[0], $rightPlan->tables[0]]);
+
+        return new QueryPlan(
+            intent: $plan->intent,
+            filters: $plan->filters,
+            limit: min($plan->limit ?? 1, 1),
+            comparison: [
+                'type' => 'table',
+                'left' => ['table' => $leftPlan->tables[0], 'metric' => $leftPlan->metrics[0]],
+                'right' => ['table' => $rightPlan->tables[0], 'metric' => $rightPlan->metrics[0]],
+                'relationship' => $relationships[0] ?? null,
+                'output' => $comparison['output'] ?? ['gap', 'percentage_difference', 'ratio'],
+            ],
+            date_context: $plan->date_context,
+            domain: $plan->domain,
+            relationships: $relationships,
+            analysis: $plan->analysis + ['mode' => 'table_comparison'],
+            tables: [$leftPlan->tables[0], $rightPlan->tables[0]],
+            internal_metadata: ['table_comparison' => ['left_plan' => $leftPlan->toArray(), 'right_plan' => $rightPlan->toArray()]]
+        );
     }
 }

@@ -276,6 +276,12 @@
                     <form :action="formAction" method="POST" x-show="!loading && !loadingAi" class="divide-y divide-slate-200">
                         @csrf
 
+                        {{-- Hidden inputs for advanced semantics --}}
+                        <input type="hidden" name="transaction_grain" :value="JSON.stringify(transactionGrain)">
+                        <input type="hidden" name="capabilities" :value="JSON.stringify(capabilities)">
+                        <input type="hidden" name="hierarchies" :value="JSON.stringify(hierarchies)">
+                        <input type="hidden" name="question_patterns" :value="JSON.stringify(questionPatterns)">
+
                         {{-- Physical Table (read-only) --}}
                         <div class="px-6 py-4">
                             <label class="block text-xs font-medium text-slate-500 mb-1.5">Physical Table</label>
@@ -487,6 +493,11 @@ function metadataManager() {
         detail: { table: {}, columns: [], aliases: [], business_domains: [], metrics: [], dimensions: [] },
         metrics: [],
         dimensions: [],
+        dates: [],
+        capabilities: [],
+        hierarchies: [],
+        questionPatterns: [],
+        transactionGrain: null,
         chatedpEnabled: false,
         selectedRole: 'other',
         selectedTableId: null,
@@ -507,6 +518,11 @@ function metadataManager() {
                 this.chatedpEnabled = Boolean(data.table?.chatedp_enabled == 1 || data.table?.chatedp_enabled === true);
                 this.metrics = data.metrics?.length ? data.metrics.map(m => ({...m})) : [];
                 this.dimensions = data.dimensions?.length ? data.dimensions.map(d => ({...d})) : [];
+                this.dates = data.dates?.length ? data.dates.map(d => ({...d})) : [];
+                this.capabilities = data.capabilities || [];
+                this.hierarchies = data.hierarchies || [];
+                this.questionPatterns = data.question_patterns || [];
+                this.transactionGrain = data.transaction_grain || null;
             } catch (e) {
                 console.error('Failed to load table detail', e);
             }
@@ -539,7 +555,12 @@ function metadataManager() {
                 this.aiSuggestions = data;
                 this.aiCheckboxes = {
                     metrics: (data.metrics || []).map(() => true),
-                    dimensions: (data.dimensions || []).map(() => true)
+                    dimensions: (data.dimensions || []).map(() => true),
+                    dates: (data.dates || []).map(() => true),
+                    capabilities: (data.capabilities || []).map(() => true),
+                    hierarchies: (data.hierarchies || []).map(() => true),
+                    question_patterns: (data.question_patterns || []).map(() => true),
+                    transaction_grain: true
                 };
             } catch (e) {
                 alert('Failed to get suggestions: ' + e.message);
@@ -578,6 +599,35 @@ function metadataManager() {
                         });
                     }
                 });
+            }
+            if (this.aiSuggestions.dates) {
+                this.aiSuggestions.dates.forEach((d, idx) => {
+                    if (this.aiCheckboxes.dates[idx]) {
+                        this.dates.push({
+                            name: d.name,
+                            source_column: d.source_column,
+                            metadata: { role: d.role || 'transaction_date' }
+                        });
+                    }
+                });
+            }
+            if (this.aiSuggestions.capabilities) {
+                this.aiSuggestions.capabilities.forEach((c, idx) => {
+                    if (this.aiCheckboxes.capabilities[idx]) this.capabilities.push({...c});
+                });
+            }
+            if (this.aiSuggestions.hierarchies) {
+                this.aiSuggestions.hierarchies.forEach((h, idx) => {
+                    if (this.aiCheckboxes.hierarchies[idx]) this.hierarchies.push({...h});
+                });
+            }
+            if (this.aiSuggestions.question_patterns) {
+                this.aiSuggestions.question_patterns.forEach((q, idx) => {
+                    if (this.aiCheckboxes.question_patterns[idx]) this.questionPatterns.push({...q});
+                });
+            }
+            if (this.aiSuggestions.transaction_grain && this.aiCheckboxes.transaction_grain) {
+                this.transactionGrain = this.aiSuggestions.transaction_grain;
             }
             
             this.aiSuggestions = null;

@@ -353,6 +353,56 @@
     .edp-sidebar::-webkit-scrollbar { width: 4px; }
     .edp-sidebar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
 
+    /* ===== Collapsible Group Header ===== */
+    .group-header {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 6px 12px; cursor: pointer; border-radius: 8px;
+        transition: background 0.12s; user-select: none;
+    }
+    .group-header:hover { background: rgba(255,255,255,0.04); }
+    .group-header-left {
+        display: flex; align-items: center; gap: 4px;
+        font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+        text-transform: uppercase; color: var(--sidebar-muted);
+    }
+    .group-header-left .chevron {
+        font-size: 16px; transition: transform 0.2s ease;
+        color: var(--sidebar-muted);
+    }
+    .group-header-left .chevron.collapsed { transform: rotate(-90deg); }
+    .group-header .group-count {
+        font-size: 9px; color: var(--sidebar-muted); opacity: 0.6;
+        background: rgba(255,255,255,0.06); padding: 1px 6px; border-radius: 10px;
+        font-weight: 600; margin-left: 6px;
+    }
+    .group-header .group-clear-btn {
+        opacity: 0; padding: 3px; border-radius: 6px; border: none;
+        background: transparent; color: var(--sidebar-muted);
+        cursor: pointer; transition: all 0.12s; display: flex;
+        align-items: center; justify-content: center;
+    }
+    .group-header:hover .group-clear-btn { opacity: 1; }
+    .group-header .group-clear-btn:hover {
+        color: #f87171; background: rgba(248,113,113,0.12);
+    }
+
+    /* Conversation item time */
+    .conv-item .conv-time {
+        font-size: 10px; color: var(--sidebar-muted); opacity: 0.5;
+        white-space: nowrap; flex-shrink: 0; margin-right: 2px;
+        font-variant-numeric: tabular-nums;
+    }
+    .conv-item:hover .conv-time { opacity: 0; width: 0; margin: 0; overflow: hidden; }
+
+    /* Collapse body transition */
+    .group-body {
+        overflow: hidden; transition: max-height 0.25s ease, opacity 0.2s ease;
+        max-height: 2000px; opacity: 1;
+    }
+    .group-body.collapsed {
+        max-height: 0; opacity: 0;
+    }
+
     /* Responsive */
     @media (max-width: 768px) {
         .edp-sidebar { position: fixed; left: 0; top: 0; bottom: 0; z-index: 50; }
@@ -379,23 +429,37 @@
         </div>
 
         <!-- Conversation List -->
-        <div class="flex-1 overflow-y-auto px-2 pb-3 space-y-3">
+        <div class="flex-1 overflow-y-auto px-2 pb-3 space-y-1">
             <template x-for="(group, groupName) in filteredGroupedHistory" :key="groupName">
                 <div x-show="group.length > 0">
-                    <div class="px-3 py-2 text-[10px] font-bold uppercase tracking-[0.12em]" style="color: var(--sidebar-muted);" x-text="groupName"></div>
-                    <div class="space-y-0.5">
-                        <template x-for="conv in group" :key="conv.id">
-                            <div @click="loadConversation(conv.id)"
-                                 class="conv-item"
-                                 :class="conversationId === conv.id ? 'active' : ''">
-                                <span class="material-symbols-outlined text-base shrink-0" style="color: var(--sidebar-muted); font-size: 18px;"
-                                      x-text="conversationId === conv.id ? 'chat_bubble' : 'chat_bubble_outline'"></span>
-                                <span class="conv-title" x-text="conv.title || 'Percakapan'"></span>
-                                <button @click.stop="deleteConversation(conv.id)" class="conv-del" title="Hapus">
-                                    <span class="material-symbols-outlined" style="font-size: 16px;">delete</span>
-                                </button>
-                            </div>
-                        </template>
+                    <!-- Collapsible Group Header -->
+                    <div class="group-header" @click="toggleGroup(groupName)">
+                        <div class="group-header-left">
+                            <span class="material-symbols-outlined chevron" :class="collapsedGroups[groupName] ? 'collapsed' : ''">expand_more</span>
+                            <span x-text="groupName"></span>
+                            <span class="group-count" x-text="group.length"></span>
+                        </div>
+                        <button @click.stop="clearGroupConversations(groupName)" class="group-clear-btn" title="Hapus semua di grup ini">
+                            <span class="material-symbols-outlined" style="font-size: 14px;">delete_sweep</span>
+                        </button>
+                    </div>
+                    <!-- Collapsible Body -->
+                    <div class="group-body" :class="collapsedGroups[groupName] ? 'collapsed' : ''">
+                        <div class="space-y-0.5 mt-0.5">
+                            <template x-for="conv in group" :key="conv.id">
+                                <div @click="loadConversation(conv.id)"
+                                     class="conv-item"
+                                     :class="conversationId === conv.id ? 'active' : ''">
+                                    <span class="material-symbols-outlined text-base shrink-0" style="color: var(--sidebar-muted); font-size: 18px;"
+                                          x-text="conversationId === conv.id ? 'chat_bubble' : 'chat_bubble_outline'"></span>
+                                    <span class="conv-title" x-text="conv.title || 'Percakapan'"></span>
+                                    <span class="conv-time" x-text="formatTime(conv.created_at)"></span>
+                                    <button @click.stop="deleteConversation(conv.id)" class="conv-del" title="Hapus">
+                                        <span class="material-symbols-outlined" style="font-size: 16px;">delete</span>
+                                    </button>
+                                </div>
+                            </template>
+                        </div>
                     </div>
                 </div>
             </template>
@@ -518,7 +582,7 @@
                                                 <template x-for="(sugg, sIdx) in msg.metadata.suggestions" :key="sIdx">
                                                     <button @click="setInput(sugg.prompt); setTimeout(() => sendMessage(), 50)" class="smart-sugg-btn">
                                                         <span style="font-weight: 600; font-size: 0.8125rem; color: var(--accent-light); display: block;" x-text="sugg.title"></span>
-                                                        <span style="font-size: 0.75rem; color: var(--text-muted);" x-text="'\"' + sugg.prompt + '\"'"></span>
+                                                        <span style="font-size: 0.75rem; color: var(--text-muted);" x-text="`&quot;${sugg.prompt}&quot;`"></span>
                                                     </button>
                                                 </template>
                                             </div>
@@ -645,6 +709,7 @@
             history: [],
             searchQuery: '',
             sidebarOpen: true,
+            collapsedGroups: {},
             groupedHistory: {
                 'Hari Ini': [],
                 'Kemarin': [],
@@ -665,6 +730,56 @@
                     filtered[key] = convs.filter(c => (c.title || '').toLowerCase().includes(q));
                 }
                 return filtered;
+            },
+
+            toggleGroup(groupName) {
+                this.collapsedGroups[groupName] = !this.collapsedGroups[groupName];
+            },
+
+            formatTime(dateStr) {
+                if (!dateStr) return '';
+                const d = new Date(dateStr);
+                return d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', hour12: false });
+            },
+
+            clearGroupConversations(groupName) {
+                const group = this.groupedHistory[groupName];
+                if (!group || group.length === 0) return;
+                if (!confirm(`Hapus semua ${group.length} percakapan di "${groupName}"?`)) return;
+
+                // Collect unique dates from the group
+                const dateSet = new Set();
+                group.forEach(conv => {
+                    const d = new Date(conv.created_at);
+                    dateSet.add(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'));
+                });
+
+                fetch('/api/chatedp/conversations/batch-delete-by-date', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({ dates: Array.from(dateSet) })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        // Check if current conversation was in the deleted group
+                        const deletedIds = group.map(c => c.id);
+                        const currentWasDeleted = deletedIds.includes(this.conversationId);
+
+                        this.history = this.history.filter(c => !deletedIds.includes(c.id));
+                        this.groupHistory();
+
+                        if (currentWasDeleted) {
+                            this.messages = [];
+                            this.createNewConversation();
+                        }
+                    }
+                })
+                .catch(err => console.error('Batch delete failed', err));
             },
 
             autoResize(el) {

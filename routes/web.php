@@ -107,6 +107,7 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/api/entities/{key}/mappings', [EntityController::class, 'getMappings'])->name('api.entities.mappings.get');
         Route::put('/api/entities/{key}/mappings', [EntityController::class, 'updateMappings'])->name('api.entities.mappings.update');
         Route::post('/api/entities/{key}/discover', [EntityController::class, 'discover'])->name('api.entities.discover');
+        Route::post('/api/entities/{key}/suggest-fields', [EntityController::class, 'suggestFields'])->name('api.entities.suggestFields');
         Route::post('/api/entities/batch-delete', [EntityController::class, 'batchDestroy'])->name('api.entities.batchDestroy');
         Route::delete('/api/entities/{key}', [EntityController::class, 'destroy'])->name('api.entities.destroy');
         Route::get('/api/entities/{entity}/fields', [SyncController::class, 'entityFields'])->name('api.entities.fields');
@@ -338,6 +339,7 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/api/chatedp/export', [\App\Http\Controllers\ChatEDPController::class, 'exportExcel'])->name('api.chatedp.export');
         Route::get('/api/chatedp/report', [\App\Http\Controllers\ChatEDPController::class, 'generateReport'])->name('api.chatedp.report');
         Route::delete('/api/chatedp/conversations/{id}', [\App\Http\Controllers\ChatEDPController::class, 'deleteConversation'])->name('api.chatedp.conversations.delete');
+        Route::post('/api/chatedp/conversations/batch-delete-by-date', [\App\Http\Controllers\ChatEDPController::class, 'deleteConversationsByDate'])->name('api.chatedp.conversations.batchDeleteByDate');
     });
     // Auto-generated route for AI Settings
     Route::middleware(['permission:ai_settings.view'])->group(function () {

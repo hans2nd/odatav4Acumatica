@@ -18,6 +18,8 @@ class DateContextResolverService
         if (empty($context)) {
             return $plan;
         }
+        $filters = $plan->filters;
+        $comparison = $plan->comparison;
 
         $contextLower = strtolower(trim($context));
         $now = Carbon::now();
@@ -83,7 +85,14 @@ class DateContextResolverService
                 $end = $now->copy()->endOfDay();
                 break;
             default:
-                Log::warning("DateContextResolverService: Unrecognized date context '{$contextLower}'. Ignoring.");
+                // Try to parse explicit month/year patterns like "november_2024", "2024-11", "2024"
+                $parsed = $this->parseExplicitDateContext($contextLower, $now);
+                if ($parsed) {
+                    $start = $parsed['start'];
+                    $end = $parsed['end'];
+                } else {
+                    Log::warning("DateContextResolverService: Unrecognized date context '{$contextLower}'. Ignoring.");
+                }
                 break;
         }
 
@@ -92,17 +101,17 @@ class DateContextResolverService
             $formattedEnd = $end->format('Y-m-d');
             
             // If the plan has a comparison intent without explicit periods, inject this as the base period
-            if (!empty($plan->comparison) && empty($plan->comparison['periods'])) {
-                $plan->comparison['periods'] = [
+            if (!empty($comparison) && strtolower((string) ($comparison['type'] ?? '')) !== 'table' && empty($comparison['periods'])) {
+                $comparison['periods'] = [
                     [$formattedStart, $formattedEnd],
-                    $this->calculatePreviousPeriod($start, $end, $plan->comparison['type'] ?? 'previous_period')
+                    $this->calculatePreviousPeriod($start, $end, $comparison['type'] ?? 'previous_period')
                 ];
-                $plan->comparison['type'] = 'explicit_periods'; // Force explicit to prevent compiler overrides
+                $comparison['type'] = 'explicit_periods'; // Force explicit to prevent compiler overrides
             } else {
                 // Determine the correct date field to filter on.
                 // We inject it as a filter with the logical name 'date' (which QueryValidatorService will map to physical)
                 $hasDateFilter = false;
-                foreach ($plan->filters as &$filter) {
+                foreach ($filters as &$filter) {
                     if (isset($filter['field']) && (strtolower($filter['field']) === 'date' || strtolower($filter['field']) === 'tanggal')) {
                         $filter['operator'] = 'BETWEEN';
                         $filter['value'] = [$formattedStart, $formattedEnd];
@@ -112,7 +121,7 @@ class DateContextResolverService
                 }
                 
                 if (!$hasDateFilter) {
-                    $plan->filters[] = [
+                    $filters[] = [
                         'field' => 'date',
                         'operator' => 'BETWEEN',
                         'value' => [$formattedStart, $formattedEnd]
@@ -121,7 +130,91 @@ class DateContextResolverService
             }
         }
 
-        return $plan;
+        return new QueryPlan(
+            intent: $plan->intent, metrics: $plan->metrics, dimensions: $plan->dimensions, filters: $filters,
+            sorts: $plan->sorts, limit: $plan->limit, comparison: $comparison, date_context: $plan->date_context,
+            domain: $plan->domain, relationships: $plan->relationships, analysis: $plan->analysis, columns: $plan->columns,
+            tables: $plan->tables, internal_metadata: $plan->internal_metadata
+        );
+    }
+
+    /**
+     * Parse explicit date context strings that the LLM may return.
+     * Handles: "november_2024", "november 2024", "2024-11", "2024", "desember", etc.
+     *
+     * @return array{start: Carbon, end: Carbon}|null
+     */
+    private function parseExplicitDateContext(string $context, Carbon $now): ?array
+    {
+        // Normalize separators: replace underscores, dashes (when not part of YYYY-MM), multiple spaces
+        $normalized = str_replace('_', ' ', $context);
+        $normalized = preg_replace('/\s+/', ' ', trim($normalized));
+
+        $monthNames = [
+            'januari' => 1, 'january' => 1, 'jan' => 1,
+            'februari' => 2, 'february' => 2, 'feb' => 2,
+            'maret' => 3, 'march' => 3, 'mar' => 3,
+            'april' => 4, 'apr' => 4,
+            'mei' => 5, 'may' => 5,
+            'juni' => 6, 'june' => 6, 'jun' => 6,
+            'juli' => 7, 'july' => 7, 'jul' => 7,
+            'agustus' => 8, 'august' => 8, 'agu' => 8, 'aug' => 8,
+            'september' => 9, 'sep' => 9,
+            'oktober' => 10, 'october' => 10, 'okt' => 10, 'oct' => 10,
+            'november' => 11, 'nov' => 11, 'nopember' => 11,
+            'desember' => 12, 'december' => 12, 'des' => 12, 'dec' => 12,
+        ];
+
+        // Pattern 1: "month year" or "month" (e.g. "november 2024", "desember")
+        // Also handles "bulan november 2024", "bulan 11 tahun 2024"
+        $cleaned = preg_replace('/^bulan\s+/', '', $normalized);
+        $cleaned = preg_replace('/\s+tahun\s+/', ' ', $cleaned);
+
+        // Try month name + optional year
+        foreach ($monthNames as $name => $monthNum) {
+            if (preg_match('/^' . preg_quote($name, '/') . '(?:\s+(\d{4}))?$/', $cleaned, $m)) {
+                $year = !empty($m[1]) ? (int)$m[1] : $now->year;
+                $start = Carbon::create($year, $monthNum, 1)->startOfDay();
+                $end = $start->copy()->endOfMonth();
+                return ['start' => $start, 'end' => $end];
+            }
+        }
+
+        // Pattern 2: "bulan NN tahun YYYY" or "NN/YYYY" or "NN YYYY" (numeric month)
+        if (preg_match('/^(\d{1,2})\s+(\d{4})$/', $cleaned, $m) ||
+            preg_match('/^(\d{1,2})\/(\d{4})$/', $normalized, $m)) {
+            $monthNum = (int)$m[1];
+            $year = (int)$m[2];
+            if ($monthNum >= 1 && $monthNum <= 12) {
+                $start = Carbon::create($year, $monthNum, 1)->startOfDay();
+                $end = $start->copy()->endOfMonth();
+                return ['start' => $start, 'end' => $end];
+            }
+        }
+
+        // Pattern 3: "YYYY-MM" ISO format
+        if (preg_match('/^(\d{4})-(\d{2})$/', $normalized, $m)) {
+            $year = (int)$m[1];
+            $monthNum = (int)$m[2];
+            if ($monthNum >= 1 && $monthNum <= 12) {
+                $start = Carbon::create($year, $monthNum, 1)->startOfDay();
+                $end = $start->copy()->endOfMonth();
+                return ['start' => $start, 'end' => $end];
+            }
+        }
+
+        // Pattern 4: Bare year "YYYY" (e.g. "2024", "tahun 2024")
+        $yearCleaned = preg_replace('/^tahun\s+/', '', $normalized);
+        if (preg_match('/^(\d{4})$/', $yearCleaned, $m)) {
+            $year = (int)$m[1];
+            if ($year >= 1900 && $year <= 2100) {
+                $start = Carbon::create($year, 1, 1)->startOfDay();
+                $end = Carbon::create($year, 12, 31)->endOfDay();
+                return ['start' => $start, 'end' => $end];
+            }
+        }
+
+        return null;
     }
 
     private function calculatePreviousPeriod(Carbon $start, Carbon $end, string $type): array

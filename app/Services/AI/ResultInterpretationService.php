@@ -109,7 +109,9 @@ class ResultInterpretationService
                     }
                 }
             } elseif ($totalRows === 0 || ($totalRows === 1 && !$isGrouped && $totalRowsAgg !== null && $totalRowsAgg == 0)) {
-                $assistantReply = "Tidak ada transaksi pada tanggal tersebut.";
+                $probeResult = $this->buildNoTransactionMessage($plan, $connectionId);
+                $assistantReply = $probeResult['message'];
+                $availabilityContext = $probeResult['availability_context'];
             } else if ($totalRows > 0 && !$isComparison) {
                 $metricConfig = $plan->metrics[0];
                 $alias = $metricConfig['alias'] ?? preg_replace('/[^a-zA-Z0-9_]/', '_', $metricConfig['name']);
@@ -162,6 +164,7 @@ class ResultInterpretationService
             'assistantReply' => $assistantReply,
             'presentationMetadata' => $presentationMetadata,
             'columnMap' => $columnMap,
+            'availabilityContext' => $availabilityContext ?? null,
         ];
     }
 
@@ -182,16 +185,28 @@ class ResultInterpretationService
         $columnMap = [];
         $columnsMetadata = [];
 
+        $ranking = $plan->internal_metadata['ranking'] ?? null;
+        if ($ranking) {
+            $metric = $ranking['metric_label'] ?: 'Nilai';
+            $primary = $ranking['primary_label'] ?: 'Entity';
+            $detail = $ranking['detail_label'] ?: 'Detail';
+            $columnMap = [
+                'ranking_rank' => 'Rank', 'ranking_entity' => $primary,
+                'total_value' => 'Total ' . $metric, 'top_detail' => 'Top ' . $detail,
+                'top_detail_value' => $metric . ' Item', 'transaction_count' => 'Transaksi',
+            ];
+        }
+
         foreach ($plan->tables as $table) {
             $fields = DB::table('sync_metadata_fields')
                 ->join('sync_metadata_definitions', 'sync_metadata_definitions.id', '=', 'sync_metadata_fields.definition_id')
                 ->where('sync_metadata_definitions.connection_id', $connectionId)
                 ->where('sync_metadata_definitions.entity_key', $table)
-                ->select('sync_metadata_fields.field_name', 'sync_metadata_fields.logical_name', 'sync_metadata_fields.semantic_type')
+                ->select('sync_metadata_fields.field_name', 'sync_metadata_fields.semantic_type')
                 ->get();
 
             foreach ($fields as $field) {
-                $logical = $field->logical_name ?: $field->field_name;
+                $logical = $field->field_name;
                 $columnMap[$field->field_name] = $logical;
                 
                 $aggKeys = [
@@ -223,7 +238,7 @@ class ResultInterpretationService
             
             if ($key !== '_total_rows' && $key !== 'row_count' && $key !== '#') {
                 $columnsMetadata[] = [
-                    'key' => $key,
+                    'key' => $columnMap[$key],
                     'label' => $columnMap[$key],
                     'type' => $isDimension ? 'dimension' : ($isMetric ? 'metric' : 'attribute')
                 ];
@@ -305,5 +320,222 @@ class ResultInterpretationService
             ],
             'column_map' => $columnMap
         ];
+    }
+
+    /**
+     * Build a contextual "no transaction" message based on the date_context type and data availability probe.
+     */
+    private function buildNoTransactionMessage(QueryPlan $plan, ?int $connectionId): array
+    {
+        $context = $plan->date_context;
+        
+        $defaultResponse = [
+            'message' => "Tidak ada transaksi yang ditemukan.",
+            'availability_context' => null
+        ];
+
+        if (empty($context)) {
+            return $defaultResponse;
+        }
+
+        $contextLower = strtolower(trim($context));
+
+
+        // Logical period keywords
+        $periodLabels = [
+            'today' => 'hari ini', 'hari_ini' => 'hari ini',
+            'yesterday' => 'kemarin', 'kemarin' => 'kemarin',
+            'current_week' => 'minggu ini', 'this_week' => 'minggu ini', 'minggu_ini' => 'minggu ini',
+            'previous_week' => 'minggu lalu', 'last_week' => 'minggu lalu', 'minggu_lalu' => 'minggu lalu',
+            'current_month' => 'bulan ini', 'this_month' => 'bulan ini', 'bulan_ini' => 'bulan ini',
+            'previous_month' => 'bulan lalu', 'last_month' => 'bulan lalu', 'bulan_lalu' => 'bulan lalu',
+            'current_year' => 'tahun ini', 'this_year' => 'tahun ini', 'tahun_ini' => 'tahun ini',
+            'previous_year' => 'tahun lalu', 'last_year' => 'tahun lalu', 'tahun_lalu' => 'tahun lalu',
+            'ytd' => 'year-to-date', 'year_to_date' => 'year-to-date',
+            'mtd' => 'month-to-date', 'month_to_date' => 'month-to-date',
+        ];
+
+        if (isset($periodLabels[$contextLower])) {
+            $baseMessage = "Tidak ada transaksi pada {$periodLabels[$contextLower]}.";
+            return $this->performAvailabilityProbe($plan, $connectionId, $baseMessage, true);
+        }
+
+        // Explicit month/year patterns
+        $monthNames = [
+            1 => 'Januari', 2 => 'Februari', 3 => 'Maret', 4 => 'April',
+            5 => 'Mei', 6 => 'Juni', 7 => 'Juli', 8 => 'Agustus',
+            9 => 'September', 10 => 'Oktober', 11 => 'November', 12 => 'Desember',
+        ];
+
+        $monthLookup = [
+            'januari' => 1, 'january' => 1, 'jan' => 1,
+            'februari' => 2, 'february' => 2, 'feb' => 2,
+            'maret' => 3, 'march' => 3, 'mar' => 3,
+            'april' => 4, 'apr' => 4,
+            'mei' => 5, 'may' => 5,
+            'juni' => 6, 'june' => 6, 'jun' => 6,
+            'juli' => 7, 'july' => 7, 'jul' => 7,
+            'agustus' => 8, 'august' => 8, 'agu' => 8, 'aug' => 8,
+            'september' => 9, 'sep' => 9,
+            'oktober' => 10, 'october' => 10, 'okt' => 10, 'oct' => 10,
+            'november' => 11, 'nov' => 11, 'nopember' => 11,
+            'desember' => 12, 'december' => 12, 'des' => 12, 'dec' => 12,
+        ];
+
+        $normalized = str_replace('_', ' ', $contextLower);
+        $cleaned = preg_replace('/^bulan\s+/', '', $normalized);
+        $cleaned = preg_replace('/\s+tahun\s+/', ' ', $cleaned);
+
+        // Month name + optional year
+        foreach ($monthLookup as $name => $monthNum) {
+            if (preg_match('/^' . preg_quote($name, '/') . '(?:\s+(\d{4}))?$/', $cleaned, $m)) {
+                $label = $monthNames[$monthNum];
+                if (!empty($m[1])) {
+                    $baseMessage = "Tidak ada transaksi pada bulan {$label} {$m[1]}.";
+                    return $this->performAvailabilityProbe($plan, $connectionId, $baseMessage, false, ['month' => $label, 'year' => $m[1]]);
+                }
+                $baseMessage = "Tidak ada transaksi pada bulan {$label}.";
+                return $this->performAvailabilityProbe($plan, $connectionId, $baseMessage, false, ['month' => $label]);
+            }
+        }
+
+        // YYYY-MM
+        if (preg_match('/^(\d{4})-(\d{2})$/', $normalized, $m)) {
+            $monthNum = (int)$m[2];
+            if (isset($monthNames[$monthNum])) {
+                $baseMessage = "Tidak ada transaksi pada bulan {$monthNames[$monthNum]} {$m[1]}.";
+                return $this->performAvailabilityProbe($plan, $connectionId, $baseMessage, false, ['month' => $monthNames[$monthNum], 'year' => $m[1]]);
+            }
+        }
+
+        // Bare year
+        $yearCleaned = preg_replace('/^tahun\s+/', '', $normalized);
+        if (preg_match('/^(\d{4})$/', $yearCleaned)) {
+            $baseMessage = "Tidak ada transaksi pada tahun {$yearCleaned}.";
+            return $this->performAvailabilityProbe($plan, $connectionId, $baseMessage, false, ['year' => $yearCleaned]);
+        }
+
+        // Fallback for exact dates
+        $baseMessage = "Tidak ada transaksi pada tanggal tersebut.";
+        return $this->performAvailabilityProbe($plan, $connectionId, $baseMessage, true);
+    }
+
+    /**
+     * Probes the database to find actual min/max dates for the active table.
+     */
+    private function performAvailabilityProbe(QueryPlan $plan, ?int $connectionId, string $baseMessage, bool $isLogical, array $requested = []): array
+    {
+        if (!$connectionId || empty($plan->tables)) {
+            return ['message' => $baseMessage, 'availability_context' => null];
+        }
+
+        $table = $plan->tables[0];
+        
+        // Find date field from filters
+        $dateField = null;
+        $requestedStart = null;
+        $requestedEnd = null;
+        foreach ($plan->filters as $filter) {
+            if ($filter['operator'] === 'BETWEEN' && is_array($filter['value']) && count($filter['value']) === 2) {
+                // Heuristic: BETWEEN filter with array of 2 is typically the date filter
+                $dateField = $filter['field'];
+                $requestedStart = $filter['value'][0];
+                $requestedEnd = $filter['value'][1];
+                break;
+            }
+        }
+
+        if (!$dateField) {
+            return ['message' => $baseMessage, 'availability_context' => null];
+        }
+
+        try {
+            $connection = \App\Models\Connection::find($connectionId);
+            if (!$connection) {
+                return ['message' => $baseMessage, 'availability_context' => null];
+            }
+
+            $executor = app(\App\Services\QueryRepositoryService::class);
+            $query = "SELECT MIN(`{$dateField}`) as min_date, MAX(`{$dateField}`) as max_date, COUNT(*) as total_rows FROM `{$table}`";
+            $result = $executor->executeForAnalytics($query, [], 1, $connection);
+
+            if (empty($result['data']) || !isset($result['data'][0])) {
+                return ['message' => $baseMessage, 'availability_context' => null];
+            }
+
+            $row = (array)$result['data'][0];
+            $totalRows = (int)($row['total_rows'] ?? 0);
+
+            if ($totalRows === 0) {
+                return [
+                    'message' => "Dataset belum memiliki transaksi.",
+                    'availability_context' => [
+                        'status' => 'empty_table',
+                        'table' => $table,
+                        'date_field' => $dateField,
+                    ]
+                ];
+            }
+
+            $minDate = $row['min_date'] ?? null;
+            $maxDate = $row['max_date'] ?? null;
+
+            if ($minDate && $maxDate) {
+                // Format for user
+                $minDateObj = \Carbon\Carbon::parse($minDate);
+                $maxDateObj = \Carbon\Carbon::parse($maxDate);
+                
+                $minDateStr = $minDateObj->translatedFormat('d F Y');
+                $maxDateStr = $maxDateObj->translatedFormat('d F Y');
+
+                $availabilityContext = [
+                    'table' => $table,
+                    'date_field' => $dateField,
+                    'available_from' => $minDateObj->format('Y-m-d'),
+                    'available_to' => $maxDateObj->format('Y-m-d'),
+                ];
+
+                $requestedLabel = !empty($requested['month']) ? $requested['month'] . ' ' . ($requested['year'] ?? '') : $plan->date_context;
+                $requestedLabel = trim($requestedLabel);
+
+                if ($requestedStart && $requestedEnd) {
+                    $reqStartObj = \Carbon\Carbon::parse($requestedStart);
+                    $reqEndObj = \Carbon\Carbon::parse($requestedEnd);
+
+                    if ($reqEndObj->lt($minDateObj) || $reqStartObj->gt($maxDateObj)) {
+                        // Case A: Outside range
+                        $availabilityContext['status'] = 'outside_available_range';
+                        $message = "Data untuk {$requestedLabel} tidak tersedia pada dataset yang sedang dianalisis. Transaksi tersedia mulai {$minDateStr} sampai {$maxDateStr}.";
+                        
+                        return [
+                            'message' => $message,
+                            'availability_context' => $availabilityContext
+                        ];
+                    } else {
+                        // Case B: Inside range but 0 rows
+                        $availabilityContext['status'] = 'inside_range_zero_filter';
+                        $message = "Periode {$requestedLabel} tersedia dalam dataset (rentang data: {$minDateStr} - {$maxDateStr}), namun tidak ada transaksi yang cocok dengan kriteria filter Anda saat ini.";
+                        
+                        return [
+                            'message' => $message,
+                            'availability_context' => $availabilityContext
+                        ];
+                    }
+                }
+
+                // Fallback if we couldn't parse start/end
+                $availabilityContext['status'] = 'unknown_range';
+                $message = "{$baseMessage} Transaksi pada dataset ini tersedia mulai {$minDateStr} sampai {$maxDateStr}.";
+                return [
+                    'message' => $message,
+                    'availability_context' => $availabilityContext
+                ];
+            }
+
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Availability probe failed', ['error' => $e->getMessage()]);
+        }
+
+        return ['message' => $baseMessage, 'availability_context' => null];
     }
 }

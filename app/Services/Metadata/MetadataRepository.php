@@ -92,16 +92,50 @@ class MetadataRepository implements MetadataRepositoryInterface
                 
                 $tProvProcStart = microtime(true);
                 $fields = [];
+                $fieldNames = [];
                 if (!empty($metadataNode->properties)) {
                     foreach ($metadataNode->properties as $prop) {
                         $propName = is_array($prop) ? ($prop['name'] ?? $prop['Field'] ?? '') : (string)$prop;
+                        $propType = is_array($prop) ? ($prop['type'] ?? $prop['Type'] ?? '') : '';
+                        
                         if (!$propName) continue;
+
+                        $dataType = 'string';
+                        $semanticType = 'dimension';
+                        
+                        $propTypeLower = strtolower((string)$propType);
+                        if (preg_match('/int|decimal|numeric|float|double|real|money/i', $propTypeLower)) {
+                            if (!preg_match('/tinyint\(1\)/i', $propTypeLower)) {
+                                $dataType = 'number';
+                                $semanticType = 'metric';
+                            }
+                        } 
+                        if (preg_match('/date|time/i', $propTypeLower)) {
+                            $dataType = 'datetime';
+                            $semanticType = 'datetime';
+                        } 
+                        if (preg_match('/bit|bool|tinyint\(1\)/i', $propTypeLower)) {
+                            $dataType = 'boolean';
+                            $semanticType = 'dimension';
+                        }
+
+                        $fieldNames[] = [
+                            'name'          => $propName,
+                            'data_type'     => $dataType,
+                            'semantic_type' => $semanticType,
+                        ];
+
                         $fields[] = new MetadataField(
                             name: $propName,
-                            dataType: 'string',
+                            dataType: $dataType,
                             isPrimaryKey: (strcasecmp($propName, 'id') === 0 || preg_match('/ID$/i', $propName))
                         );
                     }
+                }
+                
+                // Populate available_fields for the ETL / Manage Fields UI
+                if (!empty($fieldNames)) {
+                    $this->entityConfigService->updateAvailableFields($entityKey, $fieldNames);
                 }
                 
                 $metadataEntity = new MetadataEntity(

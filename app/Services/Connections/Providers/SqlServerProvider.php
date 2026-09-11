@@ -115,17 +115,20 @@ class SqlServerProvider implements ConnectionProviderInterface
         if (count($parts) === 2) {
             $schemaName = str_replace("'", "''", $parts[0]);
             $tableName = str_replace("'", "''", $parts[1]);
-            $query = "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$schemaName}' AND TABLE_NAME = '{$tableName}' ORDER BY ORDINAL_POSITION";
+            $query = "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$schemaName}' AND TABLE_NAME = '{$tableName}' ORDER BY ORDINAL_POSITION";
         } else {
             $objectNameEscaped = str_replace("'", "''", $objectName);
-            $query = "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{$objectNameEscaped}' ORDER BY ORDINAL_POSITION";
+            $query = "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{$objectNameEscaped}' ORDER BY ORDINAL_POSITION";
         }
         
         $stmt = $pdo->query($query);
         
         $properties = [];
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            $properties[] = $row['COLUMN_NAME'];
+            $properties[] = [
+                'name' => $row['COLUMN_NAME'],
+                'type' => $row['DATA_TYPE'],
+            ];
         }
 
         return new MetadataNode(name: $objectName, type: 'table', properties: $properties);

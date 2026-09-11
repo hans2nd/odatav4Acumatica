@@ -445,6 +445,53 @@ class AiSettingsController extends Controller
                 }
             }
 
+            // Save semantic dates
+            $dateNames = $request->input('date_names', []);
+            $dateColumns = $request->input('date_columns', []);
+            $dateRoles = $request->input('date_roles', []);
+
+            \App\Models\AiSemanticDefinition::where('connection_id', $connectionId)
+                ->where('source_table', $sourceTable)
+                ->where('type', 'date')
+                ->delete();
+
+            foreach ($dateNames as $i => $name) {
+                $col = $dateColumns[$i] ?? null;
+                $role = $dateRoles[$i] ?? 'transaction_date';
+                $name = trim($name);
+                
+                if (!empty($name) && !empty($col)) {
+                    $semanticProfile['dates'][] = [
+                        'name' => $name,
+                        'source_column' => $col,
+                        'role' => $role
+                    ];
+
+                    \App\Models\AiSemanticDefinition::updateOrCreate(
+                        [
+                            'connection_id' => $connectionId,
+                            'source_table' => $sourceTable,
+                            'type' => 'date',
+                            'name' => $name,
+                        ],
+                        [
+                            'description' => null,
+                            'expression' => $col,
+                            'source_column' => $col,
+                            'metadata' => [
+                                'role' => $role
+                            ]
+                        ]
+                    );
+                }
+            }
+
+            // Other complex objects (Capabilities, Hierarchies, Question Patterns, Grain) are stored directly in semantic profile JSON
+            $semanticProfile['transaction_grain'] = json_decode($request->input('transaction_grain', 'null'), true);
+            $semanticProfile['capabilities'] = json_decode($request->input('capabilities', '[]'), true);
+            $semanticProfile['hierarchies'] = json_decode($request->input('hierarchies', '[]'), true);
+            $semanticProfile['question_patterns'] = json_decode($request->input('question_patterns', '[]'), true);
+
             // Update semantic profile with dimensions and metrics included
             \Illuminate\Support\Facades\DB::table('sync_metadata_definitions')->where('id', $id)->update([
                 'semantic_profile' => json_encode($semanticProfile),
@@ -479,6 +526,13 @@ class AiSettingsController extends Controller
             ->where('type', 'dimension')
             ->get(['id', 'name', 'source_column', 'metadata']);
 
+        $dates = \App\Models\AiSemanticDefinition::where('connection_id', $def->connection_id)
+            ->where('source_table', $def->entity_key)
+            ->where('type', 'date')
+            ->get(['id', 'name', 'source_column', 'metadata']);
+
+        $semanticProfile = $def->semantic_profile ? json_decode($def->semantic_profile, true) : [];
+
         return response()->json([
             'table' => $def,
             'columns' => $columns,
@@ -486,6 +540,11 @@ class AiSettingsController extends Controller
             'business_domains' => $def->business_domains ? json_decode($def->business_domains, true) : [],
             'metrics' => $metrics,
             'dimensions' => $dimensions,
+            'dates' => $dates,
+            'transaction_grain' => $semanticProfile['transaction_grain'] ?? null,
+            'capabilities' => $semanticProfile['capabilities'] ?? [],
+            'hierarchies' => $semanticProfile['hierarchies'] ?? [],
+            'question_patterns' => $semanticProfile['question_patterns'] ?? []
         ]);
     }
 
@@ -509,6 +568,27 @@ class AiSettingsController extends Controller
             ->where('definition_id', $def->id)
             ->get(['field_name', 'data_type', 'semantic_type']);
 
+        // Enrich fields with configurations from Manage Fields (sync_entity_fields)
+        $syncEntity = \App\Models\SyncEntity::where('destination_table', $def->entity_key)->first();
+        $entityFieldsDict = [];
+        if ($syncEntity) {
+            $entityFieldsDict = \App\Models\SyncEntityField::where('sync_entity_id', $syncEntity->id)
+                ->where('is_enabled', true)
+                ->whereNotNull('destination_field')
+                ->get()
+                ->keyBy('destination_field');
+                
+            foreach ($fields as $field) {
+                if ($entityFieldsDict->has($field->field_name)) {
+                    $ef = $entityFieldsDict->get($field->field_name);
+                    $field->semantic_type = $ef->semantic_type ?: $field->semantic_type;
+                    if (!empty($ef->label)) $field->label = $ef->label;
+                    if (!empty($ef->description)) $field->description = $ef->description;
+                    if (!empty($ef->aliases)) $field->aliases = $ef->aliases;
+                }
+            }
+        }
+
         // Load existing AiSemanticDefinition records for duplicate protection
         $existingDefinitions = \App\Models\AiSemanticDefinition::where('connection_id', $def->connection_id)
             ->where('source_table', $def->entity_key)
@@ -523,16 +603,33 @@ class AiSettingsController extends Controller
         $dataRole = strtolower($def->data_role ?? 'other');
 
         try {
-            $openRouter = app(\App\Services\AI\OpenRouterClient::class);
-            $prompt = [
-                ['role' => 'system', 'content' => 'You are an expert BI Data Architect. Given a database table schema, you will suggest useful metrics and dimensions for analytics. Generate a strictly valid JSON response.'],
-                ['role' => 'user', 'content' => "Table Name: {$def->entity_key}\nLogical Name: {$def->logical_name}\nData Role: {$dataRole}\nDescription: {$def->description}\n\nFields:\n" . json_encode($fields) . "\n\nProvide your suggestions strictly as a JSON object with the following schema:\n{\n  \"metrics\": [\n    {\n      \"name\": \"Total Revenue\",\n      \"source_column\": \"NetAmount\",\n      \"aggregation\": \"SUM\",\n      \"expression\": \"SUM(NetAmount)\",\n      \"description\": \"Total revenue amount\",\n      \"aliases\": [\"sales\", \"revenue\"],\n      \"is_default\": true,\n      \"reason\": \"Main transaction amount\",\n      \"confidence\": \"high\"\n    }\n  ],\n  \"dimensions\": [\n    {\n      \"name\": \"Customer\",\n      \"source_column\": \"CustomerID\",\n      \"aliases\": [\"client\", \"buyer\"]\n    }\n  ]\n}"]
+            $suggestionService = app(\App\Services\AI\SemanticSuggestionService::class);
+            $tableDef = (object)[
+                'entity_key' => $def->entity_key,
+                'logical_name' => $def->logical_name,
+                'data_role' => $dataRole,
+                'description' => $def->description
             ];
+            
+            $connection = \App\Models\Connection::find($def->connection_id);
+            $parsed = $suggestionService->generateSuggestions($connection, $tableDef, $fields);
 
-            $response = $openRouter->getCompletion($prompt, true);
-            $parsed = json_decode($response, true);
+            if (is_array($parsed)) {
+                // Merge Derived Metrics into generic Metrics for UI rendering
+                if (isset($parsed['derived_metrics']) && is_array($parsed['derived_metrics'])) {
+                    foreach ($parsed['derived_metrics'] as $dm) {
+                        $dm['type'] = 'derived_metric';
+                        $dm['calculation_scope'] = 'aggregate';
+                        $dm['aggregation_strategy'] = 'ratio_of_aggregates';
+                        $dm['aggregation'] = 'DERIVED'; // Explicit canonical marker instead of empty string hack
+                        $parsed['metrics'][] = $dm;
+                    }
+                }
+                
+                // Merge Dates into generic Dimensions for basic UI compatibility (if they don't have separate Date panels)
+                // However, UI will be updated to handle dates separately, so we just pass them along.
 
-            if (is_array($parsed) && (isset($parsed['metrics']) || isset($parsed['dimensions']))) {
+                // Filter out already existing metrics/dimensions
                 if (isset($parsed['metrics']) && is_array($parsed['metrics'])) {
                     foreach ($parsed['metrics'] as $m) {
                         if (!in_array(strtolower($m['name'] ?? ''), $existingMetricNames) && !in_array($m['source_column'] ?? '', $existingMetricCols)) {
@@ -549,113 +646,32 @@ class AiSettingsController extends Controller
                     }
                 }
                 
-                return response()->json([
-                    'metrics' => $metrics,
-                    'dimensions' => $dimensions
-                ]);
+                $parsed['metrics'] = $metrics;
+                $parsed['dimensions'] = $dimensions;
+                
+                return response()->json($parsed);
             }
-            throw new \Exception("Invalid JSON format returned from LLM.");
+            throw new \Exception("Invalid format returned from Suggestion Service.");
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\Log::warning("LLM Suggest Semantics failed, falling back to rule-based: " . $e->getMessage());
             
             // Fallback to rule-based logic
             foreach ($fields as $f) {
-            $col = $f->field_name;
-            $type = strtolower($f->semantic_type ?? '');
-            $cleanName = ucwords(str_replace(['_', '-'], ' ', preg_replace('/(?<!^)[A-Z]/', ' $0', $col)));
+                $col = $f->field_name;
+                $type = strtolower($f->semantic_type ?? '');
+                $cleanName = !empty($f->label) ? $f->label : ucwords(str_replace(['_', '-'], ' ', preg_replace('/(?<!^)[A-Z]/', ' $0', $col)));
+                $customAliases = !empty($f->aliases) && is_array($f->aliases) ? $f->aliases : [];
 
-            // --- Level 2: Contextual Candidates (high metadata evidence) ---
-            if ($dataRole === 'sales_transaction' && in_array(strtolower($col), ['netamount', 'totalamount', 'linetotal', 'docamount'])) {
-                if (!in_array('revenue', $existingMetricNames) && !in_array('total sales', $existingMetricNames)) {
-                    $metrics[] = [
-                        'name' => 'Revenue',
-                        'source_column' => $col,
-                        'aggregation' => 'SUM',
-                        'expression' => "SUM({$col})",
-                        'description' => "Total revenue calculated from {$col}",
-                        'aliases' => ['sales', 'penjualan', 'total revenue', 'omset'],
-                        'is_default' => count($metrics) === 0,
-                        'reason' => "data_role=sales_transaction, field={$col}",
-                        'confidence' => 'high'
-                    ];
-                    continue;
-                }
-            } elseif ($dataRole === 'sales_transaction' && in_array(strtolower($col), ['orderqty', 'qty', 'quantity'])) {
-                if (!in_array('total quantity', $existingMetricNames) && !in_array('volume', $existingMetricNames)) {
-                    $metrics[] = [
-                        'name' => 'Total Quantity',
-                        'source_column' => $col,
-                        'aggregation' => 'SUM',
-                        'expression' => "SUM({$col})",
-                        'description' => "Total order quantity from {$col}",
-                        'aliases' => ['qty', 'volume', 'jumlah pesanan', 'total qty'],
-                        'is_default' => false,
-                        'reason' => "data_role=sales_transaction, field={$col}",
-                        'confidence' => 'high'
-                    ];
-                    continue;
+                if (in_array($type, ['dimension', 'categorical', 'status'])) {
+                    if (!in_array($col, $existingDimCols)) {
+                        $dimensions[] = [
+                            'name' => $cleanName,
+                            'source_column' => $col,
+                            'aliases' => !empty($customAliases) ? $customAliases : [strtolower($cleanName)]
+                        ];
+                    }
                 }
             }
-
-            // --- Level 1: Generic Deterministic Candidates ---
-            if ($type === 'amount' || $type === 'metric') {
-                $metricName = 'Total ' . $cleanName;
-                if (!in_array(strtolower($metricName), $existingMetricNames) && !in_array($col, $existingMetricCols)) {
-                    $metrics[] = [
-                        'name' => $metricName,
-                        'source_column' => $col,
-                        'aggregation' => 'SUM',
-                        'expression' => "SUM({$col})",
-                        'description' => "Sum of {$cleanName}",
-                        'aliases' => [strtolower($cleanName), 'total ' . strtolower($cleanName)],
-                        'is_default' => count($metrics) === 0,
-                        'reason' => "semantic_type={$type}",
-                        'confidence' => 'high'
-                    ];
-                }
-            } elseif ($type === 'price' || $type === 'rate') {
-                $metricName = 'Average ' . $cleanName;
-                if (!in_array(strtolower($metricName), $existingMetricNames) && !in_array($col, $existingMetricCols)) {
-                    $metrics[] = [
-                        'name' => $metricName,
-                        'source_column' => $col,
-                        'aggregation' => 'AVG',
-                        'expression' => "AVG({$col})",
-                        'description' => "Average {$cleanName}",
-                        'aliases' => ['rata-rata ' . strtolower($cleanName), 'avg ' . strtolower($cleanName)],
-                        'is_default' => false,
-                        'reason' => "semantic_type={$type}",
-                        'confidence' => 'high'
-                    ];
-                }
-            } elseif ($type === 'identifier') {
-                $metricName = 'Count ' . $cleanName;
-                if (!in_array(strtolower($metricName), $existingMetricNames)) {
-                    $metrics[] = [
-                        'name' => $metricName,
-                        'source_column' => $col,
-                        'aggregation' => 'COUNT',
-                        'expression' => "COUNT(DISTINCT {$col})",
-                        'description' => "Distinct count of {$cleanName}",
-                        'aliases' => ['jumlah ' . strtolower($cleanName), 'count ' . strtolower($cleanName)],
-                        'is_default' => false,
-                        'reason' => "semantic_type=identifier",
-                        'confidence' => 'medium'
-                    ];
-                }
-            }
-
-            // Dimensions (Categorical / Status / Dimensions)
-            if (in_array($type, ['dimension', 'categorical', 'status'])) {
-                if (!in_array($col, $existingDimCols)) {
-                    $dimensions[] = [
-                        'name' => $cleanName,
-                        'source_column' => $col,
-                        'aliases' => [strtolower($cleanName)]
-                    ];
-                }
-            }
-        }
         }
 
         return response()->json([

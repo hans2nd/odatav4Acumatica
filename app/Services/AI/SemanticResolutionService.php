@@ -38,8 +38,12 @@ class SemanticResolutionService
                 if (!empty($def->expression) && $def->expression !== $def->source_column) {
                     $expr = trim($def->expression);
                     $expr = str_ireplace('AS NUMERIC', 'AS DECIMAL(18,4)', $expr);
-                    if ($agg && preg_match('/^' . preg_quote($agg, '/') . '\s*\((.*)\)$/i', $expr, $matches)) {
+                    // A semantic expression may carry its default aggregate even
+                    // when metadata omits aggregation. Strip a single aggregate so
+                    // the validated plan can safely apply the user-requested one.
+                    if (preg_match('/^(SUM|COUNT|AVG|MIN|MAX)\s*\((.*)\)$/i', $expr, $matches)) {
                         $name = $matches[1];
+                        $name = $matches[2];
                         $isExpr = !preg_match('/^[a-zA-Z0-9_]+$/', $name);
                     } else {
                         $name = $expr;
@@ -61,7 +65,7 @@ class SemanticResolutionService
         }
 
         // 2. Check SyncEntityField (via SyncEntity)
-        $syncEntities = \App\Models\SyncEntity::whereIn('destination_table', $resolvedTables)->get();
+        $syncEntities = \App\Models\SyncEntity::whereIn('source_object', $resolvedTables)->get();
         if ($syncEntities->isNotEmpty()) {
             $entityIds = $syncEntities->pluck('id')->toArray();
             $fields = \App\Models\SyncEntityField::whereIn('sync_entity_id', $entityIds)
@@ -209,8 +213,8 @@ class SemanticResolutionService
         if (!empty($chosenMetric->expression) && $chosenMetric->expression !== $chosenMetric->source_column) {
             $expr = trim($chosenMetric->expression);
             $expr = str_ireplace('AS NUMERIC', 'AS DECIMAL(18,4)', $expr);
-            if ($agg && preg_match('/^' . preg_quote($agg, '/') . '\s*\((.*)\)$/i', $expr, $matches)) {
-                $name = $matches[1];
+            if (preg_match('/^(SUM|COUNT|AVG|MIN|MAX)\s*\((.*)\)$/i', $expr, $matches)) {
+                $name = $matches[2];
             } else {
                 $name = $expr;
                 $isExpr = true;

@@ -18,6 +18,11 @@ use App\Services\AI\OpenRouterClient;
 use App\Services\AI\SemanticLearningService;
 use App\Services\AI\ResultInterpretationService;
 use App\Services\AI\QueryRecognitionService;
+use App\Services\AI\ConversationContextService;
+use App\Services\AI\BusinessAnalysisService;
+use App\Services\AI\InsightEngineService;
+use App\Services\AI\ResponseStrategyService;
+use App\Services\AI\ComparisonExecutor;
 use App\Models\QueryRepository;
 use App\Services\QueryRepositoryService;
 use Illuminate\Support\Facades\Cache;
@@ -36,6 +41,11 @@ class ChatEDPController extends Controller
     protected $learningService;
     protected $interpreter;
     protected $recognizer;
+    protected $conversationContext;
+    protected $businessAnalysis;
+    protected $insightEngine;
+    protected $responseStrategy;
+    protected $comparisonExecutor;
 
     public function __construct(
         QueryPlannerService $planner,
@@ -48,7 +58,12 @@ class ChatEDPController extends Controller
         OpenRouterClient $openRouter,
         SemanticLearningService $learningService,
         ResultInterpretationService $interpreter,
-        QueryRecognitionService $recognizer
+        QueryRecognitionService $recognizer,
+        ConversationContextService $conversationContext,
+        BusinessAnalysisService $businessAnalysis,
+        InsightEngineService $insightEngine,
+        ResponseStrategyService $responseStrategy,
+        ComparisonExecutor $comparisonExecutor
     ) {
         $this->planner = $planner;
         $this->dateResolver = $dateResolver;
@@ -61,6 +76,11 @@ class ChatEDPController extends Controller
         $this->learningService = $learningService;
         $this->interpreter = $interpreter;
         $this->recognizer = $recognizer;
+        $this->conversationContext = $conversationContext;
+        $this->businessAnalysis = $businessAnalysis;
+        $this->insightEngine = $insightEngine;
+        $this->responseStrategy = $responseStrategy;
+        $this->comparisonExecutor = $comparisonExecutor;
     }
 
     public function index(Request $request)
@@ -110,7 +130,7 @@ class ChatEDPController extends Controller
                 ->first();
             if ($dimField) {
                 $primaryDimension = (object)[
-                    'name' => $dimField->logical_name ?: ucwords(str_replace(['_', '-'], ' ', preg_replace('/(?<!^)[A-Z]/', ' $0', $dimField->field_name)))
+                    'name' => ucwords(str_replace(['_', '-'], ' ', preg_replace('/(?<!^)[A-Z]/', ' $0', $dimField->field_name)))
                 ];
             }
         }
@@ -215,6 +235,38 @@ class ChatEDPController extends Controller
         return response()->json(['success' => true]);
     }
 
+    /**
+     * Delete all conversations for the authenticated user on specific dates.
+     */
+    public function deleteConversationsByDate(Request $request)
+    {
+        $validated = $request->validate([
+            'dates' => 'required|array|min:1',
+            'dates.*' => 'date_format:Y-m-d',
+        ]);
+
+        $userId = $request->user()->id;
+        $deletedCount = 0;
+
+        foreach ($validated['dates'] as $date) {
+            $conversations = AiConversation::where('user_id', $userId)
+                ->whereDate('created_at', $date)
+                ->get();
+
+            foreach ($conversations as $conv) {
+                $conv->messages()->delete();
+                $conv->delete();
+                $deletedCount++;
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'deleted_count' => $deletedCount,
+            'message' => "{$deletedCount} percakapan berhasil dihapus.",
+        ]);
+    }
+
     public function sendMessage(Request $request)
     {
         $validated = $request->validate([
@@ -224,7 +276,8 @@ class ChatEDPController extends Controller
 
         $conversation = AiConversation::where('user_id', $request->user()->id)->findOrFail($validated['conversation_id']);
         
-        $domainContext = $conversation->metadata['domain_context'] ?? null;
+        $storedContext = $this->conversationContext->resolve($conversation);
+        $domainContext = $storedContext['domain'][0] ?? $storedContext['domain'] ?? ($conversation->metadata['domain_context'] ?? null);
 
         // 1. Resolve connection (Administrator-selected analytics source)
         // For P0/P1, it was assumed there's a setting for this. Let's find the designated analytics connection.
@@ -276,6 +329,10 @@ class ChatEDPController extends Controller
                     $compactHistory[] = ['role' => 'assistant', 'content' => $msg->content];
                 }
             }
+        }
+        $memory = $this->conversationContext->compact($conversation);
+        if (!empty($memory['summary']) || !empty($memory['context'])) {
+            $compactHistory[] = ['role' => 'assistant', 'content' => 'Conversation summary: ' . json_encode(['summary' => $memory['summary'], 'context' => $memory['context']], JSON_UNESCAPED_UNICODE)];
         }
 
         // Save User Message
@@ -334,7 +391,8 @@ class ChatEDPController extends Controller
                 ]);
                 
                 // 2. Intent to QueryPlan via LLM (Fallback)
-                $plan = $this->planner->plan($validated['message'], $connection->id, $compactHistory, $domainContext);
+                $activeTables = $memory['context']['tables'] ?? [];
+                $plan = $this->planner->plan($validated['message'], $connection->id, $compactHistory, $domainContext, $activeTables);
                 
                 \Illuminate\Support\Facades\Log::info('ChatEDP_Telemetry', ['event' => 'llm_planner_call', 'connection_id' => $connection->id]);
             }
@@ -342,13 +400,17 @@ class ChatEDPController extends Controller
             if ($plan->intent === 'data_unavailable') {
                 $duration = microtime(true) - $startTime;
                 
+                
+                $hasValidContext = !empty($memory['context']['tables']) && !empty($memory['context']['metric']);
+                $suggestions = $hasValidContext ? [] : $this->getSuggestedQuestions($connection->id);
+                
                 $assistantMessage = AiMessage::create([
                     'conversation_id' => $conversation->id,
                     'role' => 'assistant',
                     'content' => 'Pertanyaan tidak dapat diproses. Mungkin pertanyaan Anda berada di luar konteks atau menggunakan istilah data yang belum dikonfigurasi.',
                     'metadata' => [
                         'intent' => 'data_unavailable',
-                        'suggestions' => $this->getSuggestedQuestions($connection->id)
+                        'suggestions' => $suggestions
                     ]
                 ]);
                 
@@ -431,11 +493,11 @@ class ChatEDPController extends Controller
                         $retries++;
                         
                         // Try to auto-learn
-                        $learned = $this->learningService->learn(
+                        $learned = $this->learningService->learnAndReturnMatch(
                             $connection,
                             $e->getTerm(),
                             $e->getType(),
-                            !empty($plan->tables) ? $plan->tables[0] : null
+                            $domainContext
                         );
                         
                         if ($learned) {
@@ -499,6 +561,20 @@ class ChatEDPController extends Controller
                 ]);
             }
 
+            $analysisContext = [
+                'domain' => $domainContext ? [$domainContext] : [],
+                'metric' => $validatedPlan->metrics[0]['alias'] ?? $validatedPlan->metrics[0]['name'] ?? null,
+                'dimensions' => $validatedPlan->dimensions,
+                'detail_dimensions' => $validatedPlan->detail_dimensions,
+                'filters' => $validatedPlan->filters,
+                'date_context' => $validatedPlan->date_context,
+                'comparison' => $validatedPlan->comparison,
+                'tables' => $validatedPlan->tables,
+                'relationships' => $validatedPlan->relationships,
+                'analysis_mode' => $validatedPlan->analysis['mode'] ?? ($validatedPlan->comparison ? 'comparison' : 'kpi'),
+            ];
+            $analysisContext = $this->conversationContext->merge($conversation, $analysisContext, false);
+
             // 4. Cost Guard
             $this->costGuard->guard($validatedPlan);
 
@@ -507,6 +583,7 @@ class ChatEDPController extends Controller
                 $libraryHit = $this->libraryService->lookup($validatedPlan, $connection, $domainContext);
                 $executionSource = 'compiler';
                 $matchedRepository = null;
+                $comparisonResult = null;
 
                 if ($libraryHit) {
                     $executionSource = 'library_hit';
@@ -514,12 +591,18 @@ class ChatEDPController extends Controller
                     $libraryHit->recordHit();
                 }
 
-                // Always safely compile parameterized SQL for the current plan's specific bindings
-                [$sql, $bindings] = $this->compiler->compile($validatedPlan, $connection);
-
-                // 6. Secure Execution
-                $executionResult = $this->executor->executeForAnalytics($sql, $bindings, $validatedPlan->limit ?? 500);
-                $results = $executionResult['data'];
+                if (strtolower((string) ($validatedPlan->comparison['type'] ?? '')) === 'table') {
+                    $comparisonResult = $this->comparisonExecutor->execute($validatedPlan, $connection);
+                    $executionSource = 'table_comparison';
+                    $sql = null;
+                    $bindings = [];
+                    $results = [];
+                } else {
+                    // Always safely compile parameterized SQL for the current plan's specific bindings
+                    [$sql, $bindings] = $this->compiler->compile($validatedPlan, $connection);
+                    $executionResult = $this->executor->executeForAnalytics($sql, $bindings, $validatedPlan->limit ?? 500);
+                    $results = $executionResult['data'];
+                }
             } catch (\App\Exceptions\AI\SemanticAmbiguityException $e) {
                 $assistantMessage = AiMessage::create([
                     'conversation_id' => $conversation->id,
@@ -540,7 +623,7 @@ class ChatEDPController extends Controller
                 $assistantMessage = AiMessage::create([
                     'conversation_id' => $conversation->id,
                     'role' => 'assistant',
-                    'content' => 'Maaf, terjadi kesalahan teknis saat menerjemahkan atau mengeksekusi kueri Anda: ' . $e->getMessage(),
+                    'content' => config('app.debug') ? 'Maaf, terjadi kesalahan teknis saat menerjemahkan atau mengeksekusi kueri Anda: ' . $e->getMessage() : 'Maaf, analisis tidak dapat dijalankan karena terjadi masalah teknis.',
                     'metadata' => ['intent' => 'error']
                 ]);
                 
@@ -564,12 +647,30 @@ class ChatEDPController extends Controller
             $duration = microtime(true) - $startTime;
 
             // 7. Result Evaluation & Formatting
-            $interpretation = $this->interpreter->interpret($results, $validatedPlan, $connection->id);
-            $results = $interpretation['results'];
-            $assistantReply = $interpretation['assistantReply'];
-            $presentationMetadata = $interpretation['presentationMetadata'];
-            $columnMap = $interpretation['columnMap'];
+            if ($comparisonResult) {
+                $results = [[
+                    'left_value' => $comparisonResult['left']['value'], 'right_value' => $comparisonResult['right']['value'],
+                    'gap' => $comparisonResult['comparison']['gap'], 'ratio' => $comparisonResult['comparison']['ratio'],
+                ]];
+                $assistantReply = !$comparisonResult['has_data']
+                    ? 'Tidak ada data yang cukup pada salah satu sisi perbandingan untuk filter yang dipilih.'
+                    : sprintf('%s: %s\n%s: %s\nGap: %s\nRasio: %s', $comparisonResult['left']['metric'], number_format($comparisonResult['left']['value'], 2, ',', '.'), $comparisonResult['right']['metric'], number_format($comparisonResult['right']['value'], 2, ',', '.'), number_format($comparisonResult['comparison']['gap'], 2, ',', '.'), $comparisonResult['comparison']['ratio'] === null ? '-' : number_format($comparisonResult['comparison']['ratio'] * 100, 2, ',', '.') . '%');
+                $presentationMetadata = ['columns' => [], 'visualization' => 'comparison'];
+                $columnMap = [];
+            } else {
+                $interpretation = $this->interpreter->interpret($results, $validatedPlan, $connection->id);
+                $results = $interpretation['results'];
+                $assistantReply = $interpretation['assistantReply'];
+                $presentationMetadata = $interpretation['presentationMetadata'];
+                $columnMap = $interpretation['columnMap'];
+            }
             $resultsFormatted = true;
+
+            if ($comparisonResult) {
+                $analysisContext['comparison_result'] = $comparisonResult;
+            }
+            $analysis = $this->businessAnalysis->analyze($results, $analysisContext);
+            $insight = $this->insightEngine->generate($analysis, $analysisContext);
 
             // 8. Summary & Insight Generation
             if (empty($assistantReply)) {
@@ -620,6 +721,11 @@ class ChatEDPController extends Controller
 
                 $assistantReply = $this->openRouter->getCompletion($messages, false);
             }
+
+            $response = $this->responseStrategy->respond($insight, $analysisContext);
+            if (!empty($insight['facts']) && (!$comparisonResult || $comparisonResult['has_data'])) {
+                $assistantReply = trim($assistantReply . "\n\n" . $response['content']);
+            }
             
             // Extract chart recommendation if any (simplified chart config for now)
             $chartConfig = null;
@@ -654,7 +760,17 @@ skip_llm_summary:
                 'duration' => $duration,
                 'chart_config' => $chartConfig ?? null,
                 'presentation' => $presentationMetadata ?? null
+                ,'analysis_context' => $analysisContext
+                ,'insight' => $insight
+                ,'response_strategy' => $response['strategy']
+                ,'comparison' => $comparisonResult
             ];
+            $mergeData = ['previous_insight' => $insight['headline'] ?? null];
+            if (!empty($availabilityContext)) {
+                $mergeData['availability_context'] = $availabilityContext;
+            }
+            $this->conversationContext->merge($conversation, $mergeData);
+            $this->conversationContext->updateSummary($conversation);
 
             $assistantMessage = AiMessage::create([
                 'conversation_id' => $conversation->id,
@@ -696,20 +812,26 @@ skip_llm_summary:
                 'conversation_id' => $conversation->id,
                 'connection_id' => $connection->id,
                 'query_plan_json' => $auditPlanJson,
-                'sql_hash' => hash('sha256', $sql), // Don't store full raw SQL with values
+                'sql_hash' => $comparisonResult ? hash('sha256', $comparisonResult['left']['sql_hash'] . $comparisonResult['right']['sql_hash']) : hash('sha256', $sql), // Don't store full raw SQL with values
                 'duration_ms' => $duration * 1000,
                 'row_count' => count($results),
                 'status' => 'success'
             ]);
 
-            return response()->json([
+            $responsePayload = [
                 'message' => $assistantMessage,
                 'results' => array_slice($results, 0, 50), // Send max 50 to UI table
                 'export_token' => $exportToken,
                 'chart_config' => $chartConfig,
-                'sql' => $sql,
-                'bindings' => $bindings
-            ]);
+                'insight' => $insight,
+                'suggested_analysis' => $insight['recommended_next_analysis'],
+                'comparison' => $comparisonResult
+            ];
+            if (config('app.debug')) {
+                $responsePayload['sql'] = $sql;
+                $responsePayload['bindings'] = $bindings;
+            }
+            return response()->json($responsePayload);
 
         } catch (\App\Exceptions\AI\TableResolutionException $e) {
             $duration = microtime(true) - $startTime;
@@ -748,11 +870,12 @@ skip_llm_summary:
                 'error_message' => $e->getMessage()
             ]);
 
-            return response()->json([
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-                'plan' => isset($plan) ? $plan->toArray() : null
-            ], 400);
+            $payload = ['error' => config('app.debug') ? $e->getMessage() : 'Terjadi kesalahan saat memproses analisis.'];
+            if (config('app.debug')) {
+                $payload['trace'] = $e->getTraceAsString();
+                $payload['plan'] = isset($plan) ? $plan->toArray() : null;
+            }
+            return response()->json($payload, 400);
         }
     }
 

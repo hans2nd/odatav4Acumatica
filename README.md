@@ -15,6 +15,12 @@ A powerful synchronization engine built on Laravel to bridge Acumatica ERP (ODat
 
 ## Changelog
 
+### v1.4.5 (ChatEDP Semantic Suggestion Hardening & UI/UX Fixes)
+- **Security & Stability**: Implemented comprehensive hardening in `SemanticSuggestionService` with canonical metric structures, missing array fallbacks, and strict SQL expression validation against malicious injections.
+- **Enhancement: Grain Evidence Validation**: Replaced blind schema-based grain inference with statistical uniqueness (`COUNT(DISTINCT)`) verification for accurate `transaction_grain` detection.
+- **Enhancement: Ranking Analysis Compilation**: Upgraded `QueryCompilerService` to natively handle `ROW_NUMBER()` for grouped top-detail dimensions, and configured `GROUP_CONCAT` / `STRING_AGG` integration for detail columns inside grouped entity analytics.
+- **Bugfix: UI Rendering for Aliased Metrics**: Resolved a critical data-mapping bug in `ResultInterpretationService` where ChatEDP tables displayed empty columns for `PENJUALAN SUM` and detail dimensions. Synchronized the frontend column metadata keys with the label-mapped JSON payload.
+
 ### v1.4.4 (RBAC Security Observability & Dynamic Permission Fixes)
 - **Feature: RBAC Audit Trail**: Implemented a comprehensive, append-only `RbacAuditLog` system to track all security-sensitive mutations without altering authorization semantics. Tracks `actor`, `target`, `action`, `before_state`, `after_state`, and environment metadata.
 - **Feature: Security Observability**: Added automated audit logging for user creation, deletion, activation toggles, role assignments, and role permission matrix updates.

@@ -21,6 +21,8 @@ class QueryLibraryService
         // 2. Dimensions (alphabetical sort, lowercase)
         $dimensions = array_values(array_unique(array_map('strtolower', $plan->dimensions ?? [])));
         sort($dimensions);
+        $detailDimensions = array_values(array_unique(array_map('strtolower', $plan->detail_dimensions ?? [])));
+        sort($detailDimensions);
 
         // 3. Metrics (sorted by normalized alias/name)
         $metrics = [];
@@ -74,12 +76,26 @@ class QueryLibraryService
                 'output'  => $outputs,
                 // Omit explicit 'periods' dates to allow structural matching for parameterized queries
             ];
+            if ($comparison['type'] === 'table') {
+                foreach (['left', 'right'] as $side) {
+                    $definition = (array) ($comp[$side] ?? []);
+                    $metric = (array) ($definition['metric'] ?? []);
+                    $comparison[$side] = [
+                        'table' => strtolower((string) ($definition['table'] ?? '')),
+                        'metric' => strtolower((string) ($metric['alias'] ?? $metric['name'] ?? $definition['metric'] ?? '')),
+                        'aggregation' => strtoupper((string) ($metric['aggregation'] ?? 'SUM')),
+                    ];
+                }
+                $relationship = (array) ($comp['relationship'] ?? []);
+                $comparison['relationship'] = strtolower((string) ($relationship['source_table'] ?? '')) . '>' . strtolower((string) ($relationship['target_table'] ?? ''));
+            }
         }
 
         $canonical = [
             'connection_id' => (int)$connectionId,
             'tables'        => $tables,
             'dimensions'    => $dimensions,
+            'detail_dimensions' => $detailDimensions,
             'metrics'       => $metrics,
             'filters'       => $filters,
             'sorts'         => $sorts,

@@ -206,6 +206,20 @@ class EntityController extends Controller
 
         $this->entityConfig->updateFields($entity->id, $validated['fields']);
 
+        // Auto-refresh AI schema cache to reflect Semantic Type changes for Suggest Semantics
+        try {
+            $connectionId = \App\Models\AiSetting::getConfig('analytics_connection_id');
+            if ($connectionId) {
+                $connection = \App\Models\Connection::find($connectionId);
+                if ($connection && $connection->is_analytics_source) {
+                    $schemaCacheService = app(\App\Services\AI\SchemaCacheService::class);
+                    $schemaCacheService->cacheSchema($connection);
+                }
+            }
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::warning('Auto-refresh schema failed after updating mappings: ' . $e->getMessage());
+        }
+
         return response()->json([
             'success' => true,
             'message' => "Entity '{$key}' fields updated successfully.",
@@ -224,12 +238,60 @@ class EntityController extends Controller
             ], 404);
         }
 
-        \App\Jobs\DiscoverEntityMetadataJob::dispatch($key);
+        \App\Jobs\DiscoverEntityMetadataJob::dispatchSync($key);
 
         return response()->json([
             'success' => true,
-            'message' => "Metadata discovery triggered for '{$key}'.",
+            'message' => "Metadata discovery completed for '{$key}'.",
         ]);
+    }
+
+    /**
+     * AI Suggest Fields for Manage Fields mapping
+     */
+    public function suggestFields(string $key): JsonResponse
+    {
+        $entity = $this->entityConfig->getModel($key);
+        if (!$entity) {
+            return response()->json(['success' => false, 'message' => "Entity '{$key}' not found."], 404);
+        }
+
+        $fields = \App\Models\SyncEntityField::where('sync_entity_id', $entity->id)->get();
+        if ($fields->isEmpty()) {
+            return response()->json(['success' => false, 'message' => "No fields found to suggest."], 400);
+        }
+
+        $fieldData = $fields->map(fn($f) => [
+            'name' => $f->source_field,
+            'current_data_type' => $f->data_type,
+            'current_semantic_type' => $f->semantic_type,
+        ])->toArray();
+
+        try {
+            $openRouter = app(\App\Services\AI\OpenRouterClient::class);
+            $prompt = [
+                ['role' => 'system', 'content' => 'You are an expert Data Architect. Given a database table schema, you will suggest useful data types, semantic types, aliases, and labels for the fields. Generate a strictly valid JSON response.'],
+                ['role' => 'user', 'content' => "Table Name: {$entity->destination_table}\n\nFields:\n" . json_encode($fieldData) . "\n\nProvide your suggestions strictly as a JSON object where the keys are the field names and the values are objects containing data_type (string, number, datetime, boolean), semantic_type (dimension, metric, datetime, identifier, amount, status), label, description, and aliases (comma separated string).\nExample output:\n{\n  \"Amount\": {\n    \"data_type\": \"number\",\n    \"semantic_type\": \"amount\",\n    \"label\": \"Total Amount\",\n    \"description\": \"The total amount of the transaction\",\n    \"aliases\": \"total, sum, revenue\"\n  }\n}"]
+            ];
+
+            $response = $openRouter->getCompletion($prompt, true);
+            $parsed = json_decode($response, true);
+
+            if (is_array($parsed)) {
+                return response()->json([
+                    'success' => true,
+                    'suggestions' => $parsed
+                ]);
+            }
+            
+            throw new \Exception("Invalid JSON format returned from LLM.");
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::warning("LLM Suggest Fields failed: " . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'AI Suggestion failed: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     /**

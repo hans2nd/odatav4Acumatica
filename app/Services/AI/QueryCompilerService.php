@@ -22,6 +22,15 @@ class QueryCompilerService
         if (empty($plan->tables)) {
             throw new \Exception("QueryPlan must have at least one table.");
         }
+        // A multi-table plan must be handled by a dedicated comparison executor.
+        // Never silently compile only the first table, which could present a false comparison.
+        if (count($plan->tables) > 1) {
+            throw new \App\Exceptions\AI\SemanticAmbiguityException('Perbandingan lintas tabel memerlukan konfigurasi metrik per tabel pada AI Metadata dan belum dapat dieksekusi sebagai satu kueri.');
+        }
+
+        if (strtolower($plan->intent) === 'ranking' && count($plan->dimensions) === 1 && count($plan->detail_dimensions) >= 1 && count($plan->metrics) === 1 && empty($plan->comparison)) {
+            return $this->compileRankedDetail($plan, $connection);
+        }
 
         // We use the application's default DB connection to build the grammar.
         // It won't actually execute here.
@@ -96,6 +105,14 @@ class QueryCompilerService
             if (empty($currentRange) || empty($prevRange)) {
                  throw new \App\Exceptions\AI\SemanticAmbiguityException("Tidak dapat melakukan perbandingan karena periode tidak terdefinisi secara eksplisit. Harap tentukan periode (misal: bulan ini, minggu lalu).");
             }
+
+            foreach ([$currentRange, $prevRange] as $range) {
+                foreach (['start', 'end', 'end_next'] as $boundary) {
+                    if (isset($range[$boundary]) && !preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $range[$boundary])) {
+                        throw new \App\Exceptions\AI\SemanticAmbiguityException('Rentang tanggal perbandingan tidak valid.');
+                    }
+                }
+            }
             
             // Adjust ranges for datetime fields to ensure full day coverage
             if ($dateField) {
@@ -146,16 +163,30 @@ class QueryCompilerService
                 $isExpr = !empty($metric['is_expression']);
                 $alias = $metric['alias'] ?? preg_replace('/[^a-zA-Z0-9_]/', '_', $col);
                 
-                if (!in_array($agg, ['SUM', 'COUNT', 'AVG', 'MIN', 'MAX', ''])) {
+                if (!in_array($agg, ['SUM', 'COUNT', 'AVG', 'MIN', 'MAX', '', 'DERIVED'])) {
                     throw new \Exception("Invalid aggregation function: {$agg}");
                 }
                 
-                $innerCol = $isExpr ? $col : "`{$col}`";
-                // If the user's expression already includes the aggregation (e.g., SUM(A)/SUM(B)), 
-                // and agg is empty or we know it's a complex expression, we might need to handle it.
-                // But following instructions, we just remove backticks so the inner SQL works.
-                
+                $innerCol = $isExpr ? ($metric['expression'] ?? $col) : "`{$col}`";
                 $aggPrefix = empty($agg) ? "" : "{$agg}";
+                
+                // Handle canonical derived metrics compilation
+                if ($agg === 'DERIVED' && !empty($metric['expression']) && !empty($metric['depends_on'])) {
+                    // For ratio of aggregates, we wrap individual dependencies with SUM
+                    // Example: "Margin / NULLIF(NetAmount, 0)" -> "SUM(Margin) / NULLIF(SUM(NetAmount), 0)"
+                    $innerCol = $metric['expression'];
+                    
+                    // Sort dependencies by length desc to prevent partial replacements (e.g. replacing 'Net' inside 'NetAmount')
+                    $deps = $metric['depends_on'];
+                    usort($deps, fn($a, $b) => strlen($b) - strlen($a));
+                    
+                    foreach ($deps as $dep) {
+                        // Use regex word boundaries to accurately replace identifiers
+                        $innerCol = preg_replace('/\b' . preg_quote($dep, '/') . '\b/i', "SUM(`{$dep}`)", $innerCol);
+                    }
+                    $aggPrefix = ""; // No outer aggregation
+                    $isExpr = true;
+                }
                 
                 if ($isComparison) {
                     $startCondition = isset($currentRange['start']) ? "`{$dateField}` >= '{$currentRange['start']}'" : "1=1";
@@ -217,6 +248,18 @@ class QueryCompilerService
         }
 
         $query->select($selects);
+
+        // Detail dimensions accompany a ranked/grouped entity; aggregating them
+        // preserves the primary ranking grain instead of grouping Customer × Item.
+        foreach ($plan->detail_dimensions as $detail) {
+            $alias = 'detail_' . preg_replace('/[^a-zA-Z0-9_]/', '_', $detail);
+            $driver = strtolower((string) $connection->type);
+            if (in_array($driver, ['sqlsrv', 'mssql'])) {
+                $query->addSelect(DB::raw("STRING_AGG(CAST([{$detail}] AS nvarchar(max)), ', ') as [{$alias}]"));
+            } else {
+                $query->addSelect(DB::raw("GROUP_CONCAT(DISTINCT `{$detail}` ORDER BY `{$detail}` SEPARATOR ', ') as `{$alias}`"));
+            }
+        }
 
         // Add filters
         if (!empty($plan->filters)) {
@@ -353,5 +396,50 @@ class QueryCompilerService
             $query->toSql(),
             $query->getBindings()
         ];
+    }
+
+    /**
+     * Produce one row per ranked entity and the highest-value accompanying detail.
+     * All identifiers originate from QueryValidatorService; all values remain bindings.
+     */
+    private function compileRankedDetail(QueryPlan $plan, Connection $connection): array
+    {
+        $table = $plan->tables[0];
+        $primary = $plan->dimensions[0];
+        $detail = $plan->detail_dimensions[0];
+        $metric = $plan->metrics[0];
+        if (!empty($metric['is_expression']) || !preg_match('/^[A-Za-z0-9_]+$/', (string) $metric['name'])) {
+            throw new \App\Exceptions\AI\SemanticAmbiguityException('Ranking dengan detail hanya tersedia untuk metric kolom yang tervalidasi.');
+        }
+        foreach ([$table, $primary, $detail] as $identifier) {
+            if (!preg_match('/^[A-Za-z0-9_]+$/', (string) $identifier)) throw new \LogicException('Invalid validated ranking identifier.');
+        }
+        $aggregation = strtoupper($metric['aggregation'] ?? 'SUM');
+        if (!in_array($aggregation, ['SUM', 'AVG', 'MIN', 'MAX', 'COUNT'], true)) throw new \LogicException('Invalid ranking aggregation.');
+
+        $applyFilters = function ($query) use ($plan) {
+            foreach ($plan->filters as $filter) {
+                $operator = strtoupper($filter['operator'] ?? '=');
+                $field = $filter['field'];
+                $value = $filter['value'] ?? null;
+                if ($operator === 'IN') $query->whereIn($field, (array) $value);
+                elseif ($operator === 'NOT IN') $query->whereNotIn($field, (array) $value);
+                elseif ($operator === 'BETWEEN' && is_array($value) && count($value) === 2) $query->whereBetween($field, $value);
+                elseif (in_array($operator, ['=', '!=', '>', '<', '>=', '<=', 'LIKE'], true)) $query->where($field, $operator, $value);
+                else throw new \LogicException('Invalid validated ranking filter.');
+            }
+            return $query;
+        };
+
+        $totalQuery = $applyFilters(DB::table($table))
+            ->selectRaw("`{$primary}` as ranking_entity, {$aggregation}(`{$metric['name']}`) as total_value, COUNT(*) as transaction_count")
+            ->groupBy($primary)
+            ->orderByDesc('total_value')->orderBy($primary)->limit(min(max((int) ($plan->limit ?? 10), 1), 500));
+        $itemQuery = $applyFilters(DB::table($table))
+            ->selectRaw("`{$primary}` as ranking_entity, `{$detail}` as top_detail, {$aggregation}(`{$metric['name']}`) as top_detail_value, ROW_NUMBER() OVER (PARTITION BY `{$primary}` ORDER BY {$aggregation}(`{$metric['name']}`) DESC, `{$detail}` ASC) as detail_rank")
+            ->groupBy($primary, $detail);
+
+        $sql = "SELECT ROW_NUMBER() OVER (ORDER BY totals.total_value DESC, totals.ranking_entity ASC) as ranking_rank, totals.ranking_entity, totals.total_value, details.top_detail, details.top_detail_value, totals.transaction_count FROM ({$totalQuery->toSql()}) as totals INNER JOIN ({$itemQuery->toSql()}) as details ON details.ranking_entity = totals.ranking_entity AND details.detail_rank = 1 ORDER BY ranking_rank";
+        return [$sql, array_merge($totalQuery->getBindings(), $itemQuery->getBindings())];
     }
 }

@@ -158,6 +158,23 @@ class SchemaCacheService
                         }
                     }
 
+                    $dateDefs = \App\Models\AiSemanticDefinition::where('connection_id', $connection->id)
+                        ->where('source_table', $table)
+                        ->where('type', 'date')
+                        ->get();
+
+                    $semanticDates = [];
+                    foreach ($dateDefs as $d) {
+                        $meta = is_string($d->metadata) ? json_decode($d->metadata, true) : ($d->metadata ?? []);
+                        $semanticDates[] = [
+                            'name' => $d->name,
+                            'source_column' => $d->source_column,
+                            'role' => $meta['role'] ?? 'transaction_date'
+                        ];
+                    }
+
+                    $existingProfile = $definition->semantic_profile ? json_decode($definition->semantic_profile, true) : [];
+
                     $semanticProfile = [
                         'logical_name' => $definition->logical_name ?? $table,
                         'data_role' => $definition->data_role ?? 'other',
@@ -165,8 +182,13 @@ class SchemaCacheService
                         'aliases' => $definition->aliases ? json_decode($definition->aliases, true) : [],
                         'metrics' => $semanticMetrics,
                         'dimensions' => $semanticDimensions,
+                        'semantic_dates' => $semanticDates,
                         'date_fields' => $dateFields,
-                        'filterable_fields' => $filterableFields
+                        'filterable_fields' => $filterableFields,
+                        'transaction_grain' => $existingProfile['transaction_grain'] ?? null,
+                        'capabilities' => $existingProfile['capabilities'] ?? [],
+                        'hierarchies' => $existingProfile['hierarchies'] ?? [],
+                        'question_patterns' => $existingProfile['question_patterns'] ?? []
                     ];
 
                     DB::table('sync_metadata_definitions')
@@ -199,23 +221,99 @@ class SchemaCacheService
             
         $tables = [];
         foreach ($definitions as $def) {
+            $profile = null;
             if ($def->semantic_profile) {
                 $profile = json_decode($def->semantic_profile, true);
-                $profile['physical_name'] = $def->entity_key; // Keep for internal tracking
-                $tables[] = $profile;
-            } else {
-                $tables[] = [
+            }
+            
+            if (!$profile) {
+                $profile = [
                     'logical_name' => $def->logical_name ?? $def->entity_key,
-                    'physical_name' => $def->entity_key,
-                    'aliases' => $def->aliases ? json_decode($def->aliases, true) : [],
                     'description' => $def->description,
+                    'aliases' => $def->aliases ? json_decode($def->aliases, true) : [],
                     'data_role' => $def->data_role ?? 'other',
                     'metrics' => [],
                     'dimensions' => [],
+                    'semantic_dates' => [],
                     'date_fields' => [],
-                    'filterable_fields' => []
+                    'filterable_fields' => [],
+                    'transaction_grain' => null,
+                    'capabilities' => [],
+                    'hierarchies' => [],
+                    'question_patterns' => []
                 ];
             }
+            
+            $profile['physical_name'] = $def->entity_key;
+            
+            // Fallback: Dynamically load if metrics/dimensions are empty
+            if (empty($profile['metrics'])) {
+                $metricDefs = \App\Models\AiSemanticDefinition::where('connection_id', $connectionId)
+                    ->where('source_table', $def->entity_key)
+                    ->where('type', 'metric')
+                    ->get();
+                foreach ($metricDefs as $m) {
+                    $meta = is_string($m->metadata) ? json_decode($m->metadata, true) : ($m->metadata ?? []);
+                    $profile['metrics'][] = [
+                        'name' => $m->name,
+                        'source_column' => $m->source_column,
+                        'aggregation' => $meta['aggregation'] ?? 'SUM',
+                        'aliases' => $meta['aliases'] ?? [],
+                        'is_default' => $meta['is_default'] ?? false
+                    ];
+                }
+            }
+
+            $needsDimensions = empty($profile['dimensions']);
+            $needsDateFields = empty($profile['date_fields']);
+            $needsFilterableFields = empty($profile['filterable_fields']);
+
+            if ($needsDimensions || $needsDateFields || $needsFilterableFields) {
+                $fields = DB::table('sync_metadata_fields')
+                    ->where('definition_id', $def->id)
+                    ->get();
+                    
+                foreach ($fields as $f) {
+                    // Populate dimensions
+                    if ($needsDimensions && in_array($f->semantic_type ?? null, ['dimension', 'categorical', 'status', 'identifier', 'boolean', 'date', 'datetime'])) {
+                        $aliasesArray = !empty($f->aliases) ? array_map('trim', explode(',', $f->aliases)) : [];
+                        $profile['dimensions'][] = [
+                            'name' => count($aliasesArray) > 0 ? $aliasesArray[0] : $f->field_name,
+                            'source_column' => $f->field_name,
+                            'aliases' => $aliasesArray
+                        ];
+                    }
+                    // Populate date fields
+                    if ($needsDateFields && (in_array($f->semantic_type ?? null, ['date', 'datetime']) || str_contains(strtolower($f->data_type ?? ''), 'date'))) {
+                        $profile['date_fields'][] = $f->field_name;
+                    }
+                    // Populate filterable fields
+                    if ($needsFilterableFields && in_array($f->semantic_type ?? null, ['dimension', 'categorical', 'status', 'identifier', 'boolean'])) {
+                        $profile['filterable_fields'][] = $f->field_name;
+                    }
+                }
+            }
+            
+            // If still empty from metadata_fields, try SyncEntityField (legacy fallback)
+            if (empty($profile['dimensions'])) {
+                $syncEntity = \App\Models\SyncEntity::where('destination_table', $def->entity_key)->first();
+                if ($syncEntity) {
+                    $dimensionDefs = \App\Models\SyncEntityField::where('sync_entity_id', $syncEntity->id)
+                        ->where('is_enabled', true)
+                        ->whereNotNull('destination_field')
+                        ->whereIn('semantic_type', ['dimension', 'categorical', 'status', 'identifier', 'boolean', 'date', 'datetime'])
+                        ->get();
+                    foreach ($dimensionDefs as $d) {
+                        $profile['dimensions'][] = [
+                            'name' => $d->label ?? $d->destination_field,
+                            'source_column' => $d->destination_field,
+                            'aliases' => is_array($d->aliases) ? $d->aliases : []
+                        ];
+                    }
+                }
+            }
+
+            $tables[] = $profile;
         }
 
         return (object)['tables' => $tables];
