@@ -706,6 +706,7 @@ class ChatEDPController extends Controller
                 }, $validatedPlan->dimensions ?? []);
 
                 $summaryContext = [
+                    'original_question' => $request->input('message') ?? '',
                     'type' => !empty($validatedPlan->dimensions) ? 'grouped_ranking' : 'scalar',
                     'total_rows' => count($results),
                     'top_items' => $compactTop,
@@ -713,9 +714,14 @@ class ChatEDPController extends Controller
                     'dimensions' => $semanticDimensionNames
                 ];
                 
-                $summaryPrompt = "Berikan ringkasan singkat dalam bahasa Indonesia menggunakan format unit ringkas (misal: Rp66,27 juta) berdasarkan data berikut. Sebutkan urutan ranking jika ini adalah data ranking. Jangan buat data fiktif atau hitung ulang angkanya:\n\n" . json_encode($summaryContext);
+                $summaryPrompt = "Berdasarkan data JSON berikut, berikan ringkasan analitik singkat dalam bahasa Indonesia menggunakan angka ringkas (misal: Rp66,27 juta).\n\n" . 
+                                 "INSTRUKSI UTAMA:\n" .
+                                 "1. Awali jawaban Anda dengan kalimat pembuka yang SANGAT kontekstual berdasarkan 'original_question'. Misalnya: \"Berikut adalah ringkasan penjualan untuk tanggal 2 September 2026 berdasarkan pelanggan:\" atau kalimat serupa yang relevan dengan filter/waktu yang ditanyakan.\n" .
+                                 "2. Jika ini adalah data ranking, sebutkan urutan rankingnya.\n" .
+                                 "3. Jangan membuat data fiktif atau mengubah angka aktual yang diberikan.\n\n" .
+                                 "Data JSON:\n" . json_encode($summaryContext, JSON_UNESCAPED_UNICODE);
                 $messages = [
-                    ['role' => 'system', 'content' => 'Kamu adalah asisten data analisis bisnis. Berikan penjelasan natural yang akurat, singkat, dan langsung pada intinya berdasarkan data JSON yang diberikan. Hindari menyebutkan struktur teknis JSON.'],
+                    ['role' => 'system', 'content' => 'Kamu adalah asisten data analisis bisnis. Berikan penjelasan natural yang akurat, singkat, dan langsung pada intinya. Hindari menyebutkan struktur teknis JSON.'],
                     ['role' => 'user', 'content' => $summaryPrompt]
                 ];
 
