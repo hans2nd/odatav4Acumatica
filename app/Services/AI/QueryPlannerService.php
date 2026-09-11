@@ -41,7 +41,7 @@ CRITICAL RULES:
 1. USE LOGICAL CONCEPTS ONLY. Never output SQL. Never guess or invent physical table names or column names.
 2. ONLY use terms present in the "Available Logical Semantic Context".
 3. FILTER ≠ GROUP BY. If a field is used as a filter (e.g., "for Bandung branch"), it MUST go into "filters", NOT "dimensions". Use "dimensions" ONLY when the user explicitly asks to group, breakdown, or summarize BY a field (e.g., "sales by branch").
-4. Represent time as a logical "date_context" string (e.g., "current_month", "previous_month", "ytd", "today", "yesterday", "current_year"). Do NOT calculate actual date boundaries.
+4. Represent time as a logical "date_context" string (e.g., "current_month", "previous_month", "ytd", "today", "yesterday", "current_year"). Do NOT calculate actual date boundaries. If the user does not specify a time period, leave "date_context" as null.
 5. Resolve ranking explicitly using "sorts" and "limit" (e.g. "top 10" -> limit: 10, sorts: [{"field": "...", "direction": "desc"}]).
 5a. For ranking, put exactly the entity being ranked in "dimensions". Put requested accompanying attributes/items in "detail_dimensions". Detail dimensions MUST NOT change the ranking grain.
 6. Use aggregation explicitly (e.g., "sum", "avg", "count", "count_distinct", "min", "max").
@@ -51,7 +51,7 @@ CRITICAL RULES:
 
 ENTITY LABEL RESOLUTION (VERY IMPORTANT):
 - When the user asks to group, rank, or list by an entity (e.g., "customer", "product", "sales person"), you MUST use the DESCRIPTIVE/NAME column as the dimension, NOT the ID column.
-- For example: use "CustomerName" instead of "CustomerID", use "InventoryDescr" instead of "InventoryID", use "SalesPersonCD" instead of numeric IDs.
+- For example: use "Customer" instead of "Customer ID", use "Product" (which maps to descriptions) instead of "Inventory ID", use "Sales Person" instead of "Sales Person ID".
 - If the semantic context provides both an ID field and a Name/Description field for the same entity, ALWAYS prefer the Name/Description field for "dimensions" and "detail_dimensions".
 - Only use ID fields when the user explicitly asks for IDs or codes (e.g., "berdasarkan kode customer").
 - PARTIAL TEXT FILTERS: When filtering by a descriptive name (e.g. product name, customer name, "produk bangkok"), users rarely type the exact database string. You MUST use the "LIKE" operator and wrap the value in wildcards (e.g., "%bangkok%") instead of using "=". Only use "=" for exact IDs or status codes.
@@ -70,7 +70,8 @@ CONVERSATIONAL INHERITANCE RULES (FOLLOW-UP VS FRESH QUESTIONS):
 - Evaluate the user's question against the conversation history. Is it a follow-up to the previous context (e.g., "What about Jakarta?", "How about October?", "cabangnya mana?") or a completely fresh question?
 - Set "analysis.is_follow_up" to true if it is a follow-up. Set to false if it is a fresh question.
 - STRICT FILTER REPLACEMENT: When a follow-up specifies a NEW value for a filter that already exists in the previous context, FULLY REPLACE the old filter value — do NOT merge or append. For example, if the previous context filtered "cabang = [Jakarta, Sidoarjo]" and the user says "sebutkan untuk cabang Sidoarjo", the filter MUST become "cabang = Sidoarjo" only.
-- If the follow-up ADDS a new dimension/filter not previously present, treat it as an addition.
+- DIMENSION REPLACEMENT: If the user explicitly asks to change how the data is grouped or displayed (e.g., "tampilkan dalam bentuk deskripsi", "ganti dengan nama", "berdasarkan cabang"), you MUST REPLACE the old `dimensions` with the new one. Do NOT add the phrase as a filter.
+- If the follow-up ADDS a new filter not previously present, treat it as an addition.
 - If the user asks a completely fresh analytical question (e.g. "Compare total sales this month and last month"), RESET everything (dimensions, filters, etc.).
 
 EXPECTED JSON STRUCTURE:
