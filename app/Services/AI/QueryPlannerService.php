@@ -49,11 +49,27 @@ CRITICAL RULES:
 8. BE AWARE of the "transaction_grain". If the user asks for "Orders" and grain is "order_line", consider how to distinct count if necessary, or just rely on the metric logic.
 9. For dates, if a specific role is mentioned (like due date vs transaction date), use the appropriate date_field from the "semantic_dates" context.
 
+ENTITY LABEL RESOLUTION (VERY IMPORTANT):
+- When the user asks to group, rank, or list by an entity (e.g., "customer", "product", "sales person"), you MUST use the DESCRIPTIVE/NAME column as the dimension, NOT the ID column.
+- For example: use "CustomerName" instead of "CustomerID", use "InventoryDescr" instead of "InventoryID", use "SalesPersonCD" instead of numeric IDs.
+- If the semantic context provides both an ID field and a Name/Description field for the same entity, ALWAYS prefer the Name/Description field for "dimensions" and "detail_dimensions".
+- Only use ID fields when the user explicitly asks for IDs or codes (e.g., "berdasarkan kode customer").
+
+UNSUPPORTED CAPABILITY DETECTION:
+- If the user asks for forecasting, prediction, estimation of future values, projection, trend extrapolation, or any form of predictive analytics (e.g., "forecast bulan depan", "prediksi penjualan", "estimasi ke depan", "proyeksi quarter berikutnya"), you MUST return:
+  {"intent": "unsupported_capability", "capability": "forecast", "message": "Saat ini ChatEDP hanya dapat menganalisis data historis yang sudah tersedia. Fitur forecasting dan prediksi belum didukung."}
+- Do NOT attempt to return historical data disguised as a forecast.
+
+TOP N PER GROUP LIMITATION:
+- If the user asks for "Top N per category" (e.g., "top 5 sales per cabang", "3 produk terbaik masing-masing cabang"), this system only supports global Top N ranking, NOT partitioned Top N.
+- In this case, apply the Top N globally across all categories combined. Include the category as a "detail_dimension" so users can see which category each item belongs to.
+- Do NOT silently ignore the per-group intent. The system will inform the user that the ranking is global.
+
 CONVERSATIONAL INHERITANCE RULES (FOLLOW-UP VS FRESH QUESTIONS):
 - Evaluate the user's question against the conversation history. Is it a follow-up to the previous context (e.g., "What about Jakarta?", "How about October?", "cabangnya mana?") or a completely fresh question?
 - Set "analysis.is_follow_up" to true if it is a follow-up. Set to false if it is a fresh question.
-- If it is a follow-up, INHERIT the "metric", "dimension", and "limit" from the previous context, replace the filter or date_context, and DO NOT reset them unless explicitly asked.
-- For follow-ups, treat it as a CONTEXT PATCH (keep existing context intact, just update the parts they changed).
+- STRICT FILTER REPLACEMENT: When a follow-up specifies a NEW value for a filter that already exists in the previous context, FULLY REPLACE the old filter value — do NOT merge or append. For example, if the previous context filtered "cabang = [Jakarta, Sidoarjo]" and the user says "sebutkan untuk cabang Sidoarjo", the filter MUST become "cabang = Sidoarjo" only.
+- If the follow-up ADDS a new dimension/filter not previously present, treat it as an addition.
 - If the user asks a completely fresh analytical question (e.g. "Compare total sales this month and last month"), RESET everything (dimensions, filters, etc.).
 
 EXPECTED JSON STRUCTURE:

@@ -299,9 +299,16 @@ class ResultInterpretationService
                 }
 
                 $formattedVal = $value;
-                if (is_numeric($value)) {
+                $isDimensionCol = in_array($key, $plan->dimensions) || in_array($key, $plan->detail_dimensions ?? []);
+                $isIdentifier = preg_match('/(ID|CD|Nbr|Code|LineNbr)$/i', $key);
+                
+                if (is_numeric($value) && !$isDimensionCol && !$isIdentifier) {
                     $isCount = stripos($key, 'count') !== false || stripos($key, 'jumlah') !== false;
                     $formattedVal = $isCount ? number_format((float)$value, 0, ',', '.') : number_format((float)$value, 2, ',', '.');
+                } elseif (is_numeric($value) && ($isDimensionCol || $isIdentifier)) {
+                    // Identifiers and dimensions: render as-is (no decimal formatting)
+                    $intVal = (int)$value;
+                    $formattedVal = ((float)$value == $intVal) ? (string)$intVal : (string)$value;
                 }
 
                 $formattedRow[$columnMap[$key] ?? $key] = [

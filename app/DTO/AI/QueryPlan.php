@@ -114,7 +114,14 @@ class QueryPlan
             $data['date_context'] ?? null,
             (array) ($data['domain'] ?? []),
             (array) ($data['relationships'] ?? []),
-            (array) ($data['analysis'] ?? []),
+            array_merge(
+                (array) ($data['analysis'] ?? []),
+                // Absorb root-level capability/message for unsupported_capability intent
+                array_filter([
+                    'capability' => $data['capability'] ?? null,
+                    'message' => $data['message'] ?? null,
+                ], fn($v) => $v !== null)
+            ),
             (array) ($data['columns'] ?? []),
             
             // Legacy internal

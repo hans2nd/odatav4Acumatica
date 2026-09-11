@@ -638,6 +638,44 @@ class ChatEDPController extends Controller
                 ]);
             }
 
+            if ($validatedPlan->intent === 'unsupported_capability') {
+                $duration = microtime(true) - $startTime;
+                
+                $capability = $validatedPlan->analysis['capability'] ?? 'unknown';
+                $llmMessage = $validatedPlan->analysis['message'] ?? null;
+                
+                $content = $llmMessage ?: 'Maaf, kemampuan analitik yang Anda minta belum didukung oleh ChatEDP saat ini.';
+                
+                if ($capability === 'forecast') {
+                    $content = 'Maaf, saat ini ChatEDP hanya dapat menganalisis **data historis** yang sudah tersedia di database Anda. '
+                             . 'Fitur **forecasting**, **prediksi**, dan **estimasi masa depan** belum didukung.' 
+                             . "\n\nAnda bisa menanyakan data historis seperti: *\"Berapa total penjualan bulan lalu?\"* atau *\"Tren penjualan 3 bulan terakhir\"*.";
+                }
+                
+                $suggestions = $this->getSuggestedQuestions($connection->id);
+                $metadata = ['intent' => 'unsupported_capability', 'capability' => $capability];
+                
+                if (!empty($suggestions)) {
+                    $metadata['suggestions'] = $suggestions;
+                    $titles = array_column($suggestions, 'prompt');
+                    $content .= "\n\n**Pertanyaan yang bisa Anda ajukan:**\n- " . implode("\n- ", $titles);
+                }
+                
+                $assistantMessage = AiMessage::create([
+                    'conversation_id' => $conversation->id,
+                    'role' => 'assistant',
+                    'content' => $content,
+                    'metadata' => $metadata
+                ]);
+                
+                return response()->json([
+                    'message' => $assistantMessage,
+                    'results' => [],
+                    'export_token' => null,
+                    'chart_config' => null
+                ]);
+            }
+
             $analysisContext = [
                 'domain' => $domainContext ? [$domainContext] : [],
                 'metric' => $validatedPlan->metrics[0]['alias'] ?? $validatedPlan->metrics[0]['name'] ?? null,
