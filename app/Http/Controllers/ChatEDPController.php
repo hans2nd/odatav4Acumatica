@@ -108,6 +108,63 @@ class ChatEDPController extends Controller
             return [];
         }
 
+        // 1. Try to get suggestions from semantic_profile question_patterns
+        $definitions = \Illuminate\Support\Facades\DB::table('sync_metadata_definitions')
+            ->where('connection_id', $connectionId)
+            ->whereIn('entity_key', $enabledTables)
+            ->get();
+            
+        foreach ($definitions as $def) {
+            if ($def->semantic_profile) {
+                $profile = json_decode($def->semantic_profile, true);
+                if (!empty($profile['question_patterns'])) {
+                    foreach ($profile['question_patterns'] as $qp) {
+                        $metric = $qp['metric'] ?? '';
+                        $dimension = $qp['dimension'] ?? '';
+                        $intent = $qp['intent'] ?? 'aggregation';
+                        $name = $qp['name'] ?? '';
+                        
+                        if (empty($metric)) continue;
+
+                        $title = $name ?: "{$intent} {$metric}";
+                        $prompt = "";
+                        
+                        if ($intent === 'ranking') {
+                            $dir = ($qp['direction'] ?? 'desc') === 'desc' ? 'Top 5' : 'Bottom 5';
+                            $prompt = "{$dir} {$dimension} berdasarkan {$metric}";
+                        } elseif ($intent === 'aggregation' && $dimension) {
+                            $prompt = "Total {$metric} per {$dimension}";
+                        } elseif ($intent === 'aggregation') {
+                            $prompt = "Berapa total {$metric}?";
+                        } else {
+                            $prompt = "Tampilkan {$metric}" . ($dimension ? " per {$dimension}" : "");
+                        }
+
+                        $suggestedQuestions[] = [
+                            'title' => ucwords(str_replace(['_', '-'], ' ', $title)),
+                            'prompt' => $prompt
+                        ];
+                    }
+                }
+            }
+        }
+        
+        if (!empty($suggestedQuestions)) {
+            $unique = [];
+            foreach ($suggestedQuestions as $sq) {
+                $unique[$sq['prompt']] = $sq;
+            }
+            $suggestedQuestions = array_values($unique);
+            
+            if (count($suggestedQuestions) > 4) {
+                shuffle($suggestedQuestions);
+                $suggestedQuestions = array_slice($suggestedQuestions, 0, 4);
+            }
+            return $suggestedQuestions;
+        }
+
+        // 2. Fallback to generic suggestions
+
         $definitions = \App\Models\AiSemanticDefinition::where('connection_id', $connectionId)
             ->whereIn('source_table', $enabledTables)
             ->get();
@@ -524,11 +581,21 @@ class ChatEDPController extends Controller
                 } catch (\App\Exceptions\AI\SemanticAmbiguityException $e) {
                     $duration = microtime(true) - $startTime;
                     
+                    $suggestions = $this->getSuggestedQuestions($connection->id);
+                    $content = $e->getMessage();
+                    $metadata = ['intent' => 'semantic_ambiguity'];
+                    
+                    if (!empty($suggestions)) {
+                        $metadata['suggestions'] = $suggestions;
+                        $titles = array_column($suggestions, 'prompt');
+                        $content .= "\n\n**Mungkin Anda bermaksud menanyakan:**\n- " . implode("\n- ", $titles);
+                    }
+
                     $assistantMessage = AiMessage::create([
                         'conversation_id' => $conversation->id,
                         'role' => 'assistant',
-                        'content' => $e->getMessage(),
-                        'metadata' => ['intent' => 'semantic_ambiguity']
+                        'content' => $content,
+                        'metadata' => $metadata
                     ]);
                     
                     return response()->json([
@@ -546,11 +613,21 @@ class ChatEDPController extends Controller
             if ($validatedPlan->intent === 'data_unavailable') {
                 $duration = microtime(true) - $startTime;
                 
+                $suggestions = $this->getSuggestedQuestions($connection->id);
+                $content = 'Data tersebut belum tersedia pada sumber data yang terhubung atau tidak ditemukan dalam schema.';
+                $metadata = ['intent' => 'data_unavailable'];
+                
+                if (!empty($suggestions)) {
+                    $metadata['suggestions'] = $suggestions;
+                    $titles = array_column($suggestions, 'prompt');
+                    $content .= "\n\n**Mungkin Anda bermaksud menanyakan:**\n- " . implode("\n- ", $titles);
+                }
+                
                 $assistantMessage = AiMessage::create([
                     'conversation_id' => $conversation->id,
                     'role' => 'assistant',
-                    'content' => 'Data tersebut belum tersedia pada sumber data yang terhubung atau tidak ditemukan dalam schema.',
-                    'metadata' => ['intent' => 'data_unavailable']
+                    'content' => $content,
+                    'metadata' => $metadata
                 ]);
                 
                 return response()->json([
@@ -573,7 +650,11 @@ class ChatEDPController extends Controller
                 'relationships' => $validatedPlan->relationships,
                 'analysis_mode' => $validatedPlan->analysis['mode'] ?? ($validatedPlan->comparison ? 'comparison' : 'kpi'),
             ];
-            $analysisContext = $this->conversationContext->merge($conversation, $analysisContext, false);
+            
+            $userMessage = strtolower($request->input('message') ?? '');
+            $hasReference = preg_match('/\b(tersebut|ini|itu|diatas|di atas|sebelumnya|nya|bagaimana|kalau|sedangkan|bandingkan|lalu|berikutnya|kemarin|tadi)\b/i', $userMessage);
+            
+            $analysisContext = $this->conversationContext->merge($conversation, $analysisContext, !$hasReference);
 
             // 4. Cost Guard
             $this->costGuard->guard($validatedPlan);
@@ -777,6 +858,15 @@ skip_llm_summary:
             }
             $this->conversationContext->merge($conversation, $mergeData);
             $this->conversationContext->updateSummary($conversation);
+
+            if (count($results) === 0) {
+                $suggestions = $this->getSuggestedQuestions($connection->id);
+                if (!empty($suggestions)) {
+                    $metadata['suggestions'] = $suggestions;
+                    $titles = array_column($suggestions, 'prompt');
+                    $assistantReply .= "\n\n**Mungkin Anda bermaksud menanyakan:**\n- " . implode("\n- ", $titles);
+                }
+            }
 
             $assistantMessage = AiMessage::create([
                 'conversation_id' => $conversation->id,
