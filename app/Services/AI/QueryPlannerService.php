@@ -54,6 +54,7 @@ ENTITY LABEL RESOLUTION (VERY IMPORTANT):
 - For example: use "CustomerName" instead of "CustomerID", use "InventoryDescr" instead of "InventoryID", use "SalesPersonCD" instead of numeric IDs.
 - If the semantic context provides both an ID field and a Name/Description field for the same entity, ALWAYS prefer the Name/Description field for "dimensions" and "detail_dimensions".
 - Only use ID fields when the user explicitly asks for IDs or codes (e.g., "berdasarkan kode customer").
+- PARTIAL TEXT FILTERS: When filtering by a descriptive name (e.g. product name, customer name, "produk bangkok"), users rarely type the exact database string. You MUST use the "LIKE" operator and wrap the value in wildcards (e.g., "%bangkok%") instead of using "=". Only use "=" for exact IDs or status codes.
 
 UNSUPPORTED CAPABILITY DETECTION:
 - If the user asks for forecasting, prediction, estimation of future values, projection, trend extrapolation, or any form of predictive analytics (e.g., "forecast bulan depan", "prediksi penjualan", "estimasi ke depan", "proyeksi quarter berikutnya"), you MUST return:
