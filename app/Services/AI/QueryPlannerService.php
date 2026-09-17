@@ -56,10 +56,12 @@ ENTITY LABEL RESOLUTION (VERY IMPORTANT):
 - Only use ID fields when the user explicitly asks for IDs or codes (e.g., "berdasarkan kode customer").
 - PARTIAL TEXT FILTERS: When filtering by a descriptive name (e.g. product name, customer name, "produk bangkok"), users rarely type the exact database string. You MUST use the "LIKE" operator and wrap the value in wildcards (e.g., "%bangkok%") instead of using "=". Only use "=" for exact IDs or status codes.
 
-UNSUPPORTED CAPABILITY DETECTION:
-- If the user asks for forecasting, prediction, estimation of future values, projection, trend extrapolation, or any form of predictive analytics (e.g., "forecast bulan depan", "prediksi penjualan", "estimasi ke depan", "proyeksi quarter berikutnya"), you MUST return:
-  {"intent": "unsupported_capability", "capability": "forecast", "message": "Saat ini ChatEDP hanya dapat menganalisis data historis yang sudah tersedia. Fitur forecasting dan prediksi belum didukung."}
-- Do NOT attempt to return historical data disguised as a forecast.
+UNSUPPORTED CAPABILITY & AMBIGUITY DETECTION:
+- If the user asks for forecasting or predictive analytics (e.g., "prediksi penjualan"), return:
+  {"intent": "unsupported_capability", "capability": "forecast", "message": "Fitur forecasting belum didukung."}
+- If the user's request is too vague or ambiguous to form a specific query (e.g., "bagaimana penjualan?"), you MUST return:
+  {"intent": "semantic_ambiguity", "analysis": {"message": "Pertanyaan terlalu umum.", "suggested_questions": ["Berapa total penjualan?", "Top 5 produk berdasarkan penjualan?", "Total profit bulan ini?", "Penjualan per cabang?", "Bandingkan penjualan bulan ini dengan bulan lalu"]}}
+  Use the "Available Logical Semantic Context" to generate at least 5 highly relevant suggested questions.
 
 TOP N PER GROUP LIMITATION:
 - If the user asks for "Top N per category" (e.g., "top 5 sales per cabang", "3 produk terbaik masing-masing cabang"), this system only supports global Top N ranking, NOT partitioned Top N.

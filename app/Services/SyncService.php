@@ -483,6 +483,28 @@ class SyncService
                         $progressCallback($fetchedCount, $totalRecordsCount);
                     });
                 }
+            } else if ($sourceType === 'sharepoint') {
+                $provider = app(\App\Services\Connections\Providers\SharePointProvider::class);
+                $client = $provider->createRuntimeConnection($sourceConnection['credentials'] ?? []);
+                
+                $parsed = $provider->parseObjectName($odataEntity, $sourceConnection['credentials'] ?? []);
+                $driveId = $parsed['drive_id'];
+                $itemId = $parsed['item_id'];
+                $fileName = $parsed['file_name'];
+                $sheet = $parsed['sheet'] ?? null;
+
+                $data = $client->readExcelFile($driveId, $itemId, $fileName, $sheet);
+                
+                $rows = $data['rows'] ?? [];
+                $totalRecordsCount = count($rows);
+                $progressCallback(0, $totalRecordsCount);
+                
+                $chunkSize = $entity['batch_size'] ?? 1000;
+                $chunks = array_chunk($rows, $chunkSize);
+                foreach ($chunks as $chunk) {
+                    $processChunkCallback($chunk);
+                    $progressCallback($fetchedCount, $totalRecordsCount);
+                }
             }
 
             if ($fetchedCount === 0) {

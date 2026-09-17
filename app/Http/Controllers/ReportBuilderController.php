@@ -65,10 +65,15 @@ class ReportBuilderController extends Controller
             }
         }
 
+        $templates = \App\Models\ReportTemplate::where('user_id', auth()->id())
+            ->orderBy('created_at', 'desc')
+            ->get();
+
         return view('reports.report-builder', [
             'activeTab'   => 'report.builder',
             'connections' => $dbConnections,
             'allTables'   => $allTables,
+            'templates'   => $templates,
         ]);
     }
 
@@ -349,15 +354,17 @@ class ReportBuilderController extends Controller
                         }
                     } 
                     // Format Dates
-                    elseif (is_string($val) && preg_match('/^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2}(\.\d+)?)?$/', $val)) {
+                    elseif (is_string($val) && preg_match('/^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$/i', trim($val))) {
+                        $hasTime = preg_match('/[ T]\d{2}:\d{2}/', trim($val));
                         if ($format === 'xlsx') {
                              try {
-                                 $val = \Carbon\Carbon::parse($val)->timezone($timezone)->toDate(); // Return PHP DateTime for OpenSpout
+                                 // Return formatted string instead of DateTime object to prevent Excel from showing raw serial numbers (e.g., 45600)
+                                 $val = \Carbon\Carbon::parse(trim($val))->timezone($timezone)->format($hasTime ? 'Y-m-d H:i:s' : 'Y-m-d');
                              } catch (\Throwable $e) {}
                         } else {
                             try {
-                                $carbon = \Carbon\Carbon::parse($val)->timezone($timezone)->locale($locale);
-                                $val = $carbon->translatedFormat(strpos($val, ' ') !== false ? 'd M Y H:i:s' : 'd M Y');
+                                $carbon = \Carbon\Carbon::parse(trim($val))->timezone($timezone)->locale($locale);
+                                $val = $carbon->translatedFormat($hasTime ? 'd M Y H:i:s' : 'd M Y');
                             } catch (\Throwable $e) {}
                         }
                     }
@@ -478,4 +485,6 @@ class ReportBuilderController extends Controller
         if ($bytes >= 1024) return number_format($bytes / 1024, 2) . ' KB';
         return $bytes . ' bytes';
     }
+
+
 }

@@ -15,6 +15,11 @@ A powerful synchronization engine built on Laravel to bridge Acumatica ERP (ODat
 
 ## Changelog
 
+### v1.4.6 (Report Builder Templates & Excel Export Fixes)
+- **Feature: Dynamic Template Auto-Loading**: Re-engineered the Report Templates CRUD interface. Clicking "Edit" on a saved template now seamlessly redirects and auto-loads the configuration directly into the interactive Report Builder.
+- **Enhancement: In-Place Template Updates**: The Report Builder now supports `PUT` requests when saving an actively loaded template, allowing users to continuously update existing reports without creating duplicates.
+- **Bugfix: Excel Raw Date Serial Format**: Resolved an issue where exported `.xlsx` files displayed dates as raw Excel serial numbers (e.g., `45600`) due to missing default formatting. The export engine now correctly detects ISO-8601 OData timestamps (including `T` and timezone offsets) using an advanced Regex, and pre-formats them into clean strings that Excel natively parses as Date data types.
+
 ### v1.4.5 (ChatEDP Semantic Suggestion Hardening & UI/UX Fixes)
 - **Security & Stability**: Implemented comprehensive hardening in `SemanticSuggestionService` with canonical metric structures, missing array fallbacks, and strict SQL expression validation against malicious injections.
 - **Enhancement: Grain Evidence Validation**: Replaced blind schema-based grain inference with statistical uniqueness (`COUNT(DISTINCT)`) verification for accurate `transaction_grain` detection.

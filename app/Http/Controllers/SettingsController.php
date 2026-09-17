@@ -300,4 +300,28 @@ class SettingsController extends Controller
             ], 500);
         }
     }
+    public function fetchSharePointSites(Request $request): JsonResponse
+    {
+        $credentials = $request->validate([
+            'tenant_id' => 'required|string',
+            'client_id' => 'required|string',
+            'client_secret' => 'required|string',
+            'hostname' => 'required|string',
+        ]);
+
+        try {
+            $client = new \App\Services\Connections\Providers\Adapters\SharePointGraphClient($credentials);
+            $sites = $client->searchSites();
+
+            return response()->json([
+                'success' => true,
+                'sites' => $sites
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to load sites: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

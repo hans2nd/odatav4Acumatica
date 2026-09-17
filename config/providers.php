@@ -57,6 +57,13 @@ return [
             'enabled'      => true,
             'capabilities' => ['read', 'write'],
         ],
+        'sharepoint' => [
+            'display'      => 'SharePoint Online',
+            'class'        => \App\Services\Connections\Providers\SharePointProvider::class,
+            'kind'         => 'api',
+            'enabled'      => true,
+            'capabilities' => ['read', 'schema', 'file_listing', 'excel_parsing'],
+        ],
     ],
 
     'aliases' => [

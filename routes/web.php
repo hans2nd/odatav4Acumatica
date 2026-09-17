@@ -13,6 +13,7 @@ use App\Http\Controllers\TransactionController;
 use App\Http\Controllers\UserManagementController;
 use App\Http\Controllers\QueryBuilderController;
 use App\Http\Controllers\SystemUtilityController;
+use App\Http\Controllers\ReportTemplateController;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Artisan;
 
@@ -132,6 +133,7 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/api/report-builder/columns', [ReportBuilderController::class, 'columns']);
         Route::get('/api/report-builder/progress', [ReportBuilderController::class, 'checkProgress']);
         Route::get('/api/report-builder/download/{token}', [ReportBuilderController::class, 'download'])->name('report.builder.download');
+        Route::resource('report-templates', ReportTemplateController::class);
     });
 
     Route::middleware(['permission:report_builder.manage'])->group(function () {
@@ -241,6 +243,7 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/api/connections/{key}/disconnect', [SettingsController::class, 'disconnectConnection'])->name('api.connections.disconnect');
         Route::post('/api/connections/databases', [SettingsController::class, 'fetchDatabases'])->name('api.connections.databases');
         Route::get('/api/connections/{key}/objects', [SettingsController::class, 'getConnectionObjects'])->name('api.connections.objects');
+        Route::post('/api/connections/sharepoint/sites', [SettingsController::class, 'fetchSharePointSites'])->name('api.connections.sharepoint.sites');
         Route::post('/api/connections/{key}/set-analytics-source', [SettingsController::class, 'setAnalyticsSource'])->name('api.connections.set-analytics');
     });
 

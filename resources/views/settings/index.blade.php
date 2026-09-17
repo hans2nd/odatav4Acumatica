@@ -16,7 +16,7 @@
                         Connection Management
                     </h2>
                     <p class="text-label-sm text-surface-400 mt-1 ml-[42px]">
-                        Define data sources and destinations (OData, REST, MySQL, SQL Server)
+                        Define data sources and destinations (OData, REST, MySQL, SQL Server, SharePoint)
                     </p>
                 </div>
                 <div class="flex items-center gap-3">
@@ -53,7 +53,14 @@
                                 <td class="py-3 px-5 font-medium text-surface-800">{{ $c['name'] }}</td>
                                 <td class="py-3 px-5">
                                     <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-label-sm font-semibold
-                                        {{ in_array($c['type'], \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes()) ? 'bg-violet-50 text-violet-700' : 'bg-sky-50 text-sky-700' }}">
+                                        @if($c['type'] === 'sharepoint')
+                                            bg-teal-50 text-teal-700
+                                        @elseif(in_array($c['type'], \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes()))
+                                            bg-violet-50 text-violet-700
+                                        @else
+                                            bg-sky-50 text-sky-700
+                                        @endif
+                                    ">
                                         {{ $providers[$c['type']]['display'] ?? strtoupper($c['type']) }}
                                     </span>
                                 </td>
@@ -318,7 +325,7 @@
                                         <span class="material-symbols-outlined text-[13px]">refresh</span> Reload
                                     </button>
                                 </label>
-                                <div class="relative">
+                                <div class="relative" id="form-odata-container">
                                     <input type="text" id="form-odata" required placeholder="Search or type object name" autocomplete="off"
                                         onfocus="document.getElementById('form-odata-dropdown').classList.remove('hidden')"
                                         onblur="setTimeout(() => { document.getElementById('form-odata-dropdown').classList.add('hidden'); }, 200)"
@@ -333,6 +340,10 @@
                                         <span class="material-symbols-outlined text-[20px] text-surface-400 spin">sync</span>
                                     </div>
                                 </div>
+                                
+                                <select id="form-odata-select" onchange="document.getElementById('form-odata').value = this.value" class="hidden w-full bg-white border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
+                                    <option value="" disabled selected>Select an object</option>
+                                </select>
                             </div>
                         </div>
 
@@ -657,22 +668,88 @@
     function renderSourceObjects(objects) {
         requestAnimationFrame(() => {
             const list = document.getElementById('form-odata-list');
+            const select = document.getElementById('form-odata-select');
+            const inputContainer = document.getElementById('form-odata-container');
+            const odataInput = document.getElementById('form-odata');
             
-            if (objects.length === 0) {
-                list.innerHTML = '<li class="px-3.5 py-2 text-sm text-surface-400 italic">No objects found</li>';
+            const connKey = document.getElementById('form-source-conn').value;
+            const connectionType = connKey && connectionData[connKey] ? connectionData[connKey].type : '';
+
+            if (connectionType === 'sharepoint') {
+                inputContainer.classList.add('hidden');
+                odataInput.required = false;
+                select.classList.remove('hidden');
+                select.required = true;
+                
+                // Check if objects is just a "No files found" or "Error:" message from backend
+                const isEmptyOrError = !objects || objects.length === 0 || 
+                                       (objects.length === 1 && (objects[0] === 'No files found' || objects[0].startsWith('Error:')));
+
+                if (isEmptyOrError) {
+                    const msg = objects && objects.length === 1 ? objects[0] : 'No objects found';
+                    let html = `<option value="" disabled selected>${msg}</option>`;
+                    if (odataInput.value) {
+                        html += `<option value="${odataInput.value}">📄 ${odataInput.value} (Current)</option>`;
+                    }
+                    select.innerHTML = html;
+                    if (odataInput.value) select.value = odataInput.value;
+                } else {
+                    let html = '<option value="" disabled selected>Select an object</option>';
+                    const groups = {};
+                    objects.forEach(obj => {
+                        const parts = obj.split('/');
+                        const drive = parts.length > 1 ? parts[0] : '/';
+                        const file = parts.length > 1 ? parts.slice(1).join('/') : obj;
+                        if (!groups[drive]) groups[drive] = [];
+                        groups[drive].push({full: obj, file: file});
+                    });
+
+                    for (const drive in groups) {
+                        html += `<optgroup label="📁 ${drive}">`;
+                        groups[drive].forEach(item => {
+                            html += `<option value="${item.full}">📄 ${item.file}</option>`;
+                        });
+                        html += `</optgroup>`;
+                    }
+                    
+                    select.innerHTML = html;
+                    
+                    if (odataInput.value) {
+                        if (!Array.from(select.options).some(opt => opt.value === odataInput.value)) {
+                            select.innerHTML += `<optgroup label="Current Value"><option value="${odataInput.value}">📄 ${odataInput.value}</option></optgroup>`;
+                        }
+                        select.value = odataInput.value;
+                    }
+                }
             } else {
-                let html = '';
-                objects.forEach(obj => {
-                    html += `<li onclick="document.getElementById('form-odata').value = '${obj}'" class="px-3.5 py-2 hover:bg-surface-100 cursor-pointer text-sm font-mono text-surface-800 transition-colors">${obj}</li>`;
-                });
-                list.innerHTML = html;
+                inputContainer.classList.remove('hidden');
+                odataInput.required = true;
+                select.classList.add('hidden');
+                select.required = false;
+
+                const isEmptyOrError = !objects || objects.length === 0 || 
+                                       (objects.length === 1 && (objects[0] === 'No files found' || objects[0].startsWith('Error:')));
+
+                if (isEmptyOrError) {
+                    const msg = objects && objects.length === 1 ? objects[0] : 'No objects found';
+                    list.innerHTML = `<li class="px-3.5 py-2 text-sm text-surface-400 italic">${msg}</li>`;
+                } else {
+                    let html = '';
+                    objects.forEach(obj => {
+                        html += `<li onclick="document.getElementById('form-odata').value = '${obj}'" class="px-3.5 py-2 hover:bg-surface-100 cursor-pointer text-sm font-mono text-surface-800 transition-colors">${obj}</li>`;
+                    });
+                    list.innerHTML = html;
+                }
             }
         });
     }
 
     async function fetchSourceObjects(force = false) {
         const connKey = document.getElementById('form-source-conn').value;
-        if (!connKey) return;
+        if (!connKey) {
+            renderSourceObjects([]);
+            return;
+        }
         
         if (!force && cachedSourceObjects[connKey]) {
             renderSourceObjects(cachedSourceObjects[connKey]);
@@ -1093,7 +1170,76 @@
                 if (field.placeholder) input.placeholder = field.placeholder;
                 if (field.default !== null && typeof field.default !== 'object') input.value = field.default;
                 
-                wrapper.appendChild(input);
+                if (type === 'sharepoint' && field.field === 'site_path') {
+                    const group = document.createElement('div');
+                    group.className = 'flex gap-2';
+                    
+                    input.className = 'flex-1 bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 font-mono text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20';
+                    group.appendChild(input);
+
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'btn-secondary flex-shrink-0 flex items-center justify-center gap-1 px-4 text-xs';
+                    btn.innerHTML = '<span class="material-symbols-outlined text-[16px]">sync</span> Load Sites';
+                    btn.onclick = async () => {
+                        const tId = document.getElementById('dyn_tenant_id')?.value;
+                        const cId = document.getElementById('dyn_client_id')?.value;
+                        const cSec = document.getElementById('dyn_client_secret')?.value;
+                        const hName = document.getElementById('dyn_hostname')?.value;
+                        
+                        if (!tId || !cId || !cSec || !hName) {
+                            showToast('Please fill Tenant ID, Client ID, Secret, and Hostname first', 'warning');
+                            return;
+                        }
+                        
+                        btn.disabled = true;
+                        btn.innerHTML = '<span class="material-symbols-outlined text-[16px] spin">sync</span> Loading...';
+                        
+                        try {
+                            const res = await fetch('/api/connections/sharepoint/sites', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' },
+                                body: JSON.stringify({ tenant_id: tId, client_id: cId, client_secret: cSec, hostname: hName })
+                            });
+                            const data = await res.json();
+                            
+                            if (data.success) {
+                                const sel = document.createElement('select');
+                                sel.id = `dyn_${field.field}`;
+                                sel.className = input.className;
+                                if (field.required) sel.required = true;
+                                
+                                let html = '<option value="">Select a site...</option>';
+                                data.sites.forEach(s => {
+                                    html += `<option value="${s.path}">${s.displayName} (${s.path})</option>`;
+                                });
+                                sel.innerHTML = html;
+                                
+                                group.replaceChild(sel, input);
+                                btn.remove();
+                                showToast('Sites loaded successfully', 'success');
+                                
+                                // trigger preview update if it exists
+                                sel.addEventListener('change', () => {
+                                    if(typeof updateSpPreview === 'function') updateSpPreview();
+                                });
+                            } else {
+                                showToast(data.message, 'error');
+                            }
+                        } catch (e) {
+                            showToast(e.message, 'error');
+                        } finally {
+                            if(btn.parentNode) {
+                                btn.disabled = false;
+                                btn.innerHTML = '<span class="material-symbols-outlined text-[16px]">sync</span> Load Sites';
+                            }
+                        }
+                    };
+                    group.appendChild(btn);
+                    wrapper.appendChild(group);
+                } else {
+                    wrapper.appendChild(input);
+                }
             }
 
             // Help Text
@@ -1170,6 +1316,51 @@
                 const protoEl = document.getElementById('dyn_protocol');
                 if (protoEl) protoEl.addEventListener('change', updatePreview);
                 updatePreview();
+            }, 50);
+        }
+
+        // Add Live Preview for SharePoint Connections
+        if (type === 'sharepoint') {
+            const previewWrapper = document.createElement('div');
+            previewWrapper.className = 'mt-5 p-4 bg-teal-50 rounded-xl border border-teal-200 shadow-inner';
+            
+            const title = document.createElement('div');
+            title.className = 'text-label-md font-semibold text-teal-800 mb-1 flex items-center gap-1.5';
+            title.innerHTML = '<span class="material-symbols-outlined text-[16px]">cloud</span> SharePoint Site Preview';
+            
+            const urlText = document.createElement('div');
+            urlText.id = 'sp-url-preview';
+            urlText.className = 'text-body-sm text-teal-700 font-mono break-all font-semibold';
+            
+            const hintText = document.createElement('div');
+            hintText.id = 'sp-hint';
+            hintText.className = 'text-[11px] text-teal-600/80 mt-1.5 italic';
+            hintText.textContent = '* Ensure the Azure AD App Registration has Sites.Read.All or Sites.FullControl.All permission on Microsoft Graph.';
+            
+            previewWrapper.appendChild(title);
+            previewWrapper.appendChild(urlText);
+            previewWrapper.appendChild(hintText);
+            container.appendChild(previewWrapper);
+            
+            const updateSpPreview = () => {
+                const hostnameInput = document.getElementById('dyn_hostname');
+                const sitePathInput = document.getElementById('dyn_site_path');
+                
+                if (!hostnameInput || !sitePathInput) return;
+                
+                let hostname = hostnameInput.value.trim();
+                let sitePath = sitePathInput.value.trim().replace(/^\//, '');
+                
+                let siteUrl = hostname ? `https://${hostname}/${sitePath}` : 'https://...';
+                document.getElementById('sp-url-preview').textContent = siteUrl;
+            };
+            
+            setTimeout(() => {
+                ['dyn_hostname', 'dyn_site_path'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) el.addEventListener('input', updateSpPreview);
+                });
+                updateSpPreview();
             }, 50);
         }
     }

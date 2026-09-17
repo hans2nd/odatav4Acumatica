@@ -156,9 +156,9 @@ class ChatEDPController extends Controller
             }
             $suggestedQuestions = array_values($unique);
             
-            if (count($suggestedQuestions) > 4) {
+            if (count($suggestedQuestions) > 5) {
                 shuffle($suggestedQuestions);
-                $suggestedQuestions = array_slice($suggestedQuestions, 0, 4);
+                $suggestedQuestions = array_slice($suggestedQuestions, 0, 5);
             }
             return $suggestedQuestions;
         }
@@ -676,6 +676,47 @@ class ChatEDPController extends Controller
                 ]);
             }
 
+            if ($validatedPlan->intent === 'semantic_ambiguity') {
+                $duration = microtime(true) - $startTime;
+                
+                $llmMessage = $validatedPlan->analysis['message'] ?? 'Pertanyaan Anda terlalu umum atau ambigu.';
+                $llmSuggestions = $validatedPlan->analysis['suggested_questions'] ?? [];
+                
+                $content = $llmMessage;
+                $metadata = ['intent' => 'semantic_ambiguity'];
+                
+                if (empty($llmSuggestions)) {
+                    $suggestions = $this->getSuggestedQuestions($connection->id);
+                    if (!empty($suggestions)) {
+                        $metadata['suggestions'] = $suggestions;
+                        $titles = array_column($suggestions, 'prompt');
+                        $content .= "\n\n**Berikut adalah beberapa hal yang bisa Anda tanyakan:**\n- " . implode("\n- ", $titles);
+                    }
+                } else {
+                    // Convert LLM string array to expected suggestions array structure
+                    $suggestions = array_map(function($q) {
+                        return ['title' => $q, 'prompt' => $q];
+                    }, $llmSuggestions);
+                    
+                    $metadata['suggestions'] = $suggestions;
+                    $content .= "\n\n**Berikut adalah beberapa pertanyaan yang dapat Anda ajukan:**\n- " . implode("\n- ", $llmSuggestions);
+                }
+                
+                $assistantMessage = AiMessage::create([
+                    'conversation_id' => $conversation->id,
+                    'role' => 'assistant',
+                    'content' => $content,
+                    'metadata' => $metadata
+                ]);
+                
+                return response()->json([
+                    'message' => $assistantMessage,
+                    'results' => [],
+                    'export_token' => null,
+                    'chart_config' => null
+                ]);
+            }
+
             $analysisContext = [
                 'domain' => $domainContext ? [$domainContext] : [],
                 'metric' => $validatedPlan->metrics[0]['alias'] ?? $validatedPlan->metrics[0]['name'] ?? null,
@@ -834,16 +875,38 @@ class ChatEDPController extends Controller
                 
                 $summaryPrompt = "Berdasarkan data JSON berikut, berikan ringkasan analitik singkat dalam bahasa Indonesia menggunakan angka ringkas (misal: Rp66,27 juta).\n\n" . 
                                  "INSTRUKSI UTAMA:\n" .
-                                 "1. Awali jawaban Anda dengan kalimat pembuka yang SANGAT kontekstual berdasarkan 'original_question'. Misalnya: \"Berikut adalah ringkasan penjualan untuk tanggal 2 September 2026 berdasarkan pelanggan:\" atau kalimat serupa yang relevan dengan filter/waktu yang ditanyakan.\n" .
-                                 "2. Jika ini adalah data ranking atau grouping, sebutkan urutan rankingnya DAN PASTIKAN ANDA MENYEBUTKAN SEMUA DIMENSI YANG ADA (misalnya jika ada dimensi cabang, sebutkan nama cabangnya untuk setiap entri).\n" .
-                                 "3. Jangan membuat data fiktif atau mengubah angka aktual yang diberikan.\n\n" .
+                                 "1. Berikan penjelasan natural yang akurat, luwes, dan TIDAK KAKU. JANGAN gunakan kalimat pembuka repetitif seperti 'Berikut adalah ringkasan...'. Sesuaikan gaya bahasa secara kontekstual.\n" .
+                                 "2. Berikan SEDIKIT insight atau temuan menarik dari data (misal: siapa yang memimpin jauh, margin yang menonjol, atau gap yang signifikan).\n" .
+                                 "3. Jika ada dimensi (seperti cabang, pelanggan, dll), pastikan Anda menyebutkan nama-nama dimensi tersebut dalam penjelasan.\n" .
+                                 "4. Di akhir, berikan 2 atau 3 saran pertanyaan lanjutan (follow-up) yang spesifik, relevan dengan insight tersebut, dan dapat dieksplorasi pengguna selanjutnya.\n\n" .
+                                 "Keluarkan output dalam format JSON murni dengan struktur berikut:\n" .
+                                 "{\n" .
+                                 "  \"summary\": \"Ringkasan naratif yang luwes dan insight tambahan...\",\n" .
+                                 "  \"suggestions\": [\"Saran pertanyaan 1?\", \"Saran pertanyaan 2?\"]\n" .
+                                 "}\n\n" .
                                  "Data JSON:\n" . json_encode($summaryContext, JSON_UNESCAPED_UNICODE);
                 $messages = [
-                    ['role' => 'system', 'content' => 'Kamu adalah asisten data analisis bisnis. Berikan penjelasan natural yang akurat, singkat, dan langsung pada intinya. Hindari menyebutkan struktur teknis JSON.'],
+                    ['role' => 'system', 'content' => 'Kamu adalah analis data senior (ChatEDP). Berikan penjelasan natural, akurat, dan tidak kaku. Jawab selalu dalam format JSON murni.'],
                     ['role' => 'user', 'content' => $summaryPrompt]
                 ];
 
-                $assistantReply = $this->openRouter->getCompletion($messages, false);
+                $llmResponseStr = $this->openRouter->getCompletion($messages, true);
+                if ($llmResponseStr) {
+                    $llmResponseStr = preg_replace('/^```json\s*/i', '', $llmResponseStr);
+                    $llmResponseStr = preg_replace('/```$/', '', $llmResponseStr);
+                    $parsedResponse = json_decode(trim($llmResponseStr), true);
+                    
+                    if (json_last_error() === JSON_ERROR_NONE && isset($parsedResponse['summary'])) {
+                        $assistantReply = $parsedResponse['summary'];
+                        if (!empty($parsedResponse['suggestions']) && is_array($parsedResponse['suggestions'])) {
+                            $insight['recommended_next_analysis'] = $parsedResponse['suggestions'];
+                        }
+                    } else {
+                        $assistantReply = $llmResponseStr; // Fallback
+                    }
+                } else {
+                    $assistantReply = "Berikut adalah hasil analisis data Anda.";
+                }
             }
 
             $response = $this->responseStrategy->respond($insight, $analysisContext);
