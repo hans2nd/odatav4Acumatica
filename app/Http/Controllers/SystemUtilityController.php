@@ -153,6 +153,48 @@ class SystemUtilityController extends Controller
     }
 
 
+    public function deploy(Request $request)
+    {
+        try {
+            $output = [];
+            $output[] = "🚀 Starting Web Deployment...";
+
+            // 1. Maintenance Mode
+            Artisan::call('down', ['--render' => 'errors::503', '--secret' => 'bypass-deploy']);
+            $output[] = "🚧 Maintenance mode enabled.";
+
+            // 2. Clear Caches
+            Artisan::call('optimize:clear');
+            Artisan::call('clear-compiled');
+            $output[] = "🧹 Old caches cleared.";
+
+            // 3. Migrate
+            Artisan::call('migrate', ['--force' => true]);
+            $output[] = "🗄️ Database migrated:\n" . Artisan::output();
+
+            // 4. Rebuild Caches
+            Artisan::call('optimize');
+            Artisan::call('view:cache');
+            Artisan::call('event:cache');
+            $output[] = "⚡ Caches rebuilt for maximum performance.";
+
+            // 5. Restart Queues
+            Artisan::call('queue:restart');
+            $output[] = "🔄 Queue workers restarted.";
+
+            // 6. Live Mode
+            Artisan::call('up');
+            $output[] = "✅ Application is back online.";
+
+            return $this->formatResponse('Deployment Completed Successfully', implode("\n\n", $output));
+        } catch (\Exception $e) {
+            // Failsafe: Ensure app is brought back up if something crashes
+            Artisan::call('up');
+            return $this->formatResponse('Error During Deployment', $e->getMessage(), true);
+        }
+    }
+
+
     private function formatResponse($title, $output, $isError = false)
     {
         if (request()->wantsJson() || request()->ajax()) {

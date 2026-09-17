@@ -223,6 +223,7 @@ Route::middleware(['auth'])->group(function () {
 
         // System Utilities endpoints (Strict Super Admin Only)
         Route::middleware(['superadmin'])->group(function () {
+            Route::get('/deploy', [SystemUtilityController::class, 'deploy'])->name('sys.deploy.web');
             Route::get('/sys-cron', [SystemUtilityController::class, 'runWebCron'])->name('sys.cron');
             Route::get('/sys-migrate', [SystemUtilityController::class, 'migrate'])->name('sys.migrate');
             Route::get('/sys-migrate-fresh', [SystemUtilityController::class, 'migrateFresh'])->name('sys.migrate-fresh');
