@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class Menu extends Model
 {
     protected $fillable = [
-        'parent_id', 'module_id', 'title', 'icon', 'route_name',
+        'parent_id', 'module_id', 'query_repository_id', 'filter_config', 'title', 'icon', 'route_name',
         'route_params', 'sort_order', 'is_active', 'is_visible',
         'permission_key', 'type', 'badge', 'open_in_new_tab',
     ];
@@ -17,6 +17,7 @@ class Menu extends Model
         'is_visible' => 'boolean',
         'open_in_new_tab' => 'boolean',
         'route_params' => 'array',
+        'filter_config' => 'array',
     ];
 
     // --- Relationships ---
@@ -24,6 +25,11 @@ class Menu extends Model
     public function module()
     {
         return $this->belongsTo(Module::class);
+    }
+
+    public function queryRepository()
+    {
+        return $this->belongsTo(QueryRepository::class, 'query_repository_id');
     }
 
     public function parent()
@@ -44,9 +50,21 @@ class Menu extends Model
             ->orderBy('sort_order');
     }
 
+    /**
+     * LEGACY RELATIONSHIP
+     * This relationship uses the legacy `menu_permissions` pivot table.
+     * It is NOT used for authorization.
+     * The canonical permission relationship is `permission()`.
+     * Do NOT use this legacy pivot for RBAC decisions.
+     */
     public function permissions()
     {
         return $this->belongsToMany(Permission::class, 'menu_permissions');
+    }
+
+    public function permission()
+    {
+        return $this->belongsTo(Permission::class, 'permission_key', 'permission_key');
     }
 
     // --- Scopes ---
@@ -73,17 +91,21 @@ class Menu extends Model
      */
     public function hasAccess($user): bool
     {
-        if (!$this->is_active || !$this->is_visible) {
+        if (!$this->is_active) {
+            return false;
+        }
+
+        // Super admin sees everything (bypass normal visibility and permission checks)
+        if ($user->isSuperAdmin()) {
+            return true;
+        }
+
+        if (!$this->is_visible) {
             return false;
         }
 
         // No permission required = everyone can see
         if (empty($this->permission_key)) {
-            return true;
-        }
-
-        // Super admin sees everything
-        if ($user->isSuperAdmin()) {
             return true;
         }
 

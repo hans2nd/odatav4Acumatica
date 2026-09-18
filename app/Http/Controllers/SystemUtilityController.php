@@ -13,12 +13,6 @@ class SystemUtilityController extends Controller
      */
     public function migrate(Request $request)
     {
-        // Basic security token to prevent unauthorized execution
-        $token = $request->query('token');
-        if ($token !== 'deploy123') {
-            return $this->promptToken();
-        }
-
         try {
             Artisan::call('migrate', ['--force' => true]);
             $output = Artisan::output();
@@ -33,12 +27,6 @@ class SystemUtilityController extends Controller
      */
     public function migrateFresh(Request $request)
     {
-        // Basic security token to prevent unauthorized execution
-        $token = $request->query('token');
-        if ($token !== 'deploy123') {
-            return $this->promptToken();
-        }
-
         try {
             Artisan::call('migrate:fresh', ['--force' => true, '--seed' => true]);
             $output = Artisan::output();
@@ -49,15 +37,24 @@ class SystemUtilityController extends Controller
     }
 
     /**
+     * Run fresh database migrations with the default installation seeder.
+     */
+    public function installDefault(Request $request)
+    {
+        try {
+            Artisan::call('migrate:fresh', ['--force' => true, '--seed' => true, '--seeder' => 'Database\\Seeders\\DefaultInstallationSeeder']);
+            $output = Artisan::output();
+            return $this->formatResponse('Default Installation Executed Successfully', $output);
+        } catch (\Exception $e) {
+            return $this->formatResponse('Error Running Default Installation', $e->getMessage(), true);
+        }
+    }
+
+    /**
      * Clear application cache.
      */
     public function optimize(Request $request)
     {
-        $token = $request->query('token');
-        if ($token !== 'deploy123') {
-            return $this->promptToken();
-        }
-
         try {
             Artisan::call('optimize:clear');
             $output = Artisan::output();
@@ -68,21 +65,56 @@ class SystemUtilityController extends Controller
     }
 
     /**
+     * Clear Laravel Logs.
+     */
+    public function clearLogs(Request $request)
+    {
+        try {
+            $logPath = storage_path('logs');
+            $files = glob($logPath . '/*.log');
+            $deleted = 0;
+            foreach ($files as $file) {
+                if (is_file($file)) {
+                    // Empty the file instead of deleting it to prevent permission issues
+                    file_put_contents($file, '');
+                    $deleted++;
+                }
+            }
+            return $this->formatResponse('Logs Cleared Successfully', "Cleared contents of $deleted log file(s).");
+        } catch (\Exception $e) {
+            return $this->formatResponse('Error Clearing Logs', $e->getMessage(), true);
+        }
+    }
+
+    /**
      * Run an arbitrary artisan command.
      * Note: Colons (:) in URLs can sometimes cause issues, so you can pass dashes (-) which will be converted to colons if the command exists.
      */
     public function runArtisan(Request $request, $command)
     {
-        $token = $request->query('token');
-        if ($token !== 'deploy123') {
-            return $this->promptToken();
-        }
+        $allowedCommands = [
+            'storage:link',
+            'db:seed',
+            'optimize:clear',
+            'cache:clear',
+            'config:clear',
+            'route:clear',
+            'view:clear'
+        ];
 
         // Allow passing 'storage-link' instead of 'storage:link' in the URL
         $command = str_replace('-', ':', $command);
 
+        if (!in_array($command, $allowedCommands)) {
+            return $this->formatResponse("Unauthorized", "Execution of arbitrary commands is prohibited.", true);
+        }
+
         try {
-            Artisan::call($command);
+            if ($command === 'db:seed') {
+                Artisan::call('db:seed', ['--force' => true]);
+            } else {
+                Artisan::call($command);
+            }
             $output = Artisan::output();
             return $this->formatResponse("Artisan '$command' Executed Successfully", $output ?: "Command completed with no output.");
         } catch (\Exception $e) {
@@ -92,10 +124,6 @@ class SystemUtilityController extends Controller
 
     public function runWebCron(Request $request)
     {
-        if ($request->query('token') !== 'deploy123') {
-            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
-        }
-
         try {
             // 1. Process Native Schedules
             Artisan::call('schedule:run');
@@ -124,25 +152,48 @@ class SystemUtilityController extends Controller
         }
     }
 
-    private function promptToken()
+
+    public function deploy(Request $request)
     {
-        return response('
-            <!DOCTYPE html>
-            <html>
-            <head><title>Authentication Required</title></head>
-            <body>
-                <script>
-                    let token = prompt("Enter security token:");
-                    if (token) {
-                        window.location.href = window.location.pathname + "?token=" + encodeURIComponent(token);
-                    } else {
-                        document.body.innerHTML = "<h3>Unauthorized</h3><p>A valid token is required.</p>";
-                    }
-                </script>
-            </body>
-            </html>
-        ', 401);
+        try {
+            $output = [];
+            $output[] = "🚀 Starting Web Deployment...";
+
+            // 1. Maintenance Mode
+            Artisan::call('down', ['--render' => 'errors::503', '--secret' => 'bypass-deploy']);
+            $output[] = "🚧 Maintenance mode enabled.";
+
+            // 2. Clear Caches
+            Artisan::call('optimize:clear');
+            Artisan::call('clear-compiled');
+            $output[] = "🧹 Old caches cleared.";
+
+            // 3. Migrate
+            Artisan::call('migrate', ['--force' => true]);
+            $output[] = "🗄️ Database migrated:\n" . Artisan::output();
+
+            // 4. Rebuild Caches
+            Artisan::call('optimize');
+            Artisan::call('view:cache');
+            Artisan::call('event:cache');
+            $output[] = "⚡ Caches rebuilt for maximum performance.";
+
+            // 5. Restart Queues
+            Artisan::call('queue:restart');
+            $output[] = "🔄 Queue workers restarted.";
+
+            // 6. Live Mode
+            Artisan::call('up');
+            $output[] = "✅ Application is back online.";
+
+            return $this->formatResponse('Deployment Completed Successfully', implode("\n\n", $output));
+        } catch (\Exception $e) {
+            // Failsafe: Ensure app is brought back up if something crashes
+            Artisan::call('up');
+            return $this->formatResponse('Error During Deployment', $e->getMessage(), true);
+        }
     }
+
 
     private function formatResponse($title, $output, $isError = false)
     {

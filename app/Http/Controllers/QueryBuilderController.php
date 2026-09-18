@@ -13,10 +13,12 @@ use Illuminate\Support\Str;
 class QueryBuilderController extends Controller
 {
     protected ConnectionService $connectionService;
+    protected \App\Services\Connections\ConnectionManager $connectionManager;
 
-    public function __construct(ConnectionService $connectionService)
+    public function __construct(ConnectionService $connectionService, \App\Services\Connections\ConnectionManager $connectionManager)
     {
         $this->connectionService = $connectionService;
+        $this->connectionManager = $connectionManager;
     }
 
     /**
@@ -28,11 +30,19 @@ class QueryBuilderController extends Controller
         $dbConnections = [];
 
         foreach ($all as $key => $conn) {
-            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv', 'firebird', 'local_env']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
+            if (in_array($conn['type'] ?? '', \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes()) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
+                try {
+                    $connName = $this->connectionService->resolveConnectionName($key);
+                    $driver = DB::connection($connName)->getDriverName();
+                } catch (\Throwable $e) {
+                    $driver = $conn['type'];
+                }
+
                 $dbConnections[] = [
-                    'key'  => $key,
-                    'name' => $conn['name'] ?? $key,
-                    'type' => $conn['type'],
+                    'key'    => $key,
+                    'name'   => $conn['name'] ?? $key,
+                    'type'   => $conn['type'],
+                    'driver' => $driver,
                 ];
             }
         }
@@ -55,11 +65,16 @@ class QueryBuilderController extends Controller
 
         try {
             $connName = $this->connectionService->resolveConnectionName($connKey);
-            $tables = app(\App\Services\ConnectionService::class)->getTables($connName);
+            $driver = DB::connection($connName)->getDriverName();
 
+            $tree = $this->connectionManager->discoverMetadata($connKey);
+            $tables = [];
+            foreach ($tree->nodes as $node) {
+                $tables[] = $node->name;
+            }
             sort($tables);
 
-            return response()->json(['success' => true, 'tables' => $tables]);
+            return response()->json(['success' => true, 'driver' => $driver, 'tables' => $tables]);
         } catch (\Throwable $e) {
             return response()->json(['success' => false, 'message' => 'Failed to fetch tables: ' . $e->getMessage()], 500);
         }
@@ -68,7 +83,7 @@ class QueryBuilderController extends Controller
     /**
      * List columns with data types for a given connection + table.
      */
-    public function columns(Request $request): JsonResponse
+    public function columns(Request $request, \App\Contracts\Metadata\MetadataRepositoryInterface $metadataRepository): JsonResponse
     {
         $connKey = $request->input('connection');
         $table   = $request->input('table');
@@ -78,54 +93,40 @@ class QueryBuilderController extends Controller
         }
 
         try {
-            $connName = $this->connectionService->resolveConnectionName($connKey);
-            $driver = DB::connection($connName)->getDriverName();
+            $result = $metadataRepository->getTableMetadata($connKey, $table);
+            if (!$result->isSuccess) {
+                return response()->json(['success' => false, 'message' => 'Failed to fetch columns: ' . $result->errorMessage], 500);
+            }
 
+            $semanticFields = \Illuminate\Support\Facades\Cache::remember(
+                "semantic_fields_{$connKey}_{$table}",
+                3600,
+                function () use ($table) {
+                    $entity = \App\Models\SyncEntity::where('destination_table', $table)->first();
+                    if ($entity) {
+                        return \App\Models\SyncEntityField::where('sync_entity_id', $entity->id)
+                            ->where('is_enabled', true)
+                            ->whereNotNull('destination_field')
+                            ->get()
+                            ->keyBy('destination_field');
+                    }
+                    return collect();
+                }
+            );
             $columns = [];
-            if ($driver === 'mysql') {
-                $results = DB::connection($connName)->select("SHOW COLUMNS FROM `{$table}`");
-                foreach ($results as $row) {
-                    $r = (array) $row;
-                    $columns[] = [
-                        'name' => $r['Field'],
-                        'type' => $r['Type'],
-                        'key'  => $r['Key'] ?? '',
-                    ];
-                }
-            } elseif ($driver === 'sqlsrv') {
-                $results = DB::connection($connName)->select("
-                    SELECT c.COLUMN_NAME, c.DATA_TYPE,
-                           CASE WHEN kcu.COLUMN_NAME IS NOT NULL THEN 'PRI' ELSE '' END AS [KEY]
-                    FROM INFORMATION_SCHEMA.COLUMNS c
-                    LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
-                        ON c.TABLE_NAME = kcu.TABLE_NAME AND c.COLUMN_NAME = kcu.COLUMN_NAME
-                        AND kcu.CONSTRAINT_NAME LIKE 'PK_%'
-                    WHERE c.TABLE_NAME = ?
-                    ORDER BY c.ORDINAL_POSITION
-                ", [$table]);
-                foreach ($results as $row) {
-                    $r = (array) $row;
-                    $columns[] = [
-                        'name' => $r['COLUMN_NAME'],
-                        'type' => $r['DATA_TYPE'],
-                        'key'  => $r['KEY'] ?? '',
-                    ];
-                }
-            } elseif ($driver === 'firebird') {
-                $results = DB::connection($connName)->select("
-                    SELECT r.RDB\$FIELD_NAME AS FIELD_NAME
-                    FROM RDB\$RELATION_FIELDS r
-                    WHERE TRIM(r.RDB\$RELATION_NAME) = ?
-                    ORDER BY r.RDB\$FIELD_POSITION
-                ", [trim($table)]);
-                foreach ($results as $row) {
-                    $r = (array) $row;
-                    $columns[] = [
-                        'name' => trim($r['FIELD_NAME'] ?? current($r)),
-                        'type' => 'varchar',
-                        'key'  => '',
-                    ];
-                }
+            foreach ($result->fields as $field) {
+                $colName = $field['name'];
+                $semantic = $semanticFields->get($colName);
+
+                $columns[] = [
+                    'name' => $colName,
+                    'type' => $field['dataType'] ?? 'varchar',
+                    'key'  => $field['isPrimaryKey'] ? 'PRI' : '',
+                    'label' => $semantic ? $semantic->label : null,
+                    'semantic_type' => $semantic ? $semantic->semantic_type : null,
+                    'description' => $semantic ? $semantic->description : null,
+                    'aliases' => $semantic ? $semantic->aliases : null,
+                ];
             }
 
             return response()->json(['success' => true, 'columns' => $columns]);
@@ -166,7 +167,7 @@ class QueryBuilderController extends Controller
             $driver = DB::connection($connName)->getDriverName();
             
             if (!empty($rawSql)) {
-                $sql = $rawSql;
+                $sql = $this->normalizeSqlForDriver($rawSql, $driver);
                 $bindings = [];
             } else {
                 if (empty($tables) || empty($columns)) {
@@ -177,133 +178,132 @@ class QueryBuilderController extends Controller
                 $qe = $driver === 'mysql' ? '`' : ($driver === 'firebird' ? '' : ']');
 
                 // Build the SELECT clause
-            $selectParts = [];
-            foreach ($columns as $col) {
-                $table = $col['table'] ?? $tables[0];
-                $field = $col['field'];
-                $alias = $col['alias'] ?? null;
-                $aggregate = $col['aggregate'] ?? null;
+                $selectParts = [];
+                foreach ($columns as $col) {
+                    $table = $col['table'] ?? $tables[0];
+                    $field = $col['field'];
+                    $alias = $col['alias'] ?? null;
+                    $aggregate = $col['aggregate'] ?? null;
 
-                $colRef = "{$q}{$table}{$qe}.{$q}{$field}{$qe}";
+                    $colRef = "{$q}{$table}{$qe}.{$q}{$field}{$qe}";
 
-                if ($aggregate && in_array(strtoupper($aggregate), ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX'])) {
-                    $colRef = strtoupper($aggregate) . "({$colRef})";
-                    $alias = $alias ?: strtolower($aggregate) . '_' . $field;
+                    if ($aggregate && in_array(strtoupper($aggregate), ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX'])) {
+                        $colRef = strtoupper($aggregate) . "({$colRef})";
+                        $alias = $alias ?: strtolower($aggregate) . '_' . $field;
+                    }
+
+                    if ($alias) {
+                        $selectParts[] = "{$colRef} AS {$q}{$alias}{$qe}";
+                    } else {
+                        $selectParts[] = $colRef;
+                    }
                 }
 
-                if ($alias) {
-                    $selectParts[] = "{$colRef} AS {$q}{$alias}{$qe}";
-                } else {
-                    $selectParts[] = $colRef;
+                $selectClause = implode(', ', $selectParts);
+                if ($driver === 'sqlsrv') {
+                    $selectClause = "TOP {$limit} " . $selectClause;
                 }
-            }
 
-            $selectClause = implode(', ', $selectParts);
+                // Build FROM clause
+                $primaryTable = $tables[0];
+                $fromClause = "{$q}{$primaryTable}{$qe}";
 
-            // Build FROM clause
-            $primaryTable = $tables[0];
-            $fromClause = "{$q}{$primaryTable}{$qe}";
+                // Build JOINs
+                $joinClause = '';
+                foreach ($joins as $join) {
+                    $joinType = strtoupper($join['type'] ?? 'INNER') . ' JOIN';
+                    $joinTable = $join['table'];
+                    $onLeft = $join['on_left'];
+                    $onRight = $join['on_right'];
 
-            // Build JOINs
-            $joinClause = '';
-            foreach ($joins as $join) {
-                $joinType = strtoupper($join['type'] ?? 'INNER') . ' JOIN';
-                $joinTable = $join['table'];
-                $onLeft = $join['on_left'];
-                $onRight = $join['on_right'];
+                    $leftParts = explode('.', $onLeft);
+                    $rightParts = explode('.', $onRight);
 
-                $leftParts = explode('.', $onLeft);
-                $rightParts = explode('.', $onRight);
+                    $leftRef = "{$q}{$leftParts[0]}{$qe}.{$q}{$leftParts[1]}{$qe}";
+                    $rightRef = "{$q}{$rightParts[0]}{$qe}.{$q}{$rightParts[1]}{$qe}";
 
-                $leftRef = "{$q}{$leftParts[0]}{$qe}.{$q}{$leftParts[1]}{$qe}";
-                $rightRef = "{$q}{$rightParts[0]}{$qe}.{$q}{$rightParts[1]}{$qe}";
-
-                $joinClause .= " {$joinType} {$q}{$joinTable}{$qe} ON {$leftRef} = {$rightRef}";
-            }
-
-            // Build WHERE clause
-            $whereClause = '';
-            $bindings = [];
-            $filterIdx = 0;
-            foreach ($filters as $filter) {
-                $field = $filter['field'] ?? null;
-                $op    = $filter['operator'] ?? 'eq';
-                $value = $filter['value'] ?? null;
-
-                if (!$field) continue;
-                if (!in_array($op, ['is_null', 'not_null']) && ($value === null || $value === '')) continue;
-
-                $parts = explode('.', $field);
-                $fieldRef = count($parts) === 2
-                    ? "{$q}{$parts[0]}{$qe}.{$q}{$parts[1]}{$qe}"
-                    : "{$q}{$field}{$qe}";
-
-                $connector = $filterIdx === 0 ? 'WHERE' : 'AND';
-
-                switch ($op) {
-                    case 'eq':         $whereClause .= " {$connector} {$fieldRef} = ?"; $bindings[] = $value; break;
-                    case 'ne':         $whereClause .= " {$connector} {$fieldRef} != ?"; $bindings[] = $value; break;
-                    case 'contains':   $whereClause .= " {$connector} {$fieldRef} LIKE ?"; $bindings[] = "%{$value}%"; break;
-                    case 'startswith': $whereClause .= " {$connector} {$fieldRef} LIKE ?"; $bindings[] = "{$value}%"; break;
-                    case 'endswith':   $whereClause .= " {$connector} {$fieldRef} LIKE ?"; $bindings[] = "%{$value}"; break;
-                    case 'gt':         $whereClause .= " {$connector} {$fieldRef} > ?"; $bindings[] = $value; break;
-                    case 'ge':         $whereClause .= " {$connector} {$fieldRef} >= ?"; $bindings[] = $value; break;
-                    case 'lt':         $whereClause .= " {$connector} {$fieldRef} < ?"; $bindings[] = $value; break;
-                    case 'le':         $whereClause .= " {$connector} {$fieldRef} <= ?"; $bindings[] = $value; break;
-                    case 'is_null':    $whereClause .= " {$connector} {$fieldRef} IS NULL"; break;
-                    case 'not_null':   $whereClause .= " {$connector} {$fieldRef} IS NOT NULL"; break;
+                    $joinClause .= " {$joinType} {$q}{$joinTable}{$qe} ON {$leftRef} = {$rightRef}";
                 }
-                $filterIdx++;
-            }
 
-            // Build GROUP BY clause
-            $groupByClause = '';
-            if (!empty($groupBy)) {
-                $gbParts = [];
-                foreach ($groupBy as $gb) {
-                    $parts = explode('.', $gb);
-                    $gbParts[] = count($parts) === 2
-                        ? "{$q}{$parts[0]}{$qe}.{$q}{$parts[1]}{$qe}"
-                        : "{$q}{$gb}{$qe}";
-                }
-                $groupByClause = ' GROUP BY ' . implode(', ', $gbParts);
-            }
+                // Build WHERE clause
+                $whereClause = '';
+                $bindings = [];
+                $filterIdx = 0;
+                foreach ($filters as $filter) {
+                    $field = $filter['field'] ?? null;
+                    $op    = $filter['operator'] ?? 'eq';
+                    $value = $filter['value'] ?? null;
 
-            // Build ORDER BY clause
-            $orderByClause = '';
-            if (!empty($orderBy)) {
-                $obParts = [];
-                foreach ($orderBy as $ob) {
-                    $field = $ob['field'];
-                    $dir   = strtoupper($ob['direction'] ?? 'ASC') === 'DESC' ? 'DESC' : 'ASC';
+                    if (!$field) continue;
+                    if (!in_array($op, ['is_null', 'not_null']) && ($value === null || $value === '')) continue;
+
                     $parts = explode('.', $field);
                     $fieldRef = count($parts) === 2
                         ? "{$q}{$parts[0]}{$qe}.{$q}{$parts[1]}{$qe}"
                         : "{$q}{$field}{$qe}";
-                    $obParts[] = "{$fieldRef} {$dir}";
+
+                    $connector = $filterIdx === 0 ? 'WHERE' : 'AND';
+
+                    switch ($op) {
+                        case 'eq':         $whereClause .= " {$connector} {$fieldRef} = ?"; $bindings[] = $value; break;
+                        case 'ne':         $whereClause .= " {$connector} {$fieldRef} != ?"; $bindings[] = $value; break;
+                        case 'contains':   $whereClause .= " {$connector} {$fieldRef} LIKE ?"; $bindings[] = "%{$value}%"; break;
+                        case 'startswith': $whereClause .= " {$connector} {$fieldRef} LIKE ?"; $bindings[] = "{$value}%"; break;
+                        case 'endswith':   $whereClause .= " {$connector} {$fieldRef} LIKE ?"; $bindings[] = "%{$value}"; break;
+                        case 'gt':         $whereClause .= " {$connector} {$fieldRef} > ?"; $bindings[] = $value; break;
+                        case 'ge':         $whereClause .= " {$connector} {$fieldRef} >= ?"; $bindings[] = $value; break;
+                        case 'lt':         $whereClause .= " {$connector} {$fieldRef} < ?"; $bindings[] = $value; break;
+                        case 'le':         $whereClause .= " {$connector} {$fieldRef} <= ?"; $bindings[] = $value; break;
+                        case 'is_null':    $whereClause .= " {$connector} {$fieldRef} IS NULL"; break;
+                        case 'not_null':   $whereClause .= " {$connector} {$fieldRef} IS NOT NULL"; break;
+                    }
+                    $filterIdx++;
                 }
-                $orderByClause = ' ORDER BY ' . implode(', ', $obParts);
+
+                // Build GROUP BY clause
+                $groupByClause = '';
+                if (!empty($groupBy)) {
+                    $gbParts = [];
+                    foreach ($groupBy as $gb) {
+                        $parts = explode('.', $gb);
+                        $gbParts[] = count($parts) === 2
+                            ? "{$q}{$parts[0]}{$qe}.{$q}{$parts[1]}{$qe}"
+                            : "{$q}{$gb}{$qe}";
+                    }
+                    $groupByClause = ' GROUP BY ' . implode(', ', $gbParts);
+                }
+
+                // Build ORDER BY clause
+                $orderByClause = '';
+                if (!empty($orderBy)) {
+                    $obParts = [];
+                    foreach ($orderBy as $ob) {
+                        $field = $ob['field'];
+                        $dir   = strtoupper($ob['direction'] ?? 'ASC') === 'DESC' ? 'DESC' : 'ASC';
+                        $parts = explode('.', $field);
+                        $fieldRef = count($parts) === 2
+                            ? "{$q}{$parts[0]}{$qe}.{$q}{$parts[1]}{$qe}"
+                            : "{$q}{$field}{$qe}";
+                        $obParts[] = "{$fieldRef} {$dir}";
+                    }
+                    $orderByClause = ' ORDER BY ' . implode(', ', $obParts);
+                }
+
+                // Build LIMIT
+                $limitClause = '';
+                if ($driver === 'mysql') {
+                    $limitClause = " LIMIT {$limit}";
+                } elseif ($driver === 'firebird') {
+                    $limitClause = " ROWS 1 TO {$limit}";
+                }
+
+                $sql = "SELECT {$selectClause} FROM {$fromClause}{$joinClause}{$whereClause}{$groupByClause}{$orderByClause}{$limitClause}";
             }
 
-            // Build LIMIT
-            $limitClause = '';
-            if ($driver === 'mysql') {
-                $limitClause = " LIMIT {$limit}";
-            } elseif ($driver === 'sqlsrv') {
-                if (empty($orderByClause)) {
-                    $orderByClause = " ORDER BY (SELECT NULL)";
-                }
-                $limitClause = " OFFSET 0 ROWS FETCH NEXT {$limit} ROWS ONLY";
-            } elseif ($driver === 'firebird') {
-                $limitClause = " ROWS 1 TO {$limit}";
-            }
-
-            $sql = "SELECT {$selectClause} FROM {$fromClause}{$joinClause}{$whereClause}{$groupByClause}{$orderByClause}{$limitClause}";
-            } // end else for rawSql
-
-            $startTime = microtime(true);
-            $results = DB::connection($connName)->select($sql, $bindings);
-            $elapsed = round((microtime(true) - $startTime) * 1000);
+            $qrService = app(\App\Services\QueryRepositoryService::class);
+            $result = $qrService->executeDynamic($connKey, $sql, $bindings);
+            $results = $result['data'];
+            $elapsed = round($result['duration'] * 1000);
 
             $rows = array_map(fn($r) => (array) $r, $results);
             $resultColumns = !empty($rows) ? array_keys($rows[0]) : [];
@@ -323,6 +323,55 @@ class QueryBuilderController extends Controller
     }
 
     /**
+     * Normalize SQL query according to target database driver syntax.
+     * Fixes LIMIT syntax for SQL Server (sqlsrv).
+     */
+    public function normalizeSqlForDriver(string $sql, string $driver): string
+    {
+        $trimmedSql = trim($sql);
+
+        if ($driver === 'sqlsrv') {
+            // Pattern 1: LIMIT <count> OFFSET <offset>
+            if (preg_match('/\bLIMIT\s+(\d+)\s+OFFSET\s+(\d+)\b/i', $trimmedSql, $m)) {
+                $count = $m[1];
+                $offset = $m[2];
+                $trimmedSql = preg_replace('/\bLIMIT\s+\d+\s+OFFSET\s+\d+\b/i', '', $trimmedSql);
+                $trimmedSql = trim($trimmedSql);
+                if (!preg_match('/\bORDER\s+BY\b/i', $trimmedSql)) {
+                    $trimmedSql .= " ORDER BY (SELECT NULL)";
+                }
+                $trimmedSql .= " OFFSET {$offset} ROWS FETCH NEXT {$count} ROWS ONLY";
+            }
+            // Pattern 2: LIMIT <offset>, <count>
+            elseif (preg_match('/\bLIMIT\s+(\d+)\s*,\s*(\d+)\b/i', $trimmedSql, $m)) {
+                $offset = $m[1];
+                $count = $m[2];
+                $trimmedSql = preg_replace('/\bLIMIT\s+\d+\s*,\s*\d+\b/i', '', $trimmedSql);
+                $trimmedSql = trim($trimmedSql);
+                if (!preg_match('/\bORDER\s+BY\b/i', $trimmedSql)) {
+                    $trimmedSql .= " ORDER BY (SELECT NULL)";
+                }
+                $trimmedSql .= " OFFSET {$offset} ROWS FETCH NEXT {$count} ROWS ONLY";
+            }
+            // Pattern 3: Trailing LIMIT <count> or standalone LIMIT <count>
+            elseif (preg_match('/\bLIMIT\s+(\d+)\s*$/i', $trimmedSql, $m) || preg_match('/\bLIMIT\s+(\d+)\b/i', $trimmedSql, $m)) {
+                $count = $m[1];
+                $trimmedSql = preg_replace('/\bLIMIT\s+\d+\b/i', '', $trimmedSql);
+                $trimmedSql = trim($trimmedSql);
+                if (!preg_match('/\bTOP\s+\d+\b/i', $trimmedSql) && !preg_match('/\bOFFSET\b/i', $trimmedSql)) {
+                    if (preg_match('/^\s*SELECT\s+DISTINCT\s+/i', $trimmedSql)) {
+                        $trimmedSql = preg_replace('/^\s*SELECT\s+DISTINCT\s+/i', "SELECT DISTINCT TOP {$count} ", $trimmedSql, 1);
+                    } elseif (preg_match('/^\s*SELECT\s+/i', $trimmedSql)) {
+                        $trimmedSql = preg_replace('/^\s*SELECT\s+/i', "SELECT TOP {$count} ", $trimmedSql, 1);
+                    }
+                }
+            }
+        }
+
+        return $trimmedSql;
+    }
+
+    /**
      * Export query results to CSV/XLSX.
      */
     public function export(Request $request): JsonResponse
@@ -338,14 +387,17 @@ class QueryBuilderController extends Controller
         $format  = $request->input('format');
 
         try {
+            ini_set('memory_limit', '512M');
+            ini_set('max_execution_time', '300'); // 5 minutes
+
             $connName = $this->connectionService->resolveConnectionName($connKey);
+            $driver   = DB::connection($connName)->getDriverName();
 
-            if (!preg_match('/^\s*SELECT\s/i', $sql)) {
-                return response()->json(['success' => false, 'message' => 'Only SELECT queries are allowed.'], 400);
-            }
+            $sql = $this->normalizeSqlForDriver($sql, $driver);
 
-            $results = DB::connection($connName)->select($sql);
-            $rows = array_map(fn($r) => (array) $r, $results);
+            $qrService = app(\App\Services\QueryRepositoryService::class);
+            $qrResult = $qrService->executeDynamic($connKey, $sql, []);
+            $rows = array_map(fn($r) => (array) $r, $qrResult['data']);
             $columns = !empty($rows) ? array_keys($rows[0]) : [];
 
             $token = Str::random(32);
@@ -402,64 +454,45 @@ class QueryBuilderController extends Controller
 
     private function generateCsv(array $rows, array $columns, string $filePath): void
     {
-        $file = fopen($filePath, 'w');
-        fprintf($file, chr(0xEF) . chr(0xBB) . chr(0xBF));
-        fputcsv($file, $columns);
+        $writer = \Spatie\SimpleExcel\SimpleExcelWriter::create($filePath)
+            ->addHeader($columns);
 
         foreach ($rows as $row) {
             $rowArray = [];
             foreach ($columns as $col) {
-                $rowArray[] = $row[$col] ?? '';
+                $rowArray[$col] = $row[$col] ?? '';
             }
-            fputcsv($file, $rowArray);
+            $writer->addRow($rowArray);
         }
-
-        fclose($file);
+        $writer->close();
     }
 
     private function generateExcel(array $rows, array $columns, string $filePath): void
     {
-        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
-        $sheet = $spreadsheet->getActiveSheet();
-        $sheet->setTitle('Query Result');
+        $writer = \Spatie\SimpleExcel\SimpleExcelWriter::create($filePath);
 
-        $colIndex = 1;
-        foreach ($columns as $col) {
-            $sheet->setCellValue([$colIndex, 1], $col);
-            $colIndex++;
-        }
-
-        $lastColLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex(count($columns));
-        $sheet->getStyle("A1:{$lastColLetter}1")->applyFromArray([
-            'font' => ['bold' => true, 'color' => ['rgb' => 'FFFFFF'], 'size' => 11],
-            'fill' => [
-                'fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID,
-                'startColor' => ['rgb' => '1F2937'],
-            ],
-            'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER],
-        ]);
-
-        $rowNum = 2;
-        foreach ($rows as $row) {
-            $colIndex = 1;
-            foreach ($columns as $col) {
-                $sheet->setCellValue([$colIndex, $rowNum], $row[$col] ?? '');
-                $colIndex++;
+        try {
+            if (method_exists($writer, 'getWriter')) {
+                $spoutWriter = $writer->getWriter();
+                if (method_exists($spoutWriter, 'getCurrentSheet')) {
+                    $sheet = $spoutWriter->getCurrentSheet();
+                    if (method_exists($sheet, 'setName')) {
+                        $sheet->setName('Query Result');
+                    }
+                }
             }
-            $rowNum++;
+        } catch (\Throwable $e) {}
+
+        $writer->addHeader($columns);
+
+        foreach ($rows as $row) {
+            $rowArray = [];
+            foreach ($columns as $col) {
+                $rowArray[$col] = $row[$col] ?? '';
+            }
+            $writer->addRow($rowArray);
         }
-
-        foreach (array_slice($columns, 0, 30) as $i => $col) {
-            $letter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
-            $sheet->getColumnDimension($letter)->setAutoSize(true);
-        }
-
-        $sheet->freezePane('A2');
-        $sheet->setAutoFilter("A1:{$lastColLetter}1");
-
-        $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
-        $writer->save($filePath);
-        $spreadsheet->disconnectWorksheets();
+        $writer->close();
     }
 
     private function formatBytes(int $bytes): string
@@ -468,5 +501,66 @@ class QueryBuilderController extends Controller
         if ($bytes >= 1048576) return number_format($bytes / 1048576, 2) . ' MB';
         if ($bytes >= 1024) return number_format($bytes / 1024, 2) . ' KB';
         return $bytes . ' bytes';
+    }
+
+    /**
+     * Save the query into the repository.
+     */
+    public function save(Request $request): JsonResponse
+    {
+        $request->validate([
+            'connection'   => 'required|string',
+            'name'         => 'required|string|max:255',
+            'category'     => 'nullable|string|max:100',
+            'description'  => 'nullable|string',
+            'sql_text'     => 'required|string',
+            'state'        => 'nullable|array',
+            'columns'      => 'nullable|array',
+        ]);
+
+        try {
+            $connKey = $request->input('connection');
+            $conn = \App\Models\Connection::where('key', $connKey)->first();
+
+            if (!$conn) {
+                throw new \Exception("Connection not found.");
+            }
+
+            $repository = \App\Models\QueryRepository::create([
+                'uuid'                   => (string) \Illuminate\Support\Str::uuid(),
+                'database_connection_id' => $conn->id,
+                'name'                   => $request->input('name'),
+                'category'               => $request->input('category'),
+                'description'            => $request->input('description'),
+                'sql_text'               => $request->input('sql_text'),
+                'query_type'             => 'read_only',
+                'ui_state_json'          => $request->input('state') ?: [],
+                'parameter_json'         => [], // no parameters from pure builder
+                'output_column_json'     => $request->input('columns') ?: [],
+                'created_by'             => auth()->id(),
+                'updated_by'             => auth()->id(),
+                'version'                => 1,
+                'is_active'              => true,
+            ]);
+
+            \App\Models\QueryRepositoryLog::create([
+                'query_repository_id' => $repository->id,
+                'user_id'             => auth()->id(),
+                'executed_at'         => now(),
+                'duration'            => 0,
+                'success'             => true,
+                'error_message'       => 'Query saved from Query Builder',
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Query saved successfully',
+                'uuid'    => $repository->uuid
+            ]);
+
+        } catch (\Throwable $e) {
+            Log::error('Query Builder save failed', ['error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => 'Failed to save query: ' . $e->getMessage()], 500);
+        }
     }
 }

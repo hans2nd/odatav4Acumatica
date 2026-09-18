@@ -11,9 +11,9 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
-        $middleware->append(\App\Http\Middleware\WebCronMiddleware::class);
         $middleware->alias([
             'permission' => \App\Http\Middleware\CheckPermission::class,
+            'superadmin' => \App\Http\Middleware\CheckSuperAdmin::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

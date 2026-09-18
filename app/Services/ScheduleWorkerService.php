@@ -18,8 +18,8 @@ class ScheduleWorkerService
 
         if ($lock->get()) {
             // The daemon is not running (we successfully acquired the lock).
-            // Release it immediately so the daemon can acquire it once it starts.
-            $lock->release();
+            // Do NOT release it immediately. Let the daemon's own lock attempt overwrite/renew it.
+            // If the daemon fails to start, this lock will expire naturally in 10 seconds.
             
             Log::info("ScheduleWorkerService: Spawning background scheduler daemon.");
 
@@ -29,7 +29,12 @@ class ScheduleWorkerService
             try {
                 if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
                     // Detached process in Windows
-                    pclose(popen("start /B {$command} > NUL 2>&1", "r"));
+                if (class_exists('COM')) {
+                    $WshShell = new \COM("WScript.Shell");
+                    $WshShell->Run("cmd /c {$command}", 0, false);
+                } else {
+                    pclose(popen("start /B " . $command . " > NUL 2>&1", "r"));
+                }
                 } else {
                     // Detached process in Linux/Unix
                     exec("{$command} > /dev/null 2>&1 &");

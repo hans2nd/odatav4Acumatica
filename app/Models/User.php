@@ -23,6 +23,9 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
+        'google_id',
+        'avatar_url',
+        'is_active',
     ];
 
     /**
@@ -57,6 +60,25 @@ class User extends Authenticatable
     }
 
     /**
+     * @var bool|null
+     */
+    protected $cachedIsSuperAdmin = null;
+
+    /**
+     * @var array|null
+     */
+    protected $cachedPermissionsList = null;
+
+    /**
+     * Clear request-level authorization caches.
+     */
+    public function clearAuthorizationCache(): void
+    {
+        $this->cachedIsSuperAdmin = null;
+        $this->cachedPermissionsList = null;
+    }
+
+    /**
      * Check if the user has a specific role.
      */
     public function hasRole(string $roleName): bool
@@ -65,11 +87,41 @@ class User extends Authenticatable
     }
 
     /**
-     * Check if the user is a superadmin (any role with is_superadmin = true).
+     * Check if the user is a superadmin (has an active role with is_superadmin = true).
      */
     public function isSuperAdmin(): bool
     {
-        return $this->roles()->where('name', 'Administrator')->exists();
+        // Graceful fallback if migration hasn't run and column is missing
+        if (array_key_exists('is_active', $this->attributes) && !$this->attributes['is_active']) {
+            return false;
+        }
+
+        if ($this->cachedIsSuperAdmin !== null) {
+            return $this->cachedIsSuperAdmin;
+        }
+
+        $this->cachedIsSuperAdmin = $this->roles()
+            ->where('roles.is_active', true)
+            ->where('roles.is_superadmin', true)
+            ->exists();
+
+        return $this->cachedIsSuperAdmin;
+    }
+
+    /**
+     * Load effective permissions from all active roles, deduplicating keys.
+     */
+    protected function loadEffectivePermissions(): void
+    {
+        if ($this->cachedPermissionsList !== null) {
+            return; // Already loaded
+        }
+
+        $roleIds = $this->roles()->where('roles.is_active', true)->pluck('roles.id');
+
+        $this->cachedPermissionsList = \App\Models\Permission::whereHas('roles', function ($q) use ($roleIds) {
+            $q->whereIn('roles.id', $roleIds);
+        })->pluck('permission_key')->unique()->values()->toArray();
     }
 
     /**
@@ -77,16 +129,17 @@ class User extends Authenticatable
      */
     public function hasPermission(string $permission): bool
     {
+        if (array_key_exists('is_active', $this->attributes) && !$this->attributes['is_active']) {
+            return false;
+        }
+
         // Superadmin bypass
         if ($this->isSuperAdmin()) {
             return true;
         }
 
-        return $this->roles()
-            ->whereHas('permissions', function ($q) use ($permission) {
-                $q->where('permission_key', $permission);
-            })
-            ->exists();
+        $this->loadEffectivePermissions();
+        return in_array($permission, $this->cachedPermissionsList, true);
     }
 
     /**
@@ -94,29 +147,32 @@ class User extends Authenticatable
      */
     public function hasAnyPermission(array $permissions): bool
     {
+        if (array_key_exists('is_active', $this->attributes) && !$this->attributes['is_active']) {
+            return false;
+        }
+
         if ($this->isSuperAdmin()) {
             return true;
         }
 
-        return $this->roles()
-            ->whereHas('permissions', function ($q) use ($permissions) {
-                $q->whereIn('permission_key', $permissions);
-            })
-            ->exists();
+        $this->loadEffectivePermissions();
+        return count(array_intersect($permissions, $this->cachedPermissionsList)) > 0;
     }
 
-    /**
-     * Get all permissions aggregated from all roles.
-     */
-    public function allPermissions(): Collection
+    public function allPermissions(): \Illuminate\Database\Eloquent\Collection
     {
-        if ($this->isSuperAdmin()) {
-            return Permission::all();
+        if (array_key_exists('is_active', $this->attributes) && !$this->attributes['is_active']) {
+            return \Illuminate\Database\Eloquent\Collection::make([]);
         }
 
-        $roleIds = $this->roles()->pluck('roles.id');
+        if ($this->isSuperAdmin()) {
+            return \App\Models\Permission::all();
+        }
 
-        return Permission::whereHas('roles', function ($q) use ($roleIds) {
+        // We load full objects here, bypassing the string cache since this requests Eloquent models
+        $roleIds = $this->roles()->where('roles.is_active', true)->pluck('roles.id');
+
+        return \App\Models\Permission::whereHas('roles', function ($q) use ($roleIds) {
             $q->whereIn('roles.id', $roleIds);
         })->get();
     }

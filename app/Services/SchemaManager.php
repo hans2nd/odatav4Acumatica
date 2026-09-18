@@ -14,7 +14,7 @@ class SchemaManager
      * Creates the table from a sample data row if it doesn't exist,
      * or adds missing columns if the table already exists.
      */
-    public function ensureTable(?string $connectionName, string $tableName, array $sampleRow): void
+    public function ensureTable(?string $connectionName, string $tableName, array $sampleRow, array $fieldMappings = []): void
     {
         $columns = $this->extractColumns($sampleRow);
 
@@ -28,10 +28,10 @@ class SchemaManager
         }
 
         if (! Schema::connection($connectionName)->hasTable($tableName)) {
-            $this->createTable($connectionName, $tableName, $sampleRow, $columns);
+            $this->createTable($connectionName, $tableName, $sampleRow, $columns, $fieldMappings);
             Log::info("SchemaManager: Created table [{$tableName}] on connection [{$connectionName}] with " . count($columns) . " columns.");
         } else {
-            $added = $this->addMissingColumns($connectionName, $tableName, $sampleRow, $columns);
+            $added = $this->addMissingColumns($connectionName, $tableName, $sampleRow, $columns, $fieldMappings);
             if ($added > 0) {
                 Log::info("SchemaManager: Added {$added} new columns to [{$tableName}] on connection [{$connectionName}].");
             }
@@ -48,17 +48,83 @@ class SchemaManager
     }
 
     /**
+     * Ensure the target table exists and has all necessary columns, directly from field mappings (Strict Schema).
+     * This is called when the user saves the Manage Fields configuration, before any data is synced.
+     */
+    public function ensureTableFromMappings(?string $connectionName, string $tableName, array $fieldMappings): void
+    {
+        $driver = DB::connection($connectionName)->getDriverName();
+        $isMysql = in_array($driver, ['mysql', 'mariadb']);
+
+        if ($isMysql) {
+            try {
+                DB::connection($connectionName)->statement('SET innodb_strict_mode = 0;');
+            } catch (\Exception $e) {}
+        }
+
+        // We only care about enabled fields
+        $enabledMappings = array_filter($fieldMappings, fn($m) => ($m['is_enabled'] ?? true) == true);
+        $columns = array_keys($enabledMappings);
+
+        if (! Schema::connection($connectionName)->hasTable($tableName)) {
+            Schema::connection($connectionName)->create($tableName, function (Blueprint $table) use ($columns, $enabledMappings) {
+                $table->bigIncrements('_sync_id');
+
+                foreach ($columns as $originalName) {
+                    $colName = $this->sanitizeColumnName($originalName);
+                    $configuredType = $enabledMappings[$originalName]['data_type'] ?? null;
+                    // Pass null for value since we don't have sample data, forcing it to rely on configuredType or fallback to TEXT
+                    $this->addColumn($table, $colName, null, $configuredType);
+                }
+
+                $table->dateTime('_synced_at')->nullable();
+                $table->string('_row_hash', 64)->nullable()->index();
+            });
+            Log::info("SchemaManager: Created table [{$tableName}] explicitly from mappings on connection [{$connectionName}].");
+        } else {
+            // Table exists, add missing columns
+            $existing = array_map('strtolower', Schema::connection($connectionName)->getColumnListing($tableName));
+            $added = 0;
+
+            foreach ($columns as $originalName) {
+                $colName = $this->sanitizeColumnName($originalName);
+                if (in_array(strtolower($colName), $existing, true)) {
+                    continue;
+                }
+
+                Schema::connection($connectionName)->table($tableName, function (Blueprint $table) use ($colName, $originalName, $enabledMappings) {
+                    $configuredType = $enabledMappings[$originalName]['data_type'] ?? null;
+                    $this->addColumn($table, $colName, null, $configuredType);
+                });
+                $added++;
+            }
+            if ($added > 0) {
+                Log::info("SchemaManager: Added {$added} missing columns to [{$tableName}] explicitly from mappings.");
+            }
+        }
+
+        $this->ensureRowHashColumn($connectionName, $tableName);
+
+        if ($isMysql) {
+            try {
+                DB::connection($connectionName)->statement('SET innodb_strict_mode = 1;');
+            } catch (\Exception $e) {}
+        }
+    }
+
+    /**
      * Create a new table based on a sample OData record.
      */
-    private function createTable(?string $connectionName, string $tableName, array $sampleRow, array $columns): void
+    private function createTable(?string $connectionName, string $tableName, array $sampleRow, array $columns, array $fieldMappings = []): void
     {
-        Schema::connection($connectionName)->create($tableName, function (Blueprint $table) use ($sampleRow, $columns) {
+        Schema::connection($connectionName)->create($tableName, function (Blueprint $table) use ($sampleRow, $columns, $fieldMappings) {
             $table->bigIncrements('_sync_id');
 
             foreach ($columns as $originalName) {
                 $colName = $this->sanitizeColumnName($originalName);
                 $value   = $sampleRow[$originalName] ?? null;
-                $this->addColumn($table, $colName, $value);
+                $configuredType = $fieldMappings[$originalName]['data_type'] ?? null;
+                $this->addColumn($table, $colName, $value, $configuredType);
             }
 
             $table->dateTime('_synced_at')->nullable();
@@ -69,7 +135,7 @@ class SchemaManager
     /**
      * Add columns that exist in the sample data but not yet in the table.
      */
-    private function addMissingColumns(?string $connectionName, string $tableName, array $sampleRow, array $columns): int
+    private function addMissingColumns(?string $connectionName, string $tableName, array $sampleRow, array $columns, array $fieldMappings = []): int
     {
         $existing = array_map('strtolower', Schema::connection($connectionName)->getColumnListing($tableName));
         $added = 0;
@@ -81,9 +147,10 @@ class SchemaManager
                 continue;
             }
 
-            Schema::connection($connectionName)->table($tableName, function (Blueprint $table) use ($colName, $sampleRow, $originalName) {
+            Schema::connection($connectionName)->table($tableName, function (Blueprint $table) use ($colName, $sampleRow, $originalName, $fieldMappings) {
                 $value = $sampleRow[$originalName] ?? null;
-                $this->addColumn($table, $colName, $value);
+                $configuredType = $fieldMappings[$originalName]['data_type'] ?? null;
+                $this->addColumn($table, $colName, $value, $configuredType);
             });
 
             $added++;
@@ -95,10 +162,35 @@ class SchemaManager
     /**
      * Add a single column to a Blueprint with an inferred SQL type.
      */
-    private function addColumn(Blueprint $table, string $name, mixed $value): void
+    private function addColumn(Blueprint $table, string $name, mixed $value, ?string $configuredType = null): void
     {
         // Avoid reserved internal columns
         if (in_array(strtolower($name), ['_sync_id', '_synced_at', '_row_hash'])) {
+            return;
+        }
+
+        $lowerName = strtolower($name);
+
+        // HARDCODE: tstamp from Acumatica/SQL Server is ALWAYS a rowversion/hex string.
+        // Even if the user accidentally mapped it to 'datetime' in Manage Fields, 
+        // we MUST create it as a string to avoid SQL validation errors.
+        if ($lowerName === 'tstamp') {
+            $table->string($name, 64)->nullable();
+            return;
+        }
+
+        if ($configuredType === 'boolean') {
+            $table->boolean($name)->nullable();
+            return;
+        }
+
+        if ($configuredType === 'number') {
+            $table->decimal($name, 28, 8)->nullable();
+            return;
+        }
+
+        if ($configuredType === 'datetime') {
+            $table->dateTime($name)->nullable();
             return;
         }
 
@@ -126,7 +218,7 @@ class SchemaManager
         }
 
         if ($lowerName === 'noteid') {
-            $table->string($name, 64)->nullable()->index();
+            $table->string($name, 64)->nullable()->unique();
             return;
         }
 
@@ -227,6 +319,11 @@ class SchemaManager
                 continue;
             }
 
+            // If a columnMap is explicitly provided and this key isn't in it, drop it! (Strict schema enforcement)
+            if ($columnMap !== null && !array_key_exists($key, $columnMap)) {
+                continue;
+            }
+
             $colName = $columnMap[$key] ?? $this->sanitizeColumnName($key);
 
             if (is_array($value) || is_object($value)) {
@@ -274,7 +371,10 @@ class SchemaManager
         $hashData = $clean;
         unset($hashData['_synced_at'], $hashData['_row_hash'], $hashData['_sync_id']);
         ksort($hashData);
-        $hashString = implode('|', array_map(function ($v) { return (string)($v ?? ''); }, $hashData));
+        $hashString = '';
+        foreach ($hashData as $v) {
+            $hashString .= '|' . (string)($v ?? '');
+        }
         $clean['_row_hash'] = md5($hashString);
 
         return $clean;
@@ -285,20 +385,27 @@ class SchemaManager
      * Builds a column-name map from the first record and reuses it for all
      * subsequent records — avoids calling sanitizeColumnName() millions of
      * times on repeated key sets.
+     * @param array $fieldMappings Used for strict filtering of unmapped columns
      */
-    public function cleanRecords(array $records): array
+    public function cleanRecords(array $records, array $fieldMappings = []): array
     {
         if (empty($records)) {
             return [];
         }
 
         // Build a column-name mapping cache from the first record's keys.
-        // OData rows from the same entity always share the same set of keys,
-        // so one map is sufficient for the whole batch.
+        // If fieldMappings are provided, ONLY include keys that are mapped and enabled.
         $columnMap = [];
+        $hasMappings = !empty($fieldMappings);
+
         foreach (array_keys($records[0]) as $key) {
             if (str_starts_with($key, '@') || str_starts_with($key, 'odata.') || $key === '__metadata') {
                 continue;
+            }
+            if ($hasMappings) {
+                if (!isset($fieldMappings[$key]) || ($fieldMappings[$key]['is_enabled'] ?? true) == false) {
+                    continue; // Skip unmapped or disabled fields
+                }
             }
             $columnMap[$key] = $this->sanitizeColumnName($key);
         }

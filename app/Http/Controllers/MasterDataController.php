@@ -4,12 +4,13 @@ namespace App\Http\Controllers;
 
 use App\Services\SchemaManager;
 use App\Services\ConnectionService;
+use App\Services\EntityConfigService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class MasterDataController extends Controller
 {
-    public function index(SchemaManager $schemaManager, ConnectionService $connectionService)
+    public function index(SchemaManager $schemaManager, ConnectionService $connectionService, EntityConfigService $entityConfigService)
     {
         $connections = array_merge([
             'acumatica_default' => ['name' => 'Acumatica Default', 'type' => 'odata'],
@@ -17,19 +18,28 @@ class MasterDataController extends Controller
         ], $connectionService->getAll());
 
         $user = auth()->user();
-        $entities = collect(config('acumatica.entities', []))
+        $entities = collect($entityConfigService->getAll())
             ->filter(fn ($e, $key) => $e['type'] === 'master' && $user->hasPermission("{$key}.view"));
 
         $entityData = [];
         foreach ($entities as $key => $entity) {
             $connName = $entity['destination_connection'] ?? 'database_default';
             $schedule = \App\Models\SyncSchedule::where('entity_key', $key)->first();
+            $customFilters = $schedule ? $schedule->custom_filters : [];
+            while (is_string($customFilters)) {
+                $decoded = json_decode($customFilters, true);
+                if ($decoded === null && json_last_error() !== JSON_ERROR_NONE) {
+                    break;
+                }
+                $customFilters = $decoded;
+            }
+
             $entityData[$key] = [
                 'config'       => $entity,
                 'schedule'     => $schedule,
                 'table_exists' => $schemaManager->tableExists($connName, $entity['table']),
                 'records'      => $schemaManager->getRowCount($connName, $entity['table']),
-                'custom_filters' => $schedule ? $schedule->custom_filters : [],
+                'custom_filters' => $customFilters ?: [],
             ];
         }
 
@@ -46,7 +56,7 @@ class MasterDataController extends Controller
             abort(403, "You do not have permission to view {$entity}.");
         }
 
-        $config = config("acumatica.entities.{$entity}");
+        $config = app(EntityConfigService::class)->get($entity);
 
         if (! $config || $config['type'] !== 'master') {
             abort(404, 'Entity not found.');
@@ -61,7 +71,16 @@ class MasterDataController extends Controller
 
         if ($tableExists) {
             $firstRow = DB::connection($connName)->table($tableName)->first();
-            $columns = $firstRow ? array_keys((array)$firstRow) : app(\App\Services\ConnectionService::class)->getTableColumns($connName, $tableName);
+            if ($firstRow) {
+                $columns = array_keys((array)$firstRow);
+            } else {
+                $node = app(\App\Services\Connections\ConnectionManager::class)->discoverStructure($connName, $tableName);
+                $columns = [];
+                foreach ($node->properties as $prop) {
+                    $columns[] = is_array($prop) ? ($prop['name'] ?? $prop['Field'] ?? '') : (string)$prop;
+                }
+                $columns = array_filter($columns);
+            }
             
             $query = DB::connection($connName)->table($tableName)->orderByDesc('_sync_id');
 

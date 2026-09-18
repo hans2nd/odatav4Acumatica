@@ -141,38 +141,46 @@ class ConnectionService
     }
 
     /**
-     * Check if a connection key already exists.
+     * Batch delete connections by keys.
      */
+    public function batchDelete(array $keys): bool
+    {
+        try {
+            return Connection::whereIn('key', $keys)->delete() > 0;
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error("Failed to batch delete connections: " . $e->getMessage());
+            return false;
+        }
+    }
+
     public function exists(string $key): bool
     {
         return Connection::where('key', $key)->exists();
     }
 
     /**
-     * Get table columns safely for any driver, specifically handling Firebird.
+     * Set exactly one connection as the analytics source using a strict lock.
      */
-    public function getTableColumns(string $connName, string $table): array
+    public function setAnalyticsSource(int $connectionId): void
     {
-        $driver = \Illuminate\Support\Facades\DB::connection($connName)->getDriverName();
-        
-        if ($driver === 'firebird') {
-            $results = \Illuminate\Support\Facades\DB::connection($connName)->select("
-                SELECT r.RDB\$FIELD_NAME AS FIELD_NAME
-                FROM RDB\$RELATION_FIELDS r
-                WHERE TRIM(r.RDB\$RELATION_NAME) = ?
-                ORDER BY r.RDB\$FIELD_POSITION
-            ", [trim($table)]);
+        \Illuminate\Support\Facades\DB::transaction(function () use ($connectionId) {
+            // Lock all connections for update to prevent race conditions
+            Connection::lockForUpdate()->get();
             
-            $columns = [];
-            foreach ($results as $row) {
-                $r = (array) $row;
-                $columns[] = trim($r['FIELD_NAME'] ?? current($r));
+            // Set all to false
+            Connection::query()->update(['is_analytics_source' => false]);
+            
+            // Set the specified connection to true
+            $conn = Connection::find($connectionId);
+            if ($conn) {
+                $conn->update(['is_analytics_source' => true]);
+            } else {
+                throw new \Exception("Connection ID not found.");
             }
-            return $columns;
-        }
-
-        return \Illuminate\Support\Facades\DB::connection($connName)->getSchemaBuilder()->getColumnListing($table);
+        });
     }
+
+
 
     /**
      * Resolve a connection key to a Laravel DB connection name.
@@ -188,7 +196,7 @@ class ConnectionService
         $laravelConnName = 'dyn_' . $connKey;
 
         if (!config()->has("database.connections.{$laravelConnName}")) {
-            if ($type === 'local_env') {
+            if ($type === 'local_env' || $type === 'local') {
                 $defaultConn = config('database.default');
                 $mergedConfig = config("database.connections.{$defaultConn}");
             } else {
@@ -206,8 +214,13 @@ class ConnectionService
                 );
 
                 if ($type === 'sqlsrv') {
-                    $mergedConfig['encrypt'] = $mergedConfig['encrypt'] ?? 'no';
-                    $mergedConfig['trust_server_certificate'] = $mergedConfig['trust_server_certificate'] ?? 'true';
+                    $encrypt = isset($creds['encrypt']) ? $creds['encrypt'] : ($mergedConfig['encrypt'] ?? 'no');
+                    $trust = isset($creds['trust_server_certificate']) ? $creds['trust_server_certificate'] : ($mergedConfig['trust_server_certificate'] ?? true);
+                    
+                    // Laravel's SqlServerConnector handles booleans or 'yes'/'no' properly.
+                    // We ensure they are passed through to the dynamically built config.
+                    $mergedConfig['encrypt'] = $encrypt;
+                    $mergedConfig['trust_server_certificate'] = $trust;
                 }
             }
 
@@ -217,46 +230,5 @@ class ConnectionService
         return $laravelConnName;
     }
 
-    /**
-     * Get tables safely for any driver.
-     */
-    public function getTables(string $connName): array
-    {
-        $driver = \Illuminate\Support\Facades\DB::connection($connName)->getDriverName();
-        $tables = [];
 
-        if ($driver === 'mysql') {
-            $results = \Illuminate\Support\Facades\DB::connection($connName)->select("SHOW TABLES");
-            foreach ($results as $row) {
-                $tables[] = array_values((array) $row)[0];
-            }
-        } elseif ($driver === 'sqlsrv') {
-            $results = \Illuminate\Support\Facades\DB::connection($connName)->select("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE IN ('BASE TABLE', 'VIEW')");
-            foreach ($results as $row) {
-                $rowArr = (array) $row;
-                $tables[] = $rowArr['TABLE_NAME'] ?? $rowArr['table_name'] ?? current($rowArr);
-            }
-        } elseif ($driver === 'firebird') {
-            $results = \Illuminate\Support\Facades\DB::connection($connName)->select("
-                SELECT r.RDB\$RELATION_NAME AS TABLE_NAME
-                FROM RDB\$RELATIONS r
-                WHERE r.RDB\$VIEW_BLR IS NULL 
-                  AND (r.RDB\$SYSTEM_FLAG IS NULL OR r.RDB\$SYSTEM_FLAG = 0)
-            ");
-            foreach ($results as $row) {
-                $r = (array) $row;
-                $tables[] = trim($r['TABLE_NAME'] ?? current($r));
-            }
-        } else {
-            // Fallback for pgsql, sqlite, etc. using SchemaBuilder if supported
-            try {
-                $tables = \Illuminate\Support\Facades\DB::connection($connName)->getSchemaBuilder()->getTableListing();
-            } catch (\Exception $e) {
-                // Ignore fallback errors
-            }
-        }
-
-        sort($tables);
-        return $tables;
-    }
 }

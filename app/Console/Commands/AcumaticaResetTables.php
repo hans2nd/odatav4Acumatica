@@ -25,7 +25,7 @@ class AcumaticaResetTables extends Command
      */
     public function handle()
     {
-        $entities = config('acumatica.entities', []);
+        $entities = app(\App\Services\EntityConfigService::class)->getAll();
         
         if (empty($entities)) {
             $this->warn('No entities found in configuration.');

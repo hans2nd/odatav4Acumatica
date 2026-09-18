@@ -206,12 +206,20 @@
             return;
         }
 
+        const maxTables = 100;
+        const visibleTables = tables.slice(0, maxTables);
+
         let html = '';
-        tables.forEach(table => {
+        visibleTables.forEach(table => {
             // Escape quotes in table name
             const escapedTable = table.replace(/'/g, "\\'");
             html += `<li onclick="window.selectApiTable('${escapedTable}')" class="px-4 py-3 hover:bg-surface-50 cursor-pointer text-body-sm font-medium text-surface-700 transition-colors border-b border-surface-50 last:border-0">${table}</li>`;
         });
+        
+        if (tables.length > maxTables) {
+            html += `<li class="px-4 py-3 text-surface-400 text-[11px] text-center border-t border-surface-50 bg-surface-50 italic">Showing first ${maxTables} tables. Type to search more...</li>`;
+        }
+        
         ul.innerHTML = html;
     }
 
@@ -315,7 +323,7 @@
         row.className = 'flex items-center gap-2 api-filter-row animate-fade-up';
 
         row.innerHTML = `
-            <input type="text" list="apiFilterFieldDataList" class="api-filter-field flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Search or select field..." value="${field}">
+            <input type="text" list="apiFilterFieldDataList" class="api-filter-field flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Search or select field..." value="${field}" oninput="updateApiFilterType(this)" onchange="updateApiFilterType(this)">
             <select class="api-filter-operator w-36 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2">
                 <option value="eq" ${op === 'eq' ? 'selected' : ''}>Equals (=)</option>
                 <option value="ne" ${op === 'ne' ? 'selected' : ''}>Not Eq (!=)</option>
@@ -333,6 +341,11 @@
 
         container.appendChild(row);
         checkEmptyFilters();
+        
+        // Initialize the input type if field is pre-filled (e.g. from restored filters)
+        if (field) {
+            updateApiFilterType(row.querySelector('.api-filter-field'));
+        }
     }
 
     function removeFilterRow(btn) {
@@ -343,6 +356,18 @@
     function checkEmptyFilters() {
         const rows = document.querySelectorAll('.api-filter-row');
         document.getElementById('apiEmptyFiltersMsg').classList.toggle('hidden', rows.length > 0);
+    }
+
+    function updateApiFilterType(fieldInput) {
+        const valInput = fieldInput.closest('.api-filter-row').querySelector('.api-filter-value');
+        const fieldName = fieldInput.value.toLowerCase();
+        
+        const dateKeywords = ['date', 'time', '_at', 'dt', 'tgl', 'tanggal'];
+        if (dateKeywords.some(kw => fieldName.includes(kw))) {
+            valInput.type = 'date';
+        } else {
+            valInput.type = 'text';
+        }
     }
 
     function getFilters() {

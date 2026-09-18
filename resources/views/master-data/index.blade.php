@@ -51,14 +51,13 @@
                     </div>
                 </div>
 
-                <div class="flex items-end justify-between mt-auto">
+                <div class="flex flex-wrap items-end justify-between mt-auto gap-4 pt-2">
                     <div>
-                        <span
-                            class="text-[28px] font-extrabold text-surface-900 leading-none tracking-tight">{{ number_format($info['records']) }}</span>
+                        <span class="text-[28px] font-extrabold text-surface-900 leading-none tracking-tight truncate block">{{ number_format($info['records']) }}</span>
                         <p class="text-label-sm text-surface-400 mt-1">records</p>
                     </div>
 
-                    <div class="flex items-center gap-2">
+                    <div class="flex flex-wrap items-center justify-end gap-1.5">
                         @if ($info['table_exists'])
                             <a href="{{ route('master-data.show', $key) }}"
                                 class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-100 text-surface-600 hover:bg-surface-200 hover:text-surface-800 text-label-md transition-all duration-200">
@@ -84,7 +83,10 @@
                             {{ $freqText }}
                         </button>
                         <button
-                            onclick="openSyncModal('{{ $key }}', '{{ $info['config']['description'] }}', {{ json_encode($info['custom_filters']) }})"
+                            data-key="{{ $key }}"
+                            data-name="{{ $info['config']['description'] }}"
+                            data-filters="{{ json_encode($info['custom_filters'] ?? []) }}"
+                            onclick="openSyncModal(this.dataset.key, this.dataset.name, JSON.parse(this.dataset.filters))"
                             class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-brand-600 text-white text-label-md hover:bg-brand-700 transition-all duration-200 active:scale-[0.97] shadow-sm">
                             <span class="material-symbols-outlined text-[14px]">sync</span> Sync
                         </button>
@@ -107,7 +109,7 @@
     <div id="syncModal"
         class="fixed inset-0 z-50 hidden items-center justify-center bg-black/40 backdrop-blur-sm transition-all duration-200 opacity-0">
         <div
-            class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col transform transition-all duration-200 scale-95 border border-surface-200/60">
+            class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col transform transition-all duration-200 scale-95 border border-surface-200/60">
             <div class="px-6 py-4 border-b border-surface-100 flex justify-between items-center">
                 <div>
                     <h2 class="text-h2 text-surface-800">Sync <span id="syncModalEntityName" class="text-brand-600"></span>
@@ -121,13 +123,13 @@
             </div>
 
             <div class="p-6 overflow-y-auto max-h-[60vh]">
-                <div id="syncModalContent" class="space-y-4">
+                <div id="syncModalContent" class="space-y-4 min-h-[300px] pb-32">
                     <div class="flex justify-between items-end">
                         <label class="text-label-lg text-surface-700">Custom Filters (Optional)</label>
                         <div class="flex gap-2">
                             <button onclick="refreshEntityFields()"
                                 class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-100 text-surface-700 text-label-sm hover:bg-surface-200 transition-all duration-200"
-                                title="Refresh available fields from Acumatica">
+                                title="Refresh available fields from source">
                                 <span class="material-symbols-outlined text-[14px]">refresh</span> Refresh Fields
                             </button>
                             <button onclick="addFilterRow()"
@@ -139,14 +141,12 @@
 
                     <div id="syncModalLoading" class="hidden flex items-center justify-center py-4 bg-surface-50 rounded-xl border border-surface-100">
                         <span class="material-symbols-outlined text-[20px] text-brand-500 spin mr-2">sync</span>
-                        <p class="text-label-sm text-surface-500">Fetching available fields from server...</p>
+                        <p class="text-label-sm text-surface-500">Fetching available fields from source...</p>
                     </div>
 
                     <div id="filtersContainer" class="space-y-2">
                         <!-- Filter rows will be inserted here -->
                     </div>
-
-                    <datalist id="acumaticaFieldsDataList"></datalist>
 
                     <div id="emptyFiltersMsg"
                         class="py-6 text-center border-2 border-dashed border-surface-200 rounded-xl bg-surface-50">
@@ -161,16 +161,46 @@
                             as default for scheduled and future syncs</label>
                     </div>
 
-                    <div id="syncProgressContainer" class="hidden mt-4">
-                        <div class="flex justify-between items-center mb-2">
-                            <span id="syncProgressLabel"
-                                class="text-label-sm text-surface-700 font-medium">Syncing...</span>
-                            <span id="syncProgressPercent" class="text-label-sm text-surface-500 font-mono">0%</span>
+                    <!-- Modern Sync Dashboard -->
+                    <div id="syncProgressContainer" class="hidden mt-6 bg-surface-50 rounded-xl border border-surface-200 overflow-hidden shadow-sm transition-all duration-300">
+                        <div class="p-4 border-b border-surface-200 bg-white flex justify-between items-center">
+                            <div class="flex items-center gap-3">
+                                <div id="syncStatusIcon" class="w-8 h-8 rounded-full bg-brand-50 flex items-center justify-center text-brand-600">
+                                    <span class="material-symbols-outlined text-[18px] spin">sync</span>
+                                </div>
+                                <div>
+                                    <h4 id="syncStageLabel" class="text-label-lg font-semibold text-surface-900">Initializing...</h4>
+                                    <p id="syncProgressLabel" class="text-label-sm text-surface-500">Preparing synchronization pipeline</p>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <div id="syncProgressPercent" class="text-h3 font-bold text-brand-600 font-mono">0%</div>
+                                <div id="syncElapsedTime" class="text-label-sm text-surface-400 font-mono">00:00</div>
+                            </div>
                         </div>
-                        <div class="w-full bg-surface-100 rounded-full h-2 overflow-hidden">
-                            <div id="syncProgressBar"
-                                class="bg-gradient-to-r from-brand-600 to-brand-400 h-2 rounded-full transition-all duration-300"
-                                style="width: 0%"></div>
+                        
+                        <div class="p-4">
+                            <div class="w-full bg-surface-200 rounded-full h-2 overflow-hidden mb-5">
+                                <div id="syncProgressBar" class="bg-gradient-to-r from-brand-500 to-brand-400 h-2 rounded-full transition-all duration-500 ease-out" style="width: 0%"></div>
+                            </div>
+                            
+                            <div class="grid grid-cols-3 gap-4">
+                                <div class="bg-white p-3 rounded-lg border border-surface-100 shadow-sm flex flex-col justify-center items-center text-center">
+                                    <span class="material-symbols-outlined text-[18px] text-surface-400 mb-1">database</span>
+                                    <span class="text-label-sm text-surface-500 mb-0.5">Processed</span>
+                                    <span id="syncStatProcessed" class="text-body-lg font-bold text-surface-800 font-mono">0</span>
+                                </div>
+                                <div class="bg-white p-3 rounded-lg border border-surface-100 shadow-sm flex flex-col justify-center items-center text-center">
+                                    <span class="material-symbols-outlined text-[18px] text-surface-400 mb-1">speed</span>
+                                    <span class="text-label-sm text-surface-500 mb-0.5">Speed</span>
+                                    <span id="syncStatSpeed" class="text-body-lg font-bold text-surface-800 font-mono flex items-baseline gap-1">0 <span class="text-[10px] text-surface-400 font-normal">/s</span></span>
+                                </div>
+                                <div class="bg-white p-3 rounded-lg border border-surface-100 shadow-sm flex flex-col justify-center items-center text-center">
+                                    <span class="material-symbols-outlined text-[18px] text-surface-400 mb-1">timer</span>
+                                    <span class="text-label-sm text-surface-500 mb-0.5">ETA</span>
+                                    <span id="syncStatETA" class="text-body-lg font-bold text-surface-800 font-mono">--:--</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -314,6 +344,17 @@
 
             // Preserve current filters if refreshing
             let currentFiltersToRestore = defaultFilters;
+            if (typeof currentFiltersToRestore === 'string') {
+                try {
+                    currentFiltersToRestore = JSON.parse(currentFiltersToRestore);
+                    if (typeof currentFiltersToRestore === 'string') {
+                        currentFiltersToRestore = JSON.parse(currentFiltersToRestore);
+                    }
+                } catch(e) {
+                    console.warn("Failed to parse default filters:", e);
+                }
+            }
+
             if (refresh) {
                 const rows = document.querySelectorAll('.filter-row');
                 currentFiltersToRestore = [];
@@ -335,6 +376,14 @@
             checkEmptyFilters();
 
             try {
+                if (!refresh && window.entityMetadataCache && window.entityMetadataCache[entityKey]) {
+                    // Gunakan local JS memory cache
+                    const fields = window.entityMetadataCache[entityKey];
+                    populateDatalist(fields, currentFiltersToRestore);
+                    loadingEl.classList.add('hidden');
+                    return;
+                }
+
                 const url = refresh ? `/api/entities/${entityKey}/fields?refresh=1` :
                     `/api/entities/${entityKey}/fields`;
                 const res = await fetch(url);
@@ -342,21 +391,12 @@
 
                 if (data.success && data.fields) {
                     availableFields = data.fields;
+                    
+                    // Simpan ke memory cache browser
+                    if (!window.entityMetadataCache) window.entityMetadataCache = {};
+                    window.entityMetadataCache[entityKey] = availableFields;
 
-                    // Populate datalist
-                    const datalist = document.getElementById('acumaticaFieldsDataList');
-                    datalist.innerHTML = '';
-                    availableFields.forEach(f => {
-                        const opt = document.createElement('option');
-                        opt.value = f;
-                        datalist.appendChild(opt);
-                    });
-
-                    if (currentFiltersToRestore && currentFiltersToRestore.length > 0) {
-                        currentFiltersToRestore.forEach(f => {
-                            addFilterRow(f.field, f.operator, f.value);
-                        });
-                    }
+                    populateDatalist(availableFields, currentFiltersToRestore);
                 } else {
                     availableFields = [];
                     showToast(data.message || 'Failed to load fields. You can still sync without filters.', 'warning');
@@ -370,37 +410,142 @@
             }
         }
 
+        function populateDatalist(fields, currentFiltersToRestore) {
+            // Populate the dropdown lists for all existing filter rows
+            const lists = document.querySelectorAll('ul[id$="-list"]');
+            lists.forEach(ul => {
+                ul.innerHTML = '';
+                fields.forEach(f => {
+                    const li = document.createElement('li');
+                    li.className = 'px-3.5 py-2 hover:bg-surface-100 cursor-pointer text-sm font-mono text-surface-800 transition-colors';
+                    li.textContent = f;
+                    li.onclick = function() {
+                        const inputId = ul.id.replace('-list', '-input');
+                        const dropdownId = ul.id.replace('-list', '-dropdown');
+                        const input = document.getElementById(inputId);
+                        input.value = f;
+                        document.getElementById(dropdownId).classList.add('hidden');
+                        handleFieldChange(input);
+                    };
+                    ul.appendChild(li);
+                });
+            });
+
+            if (currentFiltersToRestore && currentFiltersToRestore.length > 0) {
+                currentFiltersToRestore.forEach(f => {
+                    addFilterRow(f.field, f.operator, f.value);
+                });
+            }
+        }
+
         function refreshEntityFields() {
             if (!currentSyncEntity) return;
             loadEntityFields(currentSyncEntity, [], true);
         }
 
+        function filterSyncFieldsList(input, listId) {
+            const filter = input.value.toLowerCase();
+            const list = document.getElementById(listId);
+            if(!list) return;
+            const items = list.getElementsByTagName('li');
+            for (let i = 0; i < items.length; i++) {
+                const text = items[i].textContent || items[i].innerText;
+                if (text.toLowerCase().indexOf(filter) > -1) {
+                    items[i].style.display = "";
+                } else {
+                    items[i].style.display = "none";
+                }
+            }
+        }
+
         function addFilterRow(field = '', op = 'eq', val = '') {
             const container = document.getElementById('filtersContainer');
+            const uniqueId = 'field-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+            const selectId = 'op-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
 
             const row = document.createElement('div');
-            row.className = 'flex items-center gap-2 filter-row animate-fade-up';
+            row.className = 'flex flex-col sm:flex-row items-start sm:items-center gap-2 filter-row animate-fade-up';
 
             row.innerHTML = `
-            <input type="text" list="acumaticaFieldsDataList" class="filter-field flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Search or select field..." value="${field}" onchange="handleFieldChange(this)">
-            <select class="filter-operator w-36 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2">
-                <option value="eq" ${op === 'eq' ? 'selected' : ''}>Equals (=)</option>
-                <option value="ne" ${op === 'ne' ? 'selected' : ''}>Not Eq (!=)</option>
-                <option value="contains" ${op === 'contains' ? 'selected' : ''}>Contains</option>
-                <option value="startswith" ${op === 'startswith' ? 'selected' : ''}>Starts With</option>
-                <option value="endswith" ${op === 'endswith' ? 'selected' : ''}>Ends With</option>
-                <option value="gt" ${op === 'gt' ? 'selected' : ''}>Greater (>)</option>
-                <option value="ge" ${op === 'ge' ? 'selected' : ''}>Greater Eq (>=)</option>
-                <option value="lt" ${op === 'lt' ? 'selected' : ''}>Less (<)</option>
-                <option value="le" ${op === 'le' ? 'selected' : ''}>Less Eq (<=)</option>
-            </select>
-            <input type="text" class="filter-value flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Value..." value="${val}">
-            <button onclick="removeFilterRow(this)" class="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all duration-200" title="Remove filter">
-                <span class="material-symbols-outlined text-[16px]">delete</span>
-            </button>
+            <div class="relative flex-1 w-full">
+                <input type="text" id="${uniqueId}-input" class="filter-field w-full rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2 px-3" 
+                    placeholder="Search or select field..." 
+                    autocomplete="off"
+                    onfocus="document.getElementById('${uniqueId}-dropdown').classList.remove('hidden')"
+                    onblur="setTimeout(() => { document.getElementById('${uniqueId}-dropdown').classList.add('hidden'); }, 200)"
+                    oninput="filterSyncFieldsList(this, '${uniqueId}-list'); handleFieldChange(this)">
+                
+                <div id="${uniqueId}-dropdown" class="absolute z-20 w-full mt-1 bg-white border border-surface-200 rounded-xl shadow-lg max-h-48 overflow-y-auto hidden">
+                    <ul id="${uniqueId}-list" class="py-1">
+                        <!-- Populated below -->
+                    </ul>
+                </div>
+            </div>
+            
+            <div x-data="customSelect('${selectId}')" class="relative w-full sm:w-36">
+                <select id="${selectId}" class="filter-operator hidden">
+                    <option value="eq" ${op === 'eq' ? 'selected' : ''}>Equals (=)</option>
+                    <option value="ne" ${op === 'ne' ? 'selected' : ''}>Not Eq (!=)</option>
+                    <option value="contains" ${op === 'contains' ? 'selected' : ''}>Contains</option>
+                    <option value="startswith" ${op === 'startswith' ? 'selected' : ''}>Starts With</option>
+                    <option value="endswith" ${op === 'endswith' ? 'selected' : ''}>Ends With</option>
+                    <option value="gt" ${op === 'gt' ? 'selected' : ''}>Greater (>)</option>
+                    <option value="ge" ${op === 'ge' ? 'selected' : ''}>Greater Eq (>=)</option>
+                    <option value="lt" ${op === 'lt' ? 'selected' : ''}>Less (<)</option>
+                    <option value="le" ${op === 'le' ? 'selected' : ''}>Less Eq (<=)</option>
+                </select>
+                
+                <button type="button" @click="toggle" @click.away="close" class="ui-input flex justify-between items-center w-full bg-surface-50 border-surface-200 text-left focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 py-2 px-3 h-full rounded-xl">
+                    <span x-text="selectedLabel" class="truncate text-surface-900 text-body-sm"></span>
+                    <span class="material-symbols-outlined text-[18px] text-surface-400 transition-transform duration-200" :class="open ? 'rotate-180' : ''">expand_more</span>
+                </button>
+                
+                <div x-show="open" x-transition.opacity.duration.200ms class="absolute z-30 w-full mt-1 bg-white border border-surface-200 rounded-xl shadow-lg max-h-60 overflow-y-auto" style="display: none;">
+                    <ul class="py-1">
+                        <template x-for="option in options" :key="option.value">
+                            <li @click="selectOption(option.value)" 
+                                class="px-3.5 py-2.5 hover:bg-surface-50 cursor-pointer text-sm transition-colors flex justify-between items-center"
+                                :class="option.value === selectedValue ? 'bg-brand-50 text-brand-700 font-medium' : 'text-surface-700'"
+                            >
+                                <span x-text="option.label"></span>
+                                <span x-show="option.value === selectedValue" class="material-symbols-outlined text-[16px] text-brand-600">check</span>
+                            </li>
+                        </template>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-2 flex-1 w-full">
+                <input type="text" class="filter-value flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2 px-3" placeholder="Value...">
+                <button onclick="removeFilterRow(this)" class="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all duration-200" title="Remove filter">
+                    <span class="material-symbols-outlined text-[16px]">delete</span>
+                </button>
+            </div>
         `;
-
+        
+            row.querySelector('.filter-field').value = field;
+            row.querySelector('.filter-value').value = val;
             container.appendChild(row);
+
+            // Populate the dropdown list for this specific row if fields are available
+            const ul = row.querySelector(`#${uniqueId}-list`);
+            if (ul && window.entityMetadataCache && currentSyncEntity) {
+                const fields = window.entityMetadataCache[currentSyncEntity] || availableFields || [];
+                ul.innerHTML = '';
+                fields.forEach(f => {
+                    const li = document.createElement('li');
+                    li.className = 'px-3.5 py-2 hover:bg-surface-100 cursor-pointer text-sm font-mono text-surface-800 transition-colors';
+                    li.textContent = f;
+                    li.onclick = function() {
+                        const input = document.getElementById(`${uniqueId}-input`);
+                        input.value = f;
+                        document.getElementById(`${uniqueId}-dropdown`).classList.add('hidden');
+                        handleFieldChange(input);
+                    };
+                    ul.appendChild(li);
+                });
+            }
+
             checkEmptyFilters();
         }
 
@@ -468,83 +613,16 @@
             document.getElementById('syncProgressContainer').classList.remove('hidden');
             document.getElementById('syncProgressBar').style.width = '0%';
             document.getElementById('syncProgressPercent').innerText = '0%';
-            document.getElementById('syncProgressLabel').innerText = 'Initializing...';
-
-            let isAsync = false;
-            let noProgressCount = 0;
-
-            let syncInterval = setInterval(async () => {
-                try {
-                    const progRes = await fetch(`/sync/${currentSyncEntity}/progress`);
-                    const progData = await progRes.json();
-                    if (progData.success && progData.progress) {
-                        noProgressCount = 0;
-                        const prog = progData.progress;
-                        let percent = 0;
-
-                        if (prog.status === 'queued') {
-                            document.getElementById('syncProgressBar').classList.add('animate-pulse');
-                            document.getElementById('syncProgressBar').style.width = '5%';
-                            document.getElementById('syncProgressLabel').innerText =
-                                'Queued — waiting for worker to start...';
-                            document.getElementById('syncProgressPercent').innerText = '...';
-                            return;
-                        }
-
-                        if (prog.total) {
-                            percent = Math.round((prog.current / prog.total) * 100);
-                            document.getElementById('syncProgressBar').classList.remove('animate-pulse');
-                        } else if (prog.current > 0) {
-                            percent = 100;
-                            document.getElementById('syncProgressBar').classList.add('animate-pulse');
-                        }
-
-                        document.getElementById('syncProgressBar').style.width = `${percent}%`;
-                        if (prog.total) {
-                            document.getElementById('syncProgressPercent').innerText = `${percent}%`;
-                        } else {
-                            document.getElementById('syncProgressPercent').innerText = `...`;
-                        }
-
-                        let label = 'Syncing...';
-                        if (prog.status === 'fetching') label =
-                            `Fetching data from Acumatica... (${prog.current.toLocaleString()} records)`;
-                        else if (prog.status === 'inserting') label =
-                            `Saving to database... (${prog.current.toLocaleString()}/${prog.total ? prog.total.toLocaleString() : '?'})`;
-                        document.getElementById('syncProgressLabel').innerText = label;
-                    } else if (isAsync || (btnEl.disabled && btnEl.innerHTML.includes('Syncing'))) {
-                        noProgressCount++;
-                        if (noProgressCount >= 2) {
-                            clearInterval(syncInterval);
-                            try {
-                                const logRes = await fetch(
-                                `/sync/logs?entity=${currentSyncEntity}&limit=1`);
-                                const logData = await logRes.json();
-                                const latest = logData.logs && logData.logs[0];
-                                if (latest && latest.status === 'success') {
-                                    document.getElementById('syncProgressBar').style.width = '100%';
-                                    document.getElementById('syncProgressPercent').innerText = '100%';
-                                    document.getElementById('syncProgressLabel').innerText = 'Completed!';
-                                    showToast(
-                                        `${currentSyncEntity}: ${(latest.records_inserted || 0).toLocaleString()} records synced in ${latest.duration_seconds}s`,
-                                        'success');
-                                } else if (latest && latest.status === 'failed') {
-                                    showToast(
-                                        `${currentSyncEntity}: ${latest.error_message || 'Sync failed'}`,
-                                        'error');
-                                } else {
-                                    showToast(`${currentSyncEntity}: Sync process finished.`, 'success');
-                                }
-                            } catch (e) {
-                                showToast(`${currentSyncEntity}: Sync process finished.`, 'success');
-                            }
-                            setTimeout(() => location.reload(), 1500);
-                        }
-                    }
-                } catch (e) {
-                    // Ignore poll errors
-                }
-            }, 2000);
+            document.getElementById('syncStageLabel').innerText = 'Initializing...';
+            document.getElementById('syncProgressLabel').innerText = 'Connecting to service...';
+            document.getElementById('syncStatProcessed').innerText = '0';
+            document.getElementById('syncStatSpeed').innerHTML = '0 <span class="text-[10px] text-surface-400 font-normal">/s</span>';
+            document.getElementById('syncStatETA').innerText = '--:--';
+            document.getElementById('syncElapsedTime').innerText = '00:00';
+            
+            const iconEl = document.getElementById('syncStatusIcon');
+            iconEl.className = 'w-8 h-8 rounded-full bg-brand-50 flex items-center justify-center text-brand-600';
+            iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px] spin">sync</span>';
 
             const payload = {
                 custom_filters: custom_filters,
@@ -554,30 +632,65 @@
             try {
                 const res = await fetch(`/sync/${currentSyncEntity}`, {
                     method: 'POST',
-                    headers: {
-                        'X-CSRF-TOKEN': csrfToken,
-                        'Accept': 'application/json',
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content, 'Accept': 'application/json', 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
 
                 const data = await res.json();
 
-                if (data.async) {
-                    isAsync = true;
-                    showToast(`${currentSyncEntity}: Sync dispatched to background queue.`, 'info');
-                    return;
-                }
-
-                clearInterval(syncInterval);
-                document.getElementById('syncProgressBar').style.width = '100%';
-                document.getElementById('syncProgressPercent').innerText = '100%';
-                document.getElementById('syncProgressLabel').innerText = 'Completed!';
-
-                if (data.success) {
-                    showToast(`${currentSyncEntity}: ${data.records} records synced in ${data.duration}`, 'success');
-                    setTimeout(() => location.reload(), 1500);
+                if (data.status === 'already_running') {
+                    showToast(`${currentSyncEntity}: ${data.message}`, 'info');
+                    
+                    document.getElementById('syncStageLabel').innerText = 'Sync Already Running';
+                    document.getElementById('syncProgressLabel').innerText = `${currentSyncEntity} is currently being synchronized by another worker. Please wait for the current synchronization to finish.`;
+                    
+                    iconEl.className = 'w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-blue-600';
+                    iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px] spin">sync</span>';
+                    
+                    btnEl.disabled = false;
+                    btnEl.innerHTML = originalText;
+                } else if (data.success && data.job_id) {
+                    showToast(`${currentSyncEntity}: Synchronization has been queued.`, 'info');
+                    
+                    // Instantly kickstart the queue worker via Web Cron (max 50s) to avoid waiting for VPS cron
+                    fetch('/sys-cron?token=deploy123').catch(() => {});
+                    
+                    window.pollSyncJob(data.job_id, currentSyncEntity, {
+                        onProgress: (job) => {
+                            document.getElementById('syncProgressBar').style.width = `${job.progress}%`;
+                            document.getElementById('syncProgressPercent').innerText = `${job.progress}%`;
+                            
+                            const pRows = job.processed_rows || 0;
+                            const tRows = job.total_rows || 0;
+                            
+                            document.getElementById('syncStatProcessed').innerText = pRows.toLocaleString();
+                            document.getElementById('syncStageLabel').innerText = job.status === 'pending' ? 'Queued' : 'Syncing';
+                            document.getElementById('syncProgressLabel').innerText = `Processing... (${pRows.toLocaleString()} / ${tRows.toLocaleString()})`;
+                            
+                            if (job.duration) {
+                                document.getElementById('syncElapsedTime').innerText = job.duration;
+                            }
+                        },
+                        onSuccess: (job) => {
+                            document.getElementById('syncProgressBar').style.width = '100%';
+                            document.getElementById('syncProgressPercent').innerText = '100%';
+                            document.getElementById('syncStageLabel').innerText = 'Completed!';
+                            document.getElementById('syncProgressLabel').innerText = 'Synchronization finished successfully';
+                            iconEl.className = 'w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600';
+                            iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px]">check_circle</span>';
+                            
+                            setTimeout(() => location.reload(), 1500);
+                        },
+                        onError: (job) => {
+                            document.getElementById('syncStageLabel').innerText = 'Failed';
+                            document.getElementById('syncProgressLabel').innerText = 'Synchronization stopped with error';
+                            iconEl.className = 'w-8 h-8 rounded-full bg-red-50 flex items-center justify-center text-red-600';
+                            iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px]">error</span>';
+                            
+                            btnEl.disabled = false;
+                            btnEl.innerHTML = originalText;
+                        }
+                    });
                 } else {
                     if (data.error_type === 'connection_missing') {
                         if (typeof Swal !== 'undefined') {
@@ -587,9 +700,7 @@
                                 text: data.message,
                                 confirmButtonText: 'Periksa Pengaturan',
                                 confirmButtonColor: '#f59e0b'
-                            }).then(() => {
-                                window.location.href = '/settings';
-                            });
+                            }).then(() => window.location.href = '/settings');
                         } else {
                             alert(data.message);
                         }
@@ -601,8 +712,10 @@
                     document.getElementById('syncProgressContainer').classList.add('hidden');
                 }
             } catch (e) {
-                console.warn("Sync HTTP connection closed, but background process may still be running.", e);
-                showToast('Connection timeout. The sync process will continue in the background.', 'info');
+                showToast(`${currentSyncEntity}: ${e.message}`, 'error');
+                btnEl.disabled = false;
+                btnEl.innerHTML = originalText;
+                document.getElementById('syncProgressContainer').classList.add('hidden');
             }
         }
 
@@ -641,7 +754,7 @@
                 const res = await fetch(`/api/entities/${currentSyncEntity}/filters`, {
                     method: 'POST',
                     headers: {
-                        'X-CSRF-TOKEN': csrfToken,
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
                         'Accept': 'application/json',
                         'Content-Type': 'application/json'
                     },
@@ -654,7 +767,12 @@
 
                 if (data.success) {
                     showToast(data.message || 'Filters saved successfully', 'success');
-                    setTimeout(() => location.reload(), 1000);
+                    
+                    // Update the data-filters attribute on the original button so reopening modal uses the new data
+                    const triggerBtn = document.querySelector(`button[data-key="${currentSyncEntity}"]`);
+                    if (triggerBtn) {
+                        triggerBtn.dataset.filters = JSON.stringify(custom_filters);
+                    }
                 } else {
                     showToast(data.message || 'Failed to save filters', 'error');
                 }
@@ -755,8 +873,8 @@
             };
 
             try {
-                const res = await fetch(`/api/entities/${currentScheduleEntity}/schedule`, {
-                    method: 'POST',
+                const res = await fetch(`/api/scheduler/${currentScheduleEntity}`, {
+                    method: 'PUT',
                     headers: { 
                         'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content, 
                         'Accept': 'application/json',

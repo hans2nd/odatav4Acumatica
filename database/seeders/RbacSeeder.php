@@ -39,6 +39,8 @@ class RbacSeeder extends Seeder
             ['code' => 'sync', 'name' => 'Sync', 'sort_order' => 70],
             ['code' => 'execute', 'name' => 'Execute', 'sort_order' => 80],
             ['code' => 'manage', 'name' => 'Manage', 'sort_order' => 90], // Generic action for settings, etc.
+            ['code' => 'access', 'name' => 'Access', 'sort_order' => 100],
+            ['code' => 'test', 'name' => 'Test', 'sort_order' => 110],
         ];
 
         foreach ($actions as $action) {
@@ -46,8 +48,10 @@ class RbacSeeder extends Seeder
         }
 
         // 3. Roles
-        $adminRole = Role::updateOrCreate(['name' => 'Administrator'], [
-            'description' => 'System Administrator with full access'
+        $adminRole = Role::updateOrCreate(['name' => 'Super Administrator'], [
+            'description' => 'System Administrator with full access',
+            'is_active' => true,
+            'is_superadmin' => true,
         ]);
 
         $operatorRole = Role::updateOrCreate(['name' => 'Operator'], [

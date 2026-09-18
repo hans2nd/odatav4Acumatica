@@ -23,9 +23,9 @@ class DashboardController extends Controller
             ->get() : collect();
 
         return view('dashboard', [
-            'activeConnections'  => $activeConnections,
-            'recentLogs'         => $recentLogs,
-            'activeTab'          => 'overview',
+            'activeConnections' => $activeConnections,
+            'recentLogs' => $recentLogs,
+            'activeTab' => 'overview',
         ]);
     }
 
@@ -39,20 +39,19 @@ class DashboardController extends Controller
             $conn = $connModel->toArray();
 
             $status = [
-                'connected' => false, 
-                'ping_ms' => 0, 
-                'message' => 'Not tested', 
-                'type' => $conn['type'], 
+                'connected' => (bool) $conn['is_connected'],
+                'ping_ms' => 0,
+                'message' => 'Not tested',
+                'type' => $conn['type'],
                 'name' => $conn['name'] ?? $key
             ];
-            
+
             $start = microtime(true);
             try {
-                if (in_array($conn['type'], ['mysql', 'sqlsrv', 'firebird', 'local_env'])) {
+                if (in_array($conn['type'], \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes())) {
                     if (config()->has("database.connections.{$key}")) {
                         DB::connection($key)->getPdo();
                         $elapsed = round((microtime(true) - $start) * 1000);
-                        $status['connected'] = true;
                         $status['ping_ms'] = $elapsed;
                         $status['message'] = 'Connected';
                     } else {
@@ -62,14 +61,13 @@ class DashboardController extends Controller
                     $odataService = app(\App\Services\AcumaticaODataService::class);
                     $odataService->setConnectionConfig($conn);
                     $testResult = $odataService->testConnection();
-                    $status['connected'] = $testResult['connected'] ?? false;
                     $status['ping_ms'] = $testResult['ping_ms'] ?? 0;
                     $status['message'] = $testResult['message'] ?? 'Tested';
                 }
             } catch (\Exception $e) {
                 $status['message'] = $e->getMessage();
             }
-            
+
             $statuses[$key] = $status;
         }
 

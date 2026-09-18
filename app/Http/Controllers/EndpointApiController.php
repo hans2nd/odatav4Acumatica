@@ -11,10 +11,12 @@ use Illuminate\Support\Str;
 class EndpointApiController extends Controller
 {
     protected ConnectionService $connectionService;
+    protected \App\Services\Connections\ConnectionManager $connectionManager;
 
-    public function __construct(ConnectionService $connectionService)
+    public function __construct(ConnectionService $connectionService, \App\Services\Connections\ConnectionManager $connectionManager)
     {
         $this->connectionService = $connectionService;
+        $this->connectionManager = $connectionManager;
     }
 
     public function index()
@@ -108,15 +110,32 @@ class EndpointApiController extends Controller
         $allTables = [];
 
         foreach ($all as $key => $conn) {
-            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv', 'firebird', 'local_env']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
+            if (in_array($conn['type'] ?? '', \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes()) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
                 $dbConnections[] = [
                     'key'  => $key,
                     'name' => $conn['name'] ?? $key,
                     'type' => $conn['type'],
                 ];
                 try {
-                    $connName = $this->connectionService->resolveConnectionName($key);
-                    $allTables[$key] = app(\App\Services\ConnectionService::class)->getTables($connName);
+                    $tree = $this->connectionManager->discoverMetadata($key);
+                    $tables = [];
+                    $systemTables = [
+                        'migrations', 'users', 'password_reset_tokens', 'personal_access_tokens',
+                        'failed_jobs', 'jobs', 'api_endpoints', 'connections', 
+                        'sync_jobs', 'sync_logs', 'sync_metadata_definitions', 
+                        'sync_metadata_fields', 'sync_metadata_history', 
+                        'sync_metadata_refresh_history', 'permissions', 'roles', 
+                        'model_has_permissions', 'model_has_roles', 'role_has_permissions',
+                        'cache', 'cache_locks', 'sessions'
+                    ];
+                    
+                    foreach ($tree->nodes as $node) {
+                        if (!in_array(strtolower($node->name), $systemTables)) {
+                            $tables[] = $node->name;
+                        }
+                    }
+                    sort($tables);
+                    $allTables[$key] = $tables;
                 } catch (\Exception $e) {
                     $allTables[$key] = [];
                 }

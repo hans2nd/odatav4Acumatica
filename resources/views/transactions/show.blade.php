@@ -269,32 +269,6 @@
         document.getElementById('showSyncProgressPercent').innerText = '0%';
         document.getElementById('showSyncProgressLabel').innerText = 'Initializing...';
         
-        let syncInterval = setInterval(async () => {
-            try {
-                const progRes = await fetch(`/sync/${showEntityKey}/progress`);
-                const progData = await progRes.json();
-                if (progData.success && progData.progress) {
-                    const prog = progData.progress;
-                    let percent = 0;
-                    if (prog.total) { percent = Math.round((prog.current / prog.total) * 100); }
-                    document.getElementById('showSyncProgressBar').style.width = `${percent}%`;
-                    document.getElementById('showSyncProgressPercent').innerText = `${percent}%`;
-                    let label = 'Syncing...';
-                    if (prog.status === 'fetching') label = `Fetching data from Acumatica... (${prog.current} records)`;
-                    else if (prog.status === 'inserting') label = `Saving to database... (${prog.current}/${prog.total || '?'})`;
-                    document.getElementById('showSyncProgressLabel').innerText = label;
-                } else if (btnEl.disabled && btnEl.innerHTML.includes('Syncing')) {
-                    clearInterval(syncInterval);
-                    document.getElementById('showSyncProgressBar').style.width = '100%';
-                    document.getElementById('showSyncProgressPercent').innerText = '100%';
-                    document.getElementById('showSyncProgressLabel').innerText = 'Completed!';
-                    showToast(`${showEntityKey}: Sync process finished.`, 'success');
-                    closeShowSyncModal();
-                    setTimeout(() => location.reload(), 1500);
-                }
-            } catch (e) {}
-        }, 1000);
-        
         try {
             const res = await fetch(`/sync/${showEntityKey}`, {
                 method: 'POST',
@@ -302,15 +276,32 @@
                 body: JSON.stringify({ custom_filters })
             });
             const data = await res.json();
-            clearInterval(syncInterval);
-            document.getElementById('showSyncProgressBar').style.width = '100%';
-            document.getElementById('showSyncProgressPercent').innerText = '100%';
-            document.getElementById('showSyncProgressLabel').innerText = 'Completed!';
             
-            if (data.success) {
-                showToast(`${showEntityKey}: ${data.records} records synced in ${data.duration}`, 'success');
-                closeShowSyncModal();
-                setTimeout(() => location.reload(), 1500);
+            if (data.success && data.job_id) {
+                showToast(`${showEntityKey}: Synchronization has been queued.`, 'info');
+                
+                // Instantly kickstart the queue worker via Web Cron (max 50s) to avoid waiting for VPS cron
+                fetch('/sys-cron?token=deploy123').catch(() => {});
+                
+                window.pollSyncJob(data.job_id, showEntityKey, {
+                    onProgress: (job) => {
+                        document.getElementById('showSyncProgressBar').style.width = `${job.progress}%`;
+                        document.getElementById('showSyncProgressPercent').innerText = `${job.progress}%`;
+                        document.getElementById('showSyncProgressLabel').innerText = `Syncing... (${(job.processed_rows||0).toLocaleString()} / ${(job.total_rows||0).toLocaleString()})`;
+                    },
+                    onSuccess: () => {
+                        document.getElementById('showSyncProgressBar').style.width = '100%';
+                        document.getElementById('showSyncProgressPercent').innerText = '100%';
+                        document.getElementById('showSyncProgressLabel').innerText = 'Completed!';
+                        closeShowSyncModal();
+                        setTimeout(() => location.reload(), 1500);
+                    },
+                    onError: () => {
+                        btnEl.disabled = false;
+                        btnEl.innerHTML = originalText;
+                        document.getElementById('showSyncProgressContainer').classList.add('hidden');
+                    }
+                });
             } else {
                 showToast(`${showEntityKey}: ${data.error || data.message}`, 'error');
                 btnEl.disabled = false;
@@ -318,7 +309,10 @@
                 document.getElementById('showSyncProgressContainer').classList.add('hidden');
             }
         } catch (e) {
-            console.warn("Sync HTTP connection closed, but background process may still be running.", e);
+            showToast(`${showEntityKey}: ${e.message}`, 'error');
+            btnEl.disabled = false;
+            btnEl.innerHTML = originalText;
+            document.getElementById('showSyncProgressContainer').classList.add('hidden');
         }
     }
 </script>

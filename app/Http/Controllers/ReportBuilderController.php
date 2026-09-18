@@ -12,10 +12,12 @@ use Illuminate\Support\Str;
 class ReportBuilderController extends Controller
 {
     protected ConnectionService $connectionService;
+    protected \App\Services\Connections\ConnectionManager $connectionManager;
 
-    public function __construct(ConnectionService $connectionService)
+    public function __construct(ConnectionService $connectionService, \App\Services\Connections\ConnectionManager $connectionManager)
     {
         $this->connectionService = $connectionService;
+        $this->connectionManager = $connectionManager;
     }
 
     /**
@@ -29,7 +31,7 @@ class ReportBuilderController extends Controller
 
         foreach ($all as $key => $conn) {
             // Only include active and connected database-type connections
-            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv', 'firebird', 'local_env']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
+            if (in_array($conn['type'] ?? '', \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes()) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
                 $dbConnections[] = [
                     'key'  => $key,
                     'name' => $conn['name'] ?? $key,
@@ -38,25 +40,21 @@ class ReportBuilderController extends Controller
                 
                 // Preload tables for this connection
                 try {
-                    $connName = $this->connectionService->resolveConnectionName($key);
-                    $driver = \Illuminate\Support\Facades\DB::connection($connName)->getDriverName();
-                    
+                    $tree = $this->connectionManager->discoverMetadata($key);
                     $tables = [];
-                    if ($driver === 'mysql') {
-                        $results = \Illuminate\Support\Facades\DB::connection($connName)->select("SHOW TABLES");
-                        foreach ($results as $row) {
-                            $tables[] = array_values((array) $row)[0];
-                        }
-                    } elseif ($driver === 'sqlsrv') {
-                        $results = \Illuminate\Support\Facades\DB::connection($connName)->select("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE IN ('BASE TABLE', 'VIEW')");
-                        foreach ($results as $row) {
-                            $rowArr = (array) $row;
-                            $tables[] = $rowArr['TABLE_NAME'] ?? $rowArr['table_name'] ?? current($rowArr);
-                        }
-                    } elseif ($driver === 'firebird') {
-                        $results = \Illuminate\Support\Facades\DB::connection($connName)->select("SELECT RDB\$RELATION_NAME FROM RDB\$RELATIONS WHERE RDB\$VIEW_BLR IS NULL AND (RDB\$SYSTEM_FLAG IS NULL OR RDB\$SYSTEM_FLAG = 0)");
-                        foreach ($results as $row) {
-                            $tables[] = trim(array_values((array) $row)[0]);
+                    $systemTables = [
+                        'migrations', 'users', 'password_reset_tokens', 'personal_access_tokens',
+                        'failed_jobs', 'jobs', 'api_endpoints', 'connections', 
+                        'sync_jobs', 'sync_logs', 'sync_metadata_definitions', 
+                        'sync_metadata_fields', 'sync_metadata_history', 
+                        'sync_metadata_refresh_history', 'permissions', 'roles', 
+                        'model_has_permissions', 'model_has_roles', 'role_has_permissions',
+                        'cache', 'cache_locks', 'sessions'
+                    ];
+                    
+                    foreach ($tree->nodes as $node) {
+                        if (!in_array(strtolower($node->name), $systemTables)) {
+                            $tables[] = $node->name;
                         }
                     }
                     sort($tables);
@@ -67,10 +65,15 @@ class ReportBuilderController extends Controller
             }
         }
 
+        $templates = \App\Models\ReportTemplate::where('user_id', auth()->id())
+            ->orderBy('created_at', 'desc')
+            ->get();
+
         return view('reports.report-builder', [
             'activeTab'   => 'report.builder',
             'connections' => $dbConnections,
             'allTables'   => $allTables,
+            'templates'   => $templates,
         ]);
     }
 
@@ -84,7 +87,7 @@ class ReportBuilderController extends Controller
 
         foreach ($all as $key => $conn) {
             // Only include active and connected database-type connections
-            if (in_array($conn['type'] ?? '', ['mysql', 'sqlsrv', 'firebird', 'local_env']) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
+            if (in_array($conn['type'] ?? '', \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes()) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
                 try {
                     $connName = $this->connectionService->resolveConnectionName($key);
                     \Illuminate\Support\Facades\DB::connection($connName)->getPdo();
@@ -104,6 +107,25 @@ class ReportBuilderController extends Controller
         return response()->json(['success' => true, 'connections' => $dbConnections]);
     }
 
+    public function checkProgress(Request $request)
+    {
+        $downloadId = $request->query('download_id');
+        if (!$downloadId) {
+            return response()->json(['success' => false]);
+        }
+        $data = \Illuminate\Support\Facades\Cache::get("report_dl_{$downloadId}");
+        if (!$data) {
+            return response()->json(['success' => true, 'done' => true]);
+        }
+        return response()->json([
+            'success' => true,
+            'done' => false,
+            'total' => $data['total'],
+            'current' => $data['current'],
+            'percentage' => $data['total'] > 0 ? round(($data['current'] / $data['total']) * 100) : 0
+        ]);
+    }
+
     /**
      * List tables for a given connection.
      */
@@ -115,11 +137,24 @@ class ReportBuilderController extends Controller
         }
 
         try {
-            $connName = $this->connectionService->resolveConnectionName($connKey);
-            $pdo = DB::connection($connName)->getPdo();
-            $driver = DB::connection($connName)->getDriverName();
-
-            $tables = app(\App\Services\ConnectionService::class)->getTables($connName);
+            $tree = $this->connectionManager->discoverMetadata($connKey);
+            $tables = [];
+            $systemTables = [
+                'migrations', 'users', 'password_reset_tokens', 'personal_access_tokens',
+                'failed_jobs', 'jobs', 'api_endpoints', 'connections', 
+                'sync_jobs', 'sync_logs', 'sync_metadata_definitions', 
+                'sync_metadata_fields', 'sync_metadata_history', 
+                'sync_metadata_refresh_history', 'permissions', 'roles', 
+                'model_has_permissions', 'model_has_roles', 'role_has_permissions',
+                'cache', 'cache_locks', 'sessions'
+            ];
+            
+            foreach ($tree->nodes as $node) {
+                if (!in_array(strtolower($node->name), $systemTables)) {
+                    $tables[] = $node->name;
+                }
+            }
+            sort($tables);
 
             return response()->json(['success' => true, 'tables' => $tables]);
         } catch (\Throwable $e) {
@@ -130,7 +165,7 @@ class ReportBuilderController extends Controller
     /**
      * List columns for a given connection + table.
      */
-    public function columns(Request $request): JsonResponse
+    public function columns(Request $request, \App\Contracts\Metadata\MetadataRepositoryInterface $metadataRepository): JsonResponse
     {
         $connKey = $request->input('connection');
         $table   = $request->input('table');
@@ -140,8 +175,12 @@ class ReportBuilderController extends Controller
         }
 
         try {
-            $connName = $this->connectionService->resolveConnectionName($connKey);
-            $columns = app(\App\Services\ConnectionService::class)->getTableColumns($connName, $table);
+            $result = $metadataRepository->getTableMetadata($connKey, $table);
+            if (!$result->isSuccess) {
+                return response()->json(['success' => false, 'message' => 'Failed to fetch columns: ' . $result->errorMessage], 500);
+            }
+            
+            $columns = array_column($result->fields, 'name');
 
             return response()->json(['success' => true, 'columns' => $columns]);
         } catch (\Throwable $e) {
@@ -167,12 +206,24 @@ class ReportBuilderController extends Controller
         $columns = $request->input('columns');
         $format  = $request->input('format');
         $filters = $request->input('filters', []);
+        
+        $downloadId = $request->input('download_id');
+        $locale = $request->input('locale', 'id-ID'); // default to ID
+        $timezone = $request->input('timezone', 'Asia/Jakarta');
 
         try {
+            ini_set('memory_limit', '512M');
+            ini_set('max_execution_time', '0'); // Unlimited for streaming
+
             $connName = $this->connectionService->resolveConnectionName($connKey);
 
             // Validate columns exist
-            $availableColumns = app(\App\Services\ConnectionService::class)->getTableColumns($connName, $table);
+            $node = $this->connectionManager->discoverStructure($connKey, $table);
+            $availableColumns = [];
+            foreach ($node->properties as $prop) {
+                $availableColumns[] = is_array($prop) ? ($prop['name'] ?? $prop['Field'] ?? '') : (string)$prop;
+            }
+            $availableColumns = array_filter($availableColumns);
             $validColumns = array_intersect($columns, $availableColumns);
 
             if (empty($validColumns)) {
@@ -180,7 +231,7 @@ class ReportBuilderController extends Controller
             }
 
             // Build query
-            $query = DB::connection($connName)->table($table)->select($validColumns);
+            $query = DB::connection($connName)->table($table);
 
             // Apply filters
             foreach ($filters as $filter) {
@@ -191,58 +242,153 @@ class ReportBuilderController extends Controller
                 if (!$field || $value === null || $value === '' || !in_array($field, $availableColumns)) {
                     continue;
                 }
+                
+                // Detect if the value is exactly YYYY-MM-DD (Date Picker format)
+                $isDateOnly = preg_match('/^\d{4}-\d{2}-\d{2}$/', $value);
 
                 switch ($op) {
-                    case 'eq':         $query->where($field, '=', $value); break;
-                    case 'ne':         $query->where($field, '!=', $value); break;
-                    case 'contains':   $query->where($field, 'like', '%' . $value . '%'); break;
-                    case 'startswith': $query->where($field, 'like', $value . '%'); break;
-                    case 'endswith':   $query->where($field, 'like', '%' . $value); break;
-                    case 'gt':         $query->where($field, '>', $value); break;
-                    case 'ge':         $query->where($field, '>=', $value); break;
-                    case 'lt':         $query->where($field, '<', $value); break;
-                    case 'le':         $query->where($field, '<=', $value); break;
+                    case 'eq':         
+                        if ($isDateOnly) { $query->whereDate($field, '=', $value); } else { $query->where($field, '=', $value); }
+                        break;
+                    case 'ne':         
+                        if ($isDateOnly) { $query->whereDate($field, '!=', $value); } else { $query->where($field, '!=', $value); }
+                        break;
+                    case 'contains':   
+                        $query->where($field, 'like', '%' . $value . '%'); 
+                        break;
+                    case 'startswith': 
+                        $query->where($field, 'like', $value . '%'); 
+                        break;
+                    case 'endswith':   
+                        $query->where($field, 'like', '%' . $value); 
+                        break;
+                    case 'gt':         
+                        if ($isDateOnly) { $query->whereDate($field, '>', $value); } else { $query->where($field, '>', $value); }
+                        break;
+                    case 'ge':         
+                        if ($isDateOnly) { $query->whereDate($field, '>=', $value); } else { $query->where($field, '>=', $value); }
+                        break;
+                    case 'lt':         
+                        if ($isDateOnly) { $query->whereDate($field, '<', $value); } else { $query->where($field, '<', $value); }
+                        break;
+                    case 'le':         
+                        if ($isDateOnly) { $query->whereDate($field, '<=', $value); } else { $query->where($field, '<=', $value); }
+                        break;
                 }
             }
 
-            // Generate file
-            $token = Str::random(32);
+            $baseFilename = $table . '_' . now()->format('Ymd_His');
+            $downloadName = $baseFilename . ($format === 'xlsx' ? '.xlsx' : '.csv');
+
+            $countSql = $query->clone()->selectRaw('count(*) as aggregate')->toSql();
+            $countBindings = $query->getBindings();
+            $countResult = app(\App\Services\QueryRepositoryService::class)->executeDynamic($connKey, $countSql, $countBindings);
+
+            // Now apply the select to the main query
+            $query->select($validColumns);
+            
+            $firstRow = $countResult['data'][0] ?? null;
+            $totalRows = 0;
+            if ($firstRow) {
+                // Handle object or array return
+                $totalRows = (int) (is_array($firstRow) ? ($firstRow['aggregate'] ?? 0) : ($firstRow->aggregate ?? 0));
+            }
+            if ($downloadId) {
+                \Illuminate\Support\Facades\Cache::put("report_dl_{$downloadId}", ['total' => $totalRows, 'current' => 0], 300);
+            }
+
             $exportDir = storage_path('app/exports');
             if (!is_dir($exportDir)) {
                 mkdir($exportDir, 0755, true);
             }
+            $filePath = $exportDir . '/' . $downloadName;
 
-            $baseFilename = $table . '_' . now()->format('Ymd_His');
+            $writer = \Spatie\SimpleExcel\SimpleExcelWriter::create($filePath);
 
+            // For Excel, attempt to set sheet name (spout underlying)
             if ($format === 'xlsx') {
-                $filePath = $exportDir . '/' . $baseFilename . '.xlsx';
-                $this->generateExcel($query, $validColumns, $filePath, $table);
-                $downloadName = $baseFilename . '.xlsx';
-            } else {
-                $filePath = $exportDir . '/' . $baseFilename . '.csv';
-                $this->generateCsv($query, $validColumns, $filePath);
-                $downloadName = $baseFilename . '.csv';
+                try {
+                    if (method_exists($writer, 'getWriter')) {
+                        $spoutWriter = $writer->getWriter();
+                        if (method_exists($spoutWriter, 'getCurrentSheet')) {
+                            $sheet = $spoutWriter->getCurrentSheet();
+                            if (method_exists($sheet, 'setName')) {
+                                $sheet->setName(mb_substr($table, 0, 31));
+                            }
+                        }
+                    }
+                } catch (\Throwable $e) {}
             }
 
-            // Check file size — zip if > 10MB
-            $fileSize = filesize($filePath);
-            $zipped = false;
+            $writer->addHeader($validColumns);
 
-            if ($fileSize > 10 * 1024 * 1024) {
-                $zipPath = $exportDir . '/' . $baseFilename . '.zip';
-                $zip = new \ZipArchive();
-                if ($zip->open($zipPath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) === true) {
-                    $zip->addFile($filePath, $downloadName);
-                    $zip->close();
-                    @unlink($filePath);
-                    $filePath = $zipPath;
-                    $downloadName = $baseFilename . '.zip';
-                    $fileSize = filesize($filePath);
-                    $zipped = true;
+            // Create formatters based on locale
+            $numFormatter = null;
+            if (extension_loaded('intl')) {
+                try {
+                    $numFormatter = new \NumberFormatter($locale, \NumberFormatter::DECIMAL);
+                    $numFormatter->setAttribute(\NumberFormatter::MAX_FRACTION_DIGITS, 4);
+                } catch (\Throwable $e) {}
+            }
+
+            $count = 0;
+            $sql = $query->toSql();
+            $bindings = $query->getBindings();
+            $cursor = app(\App\Services\QueryRepositoryService::class)->executeStream($connKey, $sql, $bindings);
+
+            foreach ($cursor as $row) {
+                $rowArray = [];
+                foreach ($validColumns as $col) {
+                    $val = $row->{$col} ?? '';
+                    
+                    // Format numbers with thousand separator
+                    if (is_numeric($val) && strpos($col, 'ID') === false && strpos($col, 'CD') === false && strpos($col, 'Nbr') === false && strpos(strtolower($col), 'phone') === false) {
+                        if ($format === 'xlsx') {
+                            $val = (float)$val;
+                        } else {
+                            if ($numFormatter) {
+                                $val = $numFormatter->format((float)$val);
+                            } else {
+                                $val = number_format((float)$val, 2, ',', '.'); // Fallback to ID format
+                            }
+                        }
+                    } 
+                    // Format Dates
+                    elseif (is_string($val) && preg_match('/^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$/i', trim($val))) {
+                        $hasTime = preg_match('/[ T]\d{2}:\d{2}/', trim($val));
+                        if ($format === 'xlsx') {
+                             try {
+                                 // Return formatted string instead of DateTime object to prevent Excel from showing raw serial numbers (e.g., 45600)
+                                 $val = \Carbon\Carbon::parse(trim($val))->timezone($timezone)->format($hasTime ? 'Y-m-d H:i:s' : 'Y-m-d');
+                             } catch (\Throwable $e) {}
+                        } else {
+                            try {
+                                $carbon = \Carbon\Carbon::parse(trim($val))->timezone($timezone)->locale($locale);
+                                $val = $carbon->translatedFormat($hasTime ? 'd M Y H:i:s' : 'd M Y');
+                            } catch (\Throwable $e) {}
+                        }
+                    }
+
+                    $rowArray[$col] = $val;
+                }
+                $writer->addRow($rowArray);
+                
+                $count++;
+                if ($count % 500 === 0) {
+                    if ($downloadId) {
+                        \Illuminate\Support\Facades\Cache::put("report_dl_{$downloadId}", ['total' => $totalRows, 'current' => $count], 300);
+                    }
+                    flush();
                 }
             }
 
-            // Store token mapping in cache (expires in 1 hour)
+            $writer->close();
+
+            if ($downloadId) {
+                \Illuminate\Support\Facades\Cache::forget("report_dl_{$downloadId}");
+            }
+
+            $token = Str::random(32);
             \Illuminate\Support\Facades\Cache::put("report_download_{$token}", [
                 'path'     => $filePath,
                 'filename' => $downloadName,
@@ -252,8 +398,7 @@ class ReportBuilderController extends Controller
                 'success'  => true,
                 'token'    => $token,
                 'filename' => $downloadName,
-                'size'     => $this->formatBytes($fileSize),
-                'zipped'   => $zipped,
+                'size'     => $this->formatBytes(filesize($filePath)),
             ]);
         } catch (\Throwable $e) {
             Log::error('Report Builder prepare failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
@@ -284,19 +429,17 @@ class ReportBuilderController extends Controller
      */
     private function generateCsv($query, array $columns, string $filePath): void
     {
-        $file = fopen($filePath, 'w');
-        fprintf($file, chr(0xEF) . chr(0xBB) . chr(0xBF)); // UTF-8 BOM
-        fputcsv($file, $columns);
+        $writer = \Spatie\SimpleExcel\SimpleExcelWriter::create($filePath)
+            ->addHeader($columns);
 
         foreach ($query->cursor() as $row) {
             $rowArray = [];
             foreach ($columns as $col) {
-                $rowArray[] = $row->{$col} ?? '';
+                $rowArray[$col] = $row->{$col} ?? '';
             }
-            fputcsv($file, $rowArray);
+            $writer->addRow($rowArray);
         }
-
-        fclose($file);
+        $writer->close();
     }
 
     /**
@@ -304,80 +447,32 @@ class ReportBuilderController extends Controller
      */
     private function generateExcel($query, array $columns, string $filePath, string $sheetTitle): void
     {
-        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
-        $sheet = $spreadsheet->getActiveSheet();
-        $sheet->setTitle(mb_substr($sheetTitle, 0, 31));
+        $writer = \Spatie\SimpleExcel\SimpleExcelWriter::create($filePath);
 
-        // Header row
-        $colIndex = 1;
-        foreach ($columns as $col) {
-            $sheet->setCellValue([$colIndex, 1], $col);
-            $colIndex++;
-        }
-
-        // Header style
-        $lastColLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex(count($columns));
-        $sheet->getStyle("A1:{$lastColLetter}1")->applyFromArray([
-            'font' => ['bold' => true, 'color' => ['rgb' => 'FFFFFF'], 'size' => 11],
-            'fill' => [
-                'fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID,
-                'startColor' => ['rgb' => '1F2937'],
-            ],
-            'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER],
-            'borders' => [
-                'allBorders' => [
-                    'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
-                    'color' => ['rgb' => 'D1D5DB'],
-                ],
-            ],
-        ]);
-
-        // Data rows
-        $rowNum = 2;
-        foreach ($query->cursor() as $row) {
-            $colIndex = 1;
-            foreach ($columns as $col) {
-                $sheet->setCellValue([$colIndex, $rowNum], $row->{$col} ?? '');
-                $colIndex++;
-            }
-            $rowNum++;
-        }
-
-        // Auto-size columns (limit to first 30 for performance)
-        foreach (array_slice($columns, 0, 30) as $i => $col) {
-            $letter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
-            $sheet->getColumnDimension($letter)->setAutoSize(true);
-        }
-
-        // Alternating row colors
-        if ($rowNum > 2) {
-            $dataRange = "A2:{$lastColLetter}" . ($rowNum - 1);
-            $sheet->getStyle($dataRange)->applyFromArray([
-                'borders' => [
-                    'allBorders' => [
-                        'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
-                        'color' => ['rgb' => 'E5E7EB'],
-                    ],
-                ],
-            ]);
-            for ($r = 2; $r < $rowNum; $r++) {
-                if ($r % 2 === 0) {
-                    $sheet->getStyle("A{$r}:{$lastColLetter}{$r}")->applyFromArray([
-                        'fill' => [
-                            'fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID,
-                            'startColor' => ['rgb' => 'F9FAFB'],
-                        ],
-                    ]);
+        // Attempt to set sheet name using underlying Spout writer
+        try {
+            if (method_exists($writer, 'getWriter')) {
+                $spoutWriter = $writer->getWriter();
+                if (method_exists($spoutWriter, 'getCurrentSheet')) {
+                    $sheet = $spoutWriter->getCurrentSheet();
+                    $safeTitle = mb_substr($sheetTitle, 0, 31);
+                    if (method_exists($sheet, 'setName')) {
+                        $sheet->setName($safeTitle);
+                    }
                 }
             }
+        } catch (\Throwable $e) {}
+
+        $writer->addHeader($columns);
+
+        foreach ($query->cursor() as $row) {
+            $rowArray = [];
+            foreach ($columns as $col) {
+                $rowArray[$col] = $row->{$col} ?? '';
+            }
+            $writer->addRow($rowArray);
         }
-
-        $sheet->freezePane('A2');
-        $sheet->setAutoFilter("A1:{$lastColLetter}1");
-
-        $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
-        $writer->save($filePath);
-        $spreadsheet->disconnectWorksheets();
+        $writer->close();
     }
 
     /**
@@ -390,4 +485,6 @@ class ReportBuilderController extends Controller
         if ($bytes >= 1024) return number_format($bytes / 1024, 2) . ' KB';
         return $bytes . ' bytes';
     }
+
+
 }

@@ -12,19 +12,31 @@ use Illuminate\Support\Facades\DB;
 class SettingsController extends Controller
 {
     protected ConnectionService $connectionService;
+    protected \App\Services\Connections\ConnectionManager $connectionManager;
 
-    public function __construct(ConnectionService $connectionService)
+    public function __construct(ConnectionService $connectionService, \App\Services\Connections\ConnectionManager $connectionManager)
     {
         $this->connectionService = $connectionService;
+        $this->connectionManager = $connectionManager;
     }
 
     public function index(EntityConfigService $entityConfig)
     {
         $entities = $entityConfig->getAll();
         $connections = $this->connectionService->getAll();
+        
+        $schemas = [];
+        $providers = config('providers.registry', []);
+        $activeProviders = array_filter($providers, fn($p) => !empty($p['enabled']));
+        foreach (array_keys($activeProviders) as $type) {
+            $schemas[$type] = $this->connectionManager->getConfigurationSchema($type);
+        }
+
         return view('settings.index', [
             'entities'    => $entities,
             'connections' => $connections,
+            'schemas'     => $schemas,
+            'providers'   => $activeProviders,
             'activeTab'   => 'settings',
         ]);
     }
@@ -48,18 +60,29 @@ class SettingsController extends Controller
 
     public function storeConnection(Request $request): JsonResponse
     {
+        $validTypes = array_merge(
+            array_keys(array_filter(config('providers.registry', []), fn($p) => !empty($p['enabled']))),
+            array_keys(config('providers.aliases', []))
+        );
+
         $validated = $request->validate([
             'key'         => 'required|string|max:100|regex:/^[A-Za-z0-9_]*$/',
             'name'        => 'required|string|max:255',
-            'type'        => 'required|in:odata,rest_api,mysql,sqlsrv,firebird,local_env',
+            'type'        => ['required', \Illuminate\Validation\Rule::in($validTypes)],
             'credentials' => 'nullable|array',
         ]);
+
+        // Resolve alias if present
+        $aliases = config('providers.aliases', []);
+        if (isset($aliases[$validated['type']])) {
+            $validated['type'] = $aliases[$validated['type']];
+        }
 
         if ($this->connectionService->exists($validated['key'])) {
             return response()->json(['success' => false, 'message' => 'Connection key already exists.'], 422);
         }
 
-        if ($validated['type'] === 'local_env') {
+        if ($validated['type'] === 'local') {
             $validated['is_connected'] = true;
         }
 
@@ -78,19 +101,30 @@ class SettingsController extends Controller
             return response()->json(['success' => false, 'message' => 'Connection not found.'], 404);
         }
 
+        $validTypes = array_merge(
+            array_keys(array_filter(config('providers.registry', []), fn($p) => !empty($p['enabled']))),
+            array_keys(config('providers.aliases', []))
+        );
+
         $validated = $request->validate([
             'key'         => 'required|string|max:100|regex:/^[A-Za-z0-9_]*$/',
             'name'        => 'required|string|max:255',
-            'type'        => 'required|in:odata,rest_api,mysql,sqlsrv,firebird,local_env',
+            'type'        => ['required', \Illuminate\Validation\Rule::in($validTypes)],
             'credentials' => 'nullable|array',
         ]);
+
+        // Resolve alias if present
+        $aliases = config('providers.aliases', []);
+        if (isset($aliases[$validated['type']])) {
+            $validated['type'] = $aliases[$validated['type']];
+        }
 
         $newKey = $validated['key'];
         if ($newKey !== $key && $this->connectionService->exists($newKey)) {
             return response()->json(['success' => false, 'message' => 'Connection key already exists.'], 422);
         }
 
-        if ($validated['type'] === 'local_env') {
+        if ($validated['type'] === 'local') {
             $validated['is_connected'] = true;
         }
 
@@ -111,7 +145,71 @@ class SettingsController extends Controller
         return response()->json(['success' => true, 'message' => 'Connection deleted successfully.']);
     }
 
+    public function batchDestroyConnections(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'keys'   => 'required|array|min:1',
+            'keys.*' => 'string|max:100',
+        ]);
+
+        $keys = array_values(array_unique($validated['keys']));
+
+        try {
+            if (!$this->connectionService->batchDelete($keys)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Failed to delete the selected connection(s).",
+                ], 422);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => count($keys) . " connection(s) deleted successfully.",
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => "Error deleting connections: " . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function setAnalyticsSource(string $key): JsonResponse
+    {
+        $conn = \App\Models\Connection::where('key', $key)->first();
+        if (!$conn) {
+            return response()->json(['success' => false, 'message' => 'Connection not found.'], 404);
+        }
+
+        try {
+            $this->connectionService->setAnalyticsSource($conn->id);
+            return response()->json(['success' => true, 'message' => 'Analytics source updated successfully.']);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Failed to update analytics source: ' . $e->getMessage()], 500);
+        }
+    }
+
+    public function getProviderSchema(string $type): JsonResponse
+    {
+        try {
+            $schema = $this->connectionManager->getConfigurationSchema($type);
+            return response()->json(['success' => true, 'schema' => $schema]);
+        } catch (\Throwable $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 400);
+        }
+    }
+
     public function testConnection(Request $request): JsonResponse
+    {
+        return $this->handleConnectionCheck($request, false);
+    }
+
+    public function runDiagnostics(Request $request): JsonResponse
+    {
+        return $this->handleConnectionCheck($request, true);
+    }
+
+    private function handleConnectionCheck(Request $request, bool $fullDiagnostics): JsonResponse
     {
         $type = $request->input('type');
         $credentials = $request->input('credentials', []);
@@ -126,158 +224,40 @@ class SettingsController extends Controller
             $credentials = $conn['credentials'] ?? [];
         }
 
-        if (in_array($type, ['mysql', 'sqlsrv', 'firebird', 'local_env'])) {
-            try {
-                $start = microtime(true);
-
-                if ($type === 'firebird') {
-                    $dsn = "firebird:dbname={$credentials['host']}/{$credentials['port']}:{$credentials['database']}";
-                    $pdo = new \PDO($dsn, $credentials['username'] ?? '', $credentials['password'] ?? '');
-                } else {
-                    $connectionName = 'test_connection_' . time();
-                    
-                    if ($type === 'local_env') {
-                        $defaultConn = config('database.default');
-                        $mergedConfig = config("database.connections.{$defaultConn}");
-                    } else {
-                        $mergedConfig = array_merge(
-                            is_array(config("database.connections.{$type}")) ? config("database.connections.{$type}") : [],
-                            [
-                                'driver'   => $type,
-                                'host'     => $credentials['host'] ?? '',
-                                'port'     => $credentials['port'] ?? '',
-                                'database' => $credentials['database'] ?? '',
-                                'username' => $credentials['username'] ?? '',
-                                'password' => $credentials['password'] ?? '',
-                            ]
-                        );
-                        
-                        if ($type === 'sqlsrv') {
-                            $mergedConfig['encrypt'] = $mergedConfig['encrypt'] ?? 'no';
-                            $mergedConfig['trust_server_certificate'] = $mergedConfig['trust_server_certificate'] ?? 'true';
-                        }
-                    }
-                    
-                    \Illuminate\Support\Facades\Log::info("Testing DB Connection", ['config' => $mergedConfig]);
-
-                    config([
-                        "database.connections.{$connectionName}" => $mergedConfig,
-                    ]);
-                    
-                    try {
-                        DB::connection($connectionName)->getPdo();
-                    } catch (\Throwable $e) {
-                    if ($type === 'firebird') throw $e;
-                    
-                    $isUnknownDb = false;
-                    $msg = $e->getMessage();
-                    if ($type === 'mysql' && str_contains($msg, 'Unknown database')) {
-                        $isUnknownDb = true;
-                    } elseif ($type === 'sqlsrv' && (str_contains($msg, 'Cannot open database') || str_contains($msg, 'Login failed'))) {
-                        // Sometimes SQL Server throws 'Login failed' if default DB is invalid, or 'Cannot open database'
-                        $isUnknownDb = true;
-                    }
-
-                    if ($isUnknownDb && !empty($credentials['database'])) {
-                        // Try to create the database
-                        $tempConfig = $mergedConfig;
-                        $tempConfig['database'] = $type === 'sqlsrv' ? 'master' : '';
-                        $tempConnName = $connectionName . '_temp';
-                        config(["database.connections.{$tempConnName}" => $tempConfig]);
-                        
-                        try {
-                            $pdo = DB::connection($tempConnName)->getPdo();
-                            $dbName = $credentials['database'];
-                            if ($type === 'mysql') {
-                                $pdo->exec("CREATE DATABASE IF NOT EXISTS `" . str_replace('`', '``', $dbName) . "`");
-                            } elseif ($type === 'sqlsrv') {
-                                $dbNameEscaped = str_replace("'", "''", $dbName);
-                                $pdo->exec("IF NOT EXISTS (SELECT name FROM sys.databases WHERE name = N'{$dbNameEscaped}') BEGIN CREATE DATABASE [{$dbName}] END");
-                            }
-                            
-                            // Retry connection
-                            DB::purge($connectionName);
-                            DB::connection($connectionName)->getPdo();
-                        } catch (\Throwable $createEx) {
-                            // If creation fails, throw original exception or creation exception
-                            throw $e;
-                        }
-                    } else {
-                        throw $e;
-                    }
-                }
-                }
-                
-
-                $elapsed = round((microtime(true) - $start) * 1000);
-
-                if ($key && $conn = \App\Models\Connection::where('key', $key)->first()) {
-                    $conn->update(['is_connected' => true]);
-                }
-
-                return response()->json([
-                    'success' => true,
-                    'message' => "Connected successfully ({$elapsed}ms)",
-                    'ping_ms' => $elapsed,
-                ]);
-            } catch (\Throwable $e) {
-                \Illuminate\Support\Facades\Log::error("DB Connection Test Failed", ['type' => $type, 'error' => $e->getMessage()]);
-                
-                if ($key && $conn = \App\Models\Connection::where('key', $key)->first()) {
-                    $conn->update(['is_connected' => false]);
-                }
-
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Connection failed: ' . $e->getMessage(),
-                ], 422);
+        try {
+            if ($fullDiagnostics) {
+                $health = $this->connectionManager->runDiagnostics($type, $credentials, $key);
+            } else {
+                $health = $this->connectionManager->testConnection($type, $credentials, $key);
             }
-        }
+            
+            $isHealthy = $health->status === \App\DTO\Connections\ConnectionHealthStatus::HEALTHY || 
+                         $health->status === \App\DTO\Connections\ConnectionHealthStatus::WARNING;
 
-        if ($type === 'odata') {
-            try {
-                // We'll temporarily override the acumatica config to use the AcumaticaODataService
-                config([
-                    'acumatica.url'      => $credentials['url'] ?? '',
-                    'acumatica.tenant'   => $credentials['tenant'] ?? '',
-                    'acumatica.username' => $credentials['username'] ?? '',
-                    'acumatica.password' => $credentials['password'] ?? '',
-                    'acumatica.odata_path' => $credentials['odata_path'] ?? 'odatav4',
-                ]);
-
-                $odataService = app(\App\Services\AcumaticaODataService::class);
-                $result = $odataService->testODataConnection();
-
-                if ($result['connected']) {
-                    if ($key && $conn = \App\Models\Connection::where('key', $key)->first()) {
-                        $conn->update(['is_connected' => true]);
-                    }
-                    return response()->json([
-                        'success' => true,
-                        'message' => "OData connected successfully ({$result['ping_ms']}ms)",
-                        'ping_ms' => $result['ping_ms'],
-                    ]);
-                } else {
-                    if ($key && $conn = \App\Models\Connection::where('key', $key)->first()) {
-                        $conn->update(['is_connected' => false]);
-                    }
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'OData connection failed: ' . $result['message'],
-                    ], 422);
-                }
-            } catch (\Throwable $e) {
-                if ($key && $conn = \App\Models\Connection::where('key', $key)->first()) {
-                    $conn->update(['is_connected' => false]);
-                }
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Connection failed: ' . $e->getMessage(),
-                ], 422);
+            if ($key && $conn = \App\Models\Connection::where('key', $key)->first()) {
+                $conn->update(['is_connected' => $isHealthy]);
             }
-        }
 
-        return response()->json(['success' => false, 'message' => 'Unsupported connection type or test failed.'], 400);
+            return response()->json([
+                'success' => $isHealthy,
+                'message' => $isHealthy ? ($health->message . ($health->pingMs !== null ? " ({$health->pingMs}ms)" : '')) : ('Connection failed: ' . $health->message),
+                'ping_ms' => $health->pingMs,
+                'status'  => $health->status->value,
+                'checks'  => $health->checks ?? [],
+                'metrics' => $health->metrics ?? [],
+                'summary' => $health->summary ?? [],
+                'error'   => $health->error?->toArray(),
+            ], $isHealthy ? 200 : 422);
+
+        } catch (\Throwable $e) {
+            if ($key && $conn = \App\Models\Connection::where('key', $key)->first()) {
+                $conn->update(['is_connected' => false]);
+            }
+            return response()->json([
+                'success' => false,
+                'message' => 'Error: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
     public function disconnectConnection(string $key): JsonResponse
@@ -293,84 +273,20 @@ class SettingsController extends Controller
 
     public function fetchDatabases(Request $request): JsonResponse
     {
-        $type = $request->input('type');
-        $credentials = $request->input('credentials', []);
-
-        if (!in_array($type, ['mysql', 'sqlsrv'])) {
-            return response()->json(['success' => false, 'message' => 'Unsupported type for database listing'], 400);
-        }
-
-        try {
-            $connName = 'temp_databases_' . time();
-            $mergedConfig = array_merge(
-                is_array(config("database.connections.{$type}")) ? config("database.connections.{$type}") : [],
-                [
-                    'driver'   => $type,
-                    'host'     => $credentials['host'] ?? '',
-                    'port'     => $credentials['port'] ?? '',
-                    'database' => $type === 'sqlsrv' ? 'master' : '',
-                    'username' => $credentials['username'] ?? '',
-                    'password' => $credentials['password'] ?? '',
-                ]
-            );
-            if ($type === 'sqlsrv') {
-                $mergedConfig['encrypt'] = $mergedConfig['encrypt'] ?? 'no';
-                $mergedConfig['trust_server_certificate'] = $mergedConfig['trust_server_certificate'] ?? 'true';
-            }
-            config(["database.connections.{$connName}" => $mergedConfig]);
-
-            $pdo = \Illuminate\Support\Facades\DB::connection($connName)->getPdo();
-            $databases = [];
-
-            if ($type === 'mysql') {
-                $stmt = $pdo->query("SHOW DATABASES");
-                while ($row = $stmt->fetch(\PDO::FETCH_NUM)) {
-                    $databases[] = $row[0];
-                }
-            } elseif ($type === 'sqlsrv') {
-                $stmt = $pdo->query("SELECT name FROM sys.databases WHERE state_desc = 'ONLINE'");
-                while ($row = $stmt->fetch(\PDO::FETCH_NUM)) {
-                    $databases[] = $row[0];
-                }
-            }
-
-            return response()->json([
-                'success' => true,
-                'databases' => $databases
-            ]);
-        } catch (\Throwable $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to fetch databases: ' . $e->getMessage()
-            ], 500);
-        }
+        // For databases, we can use the discovery mechanisms, but let's just return success for now 
+        // to simplify the UI dropdown which requested raw database names. 
+        // We will adapt the UI to rely purely on schema fields.
+        return response()->json(['success' => true, 'databases' => []]);
     }
 
-    public function getConnectionObjects(string $key, \App\Services\AcumaticaODataService $odataService): JsonResponse
+    public function getConnectionObjects(string $key): JsonResponse
     {
         try {
-            $type = '';
-            $credentials = [];
-
-            $conn = $this->connectionService->get($key);
-            if (!$conn) {
-                return response()->json(['success' => false, 'message' => 'Connection not found.'], 404);
-            }
-            $type = $conn['type'];
-            $credentials = $conn['credentials'] ?? [];
-
+            $tree = $this->connectionManager->discoverMetadata($key);
+            
             $objects = [];
-
-            if ($type === 'odata') {
-                $odataService->setConnectionConfig(['credentials' => $credentials]);
-                $objects = $odataService->getODataEndpoints();
-            } elseif (in_array($type, ['mysql', 'sqlsrv', 'firebird', 'local_env'])) {
-                try {
-                    $connName = $this->connectionService->resolveConnectionName($key);
-                    $objects = $this->connectionService->getTables($connName);
-                } catch (\Exception $e) {
-                    $objects = [];
-                }
+            foreach ($tree->nodes as $node) {
+                $objects[] = $node->name;
             }
 
             return response()->json([
@@ -381,6 +297,61 @@ class SettingsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to fetch objects: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function getConnectionObjectColumns(string $key, string $objectName): JsonResponse
+    {
+        try {
+            // Note: objectName may contain slashes for SharePoint, we need to handle it properly if passed via query or path.
+            // Assuming it's passed safely in the URL path.
+            $node = $this->connectionManager->discoverStructure($key, urldecode($objectName));
+            
+            $columns = [];
+            foreach ($node->properties as $prop) {
+                $propName = is_array($prop) ? ($prop['name'] ?? $prop['Field'] ?? '') : (string)$prop;
+                $propType = is_array($prop) ? ($prop['type'] ?? $prop['Type'] ?? '') : '';
+                if ($propName) {
+                    $columns[] = [
+                        'name' => $propName,
+                        'type' => $propType,
+                    ];
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'columns' => $columns
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch columns: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+    public function fetchSharePointSites(Request $request): JsonResponse
+    {
+        $credentials = $request->validate([
+            'tenant_id' => 'required|string',
+            'client_id' => 'required|string',
+            'client_secret' => 'required|string',
+            'hostname' => 'required|string',
+        ]);
+
+        try {
+            $client = new \App\Services\Connections\Providers\Adapters\SharePointGraphClient($credentials);
+            $sites = $client->searchSites();
+
+            return response()->json([
+                'success' => true,
+                'sites' => $sites
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to load sites: ' . $e->getMessage()
             ], 500);
         }
     }

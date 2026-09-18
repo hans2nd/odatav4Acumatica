@@ -164,13 +164,15 @@
                                 minlength="6">
                         </div>
                         <div>
-                            <label class="text-label-md text-surface-600 block mb-1.5">Role</label>
-                            <select id="user-role" required
-                                class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all duration-200">
+                            <label class="text-label-md text-surface-600 block mb-1.5">Roles</label>
+                            <div class="space-y-2 max-h-48 overflow-y-auto p-3 bg-surface-50 border border-surface-200 rounded-xl">
                                 @foreach ($roles as $role)
-                                    <option value="{{ $role->id }}">{{ $role->name }}</option>
+                                    <label class="flex items-center gap-2 cursor-pointer hover:bg-surface-100 p-1 rounded-lg transition-colors">
+                                        <input type="checkbox" name="role_ids[]" value="{{ $role->id }}" class="user-role-checkbox rounded border-surface-300 text-brand-600 focus:ring-brand-500/20 w-4 h-4">
+                                        <span class="text-body-sm text-surface-800">{{ $role->name }}</span>
+                                    </label>
                                 @endforeach
-                            </select>
+                            </div>
                         </div>
                     </div>
                     <div class="px-5 py-4 border-t border-surface-100 flex justify-end gap-2">
@@ -288,6 +290,7 @@
             document.getElementById('user-password').value = '';
             document.getElementById('user-password').required = true;
             document.getElementById('password-field').style.display = '';
+            document.querySelectorAll('.user-role-checkbox').forEach(cb => cb.checked = false);
             openModal('user-modal');
         }
 
@@ -298,8 +301,12 @@
             document.getElementById('user-email').value = user.email;
             document.getElementById('user-password').value = '';
             document.getElementById('user-password').required = false;
+            document.querySelectorAll('.user-role-checkbox').forEach(cb => cb.checked = false);
             if (user.roles && user.roles.length > 0) {
-                document.getElementById('user-role').value = user.roles[0].id;
+                user.roles.forEach(r => {
+                    const cb = document.querySelector(`.user-role-checkbox[value="${r.id}"]`);
+                    if(cb) cb.checked = true;
+                });
             }
             openModal('user-modal');
         }
@@ -311,10 +318,16 @@
             const url = isEdit ? `/api/users/${userId}` : '/api/users';
             const method = isEdit ? 'PUT' : 'POST';
 
+            const role_ids = [...document.querySelectorAll('.user-role-checkbox:checked')].map(cb => cb.value);
+            if (role_ids.length === 0) {
+                showToast('Please select at least one role', 'error');
+                return;
+            }
+
             const body = {
                 name: document.getElementById('user-name').value,
                 email: document.getElementById('user-email').value,
-                role_id: document.getElementById('user-role').value,
+                role_ids: role_ids,
             };
             const pw = document.getElementById('user-password').value;
             if (pw) body.password = pw;
@@ -433,9 +446,7 @@
                 const roleData = await roleRes.json();
                 const assignedIds = roleData.permissions.map(p => p.id);
 
-                const actionsList = ['view', 'create', 'update', 'delete', 'sync', 'export', 'import', 'manage',
-                    'execute'
-                ];
+                const actionsList = ['view', 'create', 'update', 'delete', 'sync', 'export', 'import', 'manage', 'execute', 'access', 'test'];
 
                 let html = `
                     <div class="overflow-x-auto border border-surface-200/80 rounded-xl bg-white shadow-xs">
@@ -509,7 +520,7 @@
 
                     for (const [groupName, perms] of Object.entries(groupedOthers)) {
                         rows.push({
-                            type: 'menu',
+                            type: 'other',
                             title: groupName,
                             icon: 'subdirectory_arrow_right',
                             depth: 1,
@@ -520,9 +531,9 @@
 
                 rows.forEach((row, i) => {
                     const indent = row.depth * 20;
-                    const isHeaderOnly = row.type === 'header' || (row.type === 'menu' && row.permissions
-                        .length === 0);
+                    const isHeaderOnly = row.type === 'header' || ((row.type === 'menu' || row.type === 'other') && row.permissions.length === 0);
                     const rowId = `r${i}`;
+                    const isReadOnly = row.type === 'menu';
 
                     let rowHtml = `<tr class="hover:bg-surface-50/50 transition-colors group">`;
 
@@ -531,6 +542,7 @@
                                 <div class="flex items-center gap-2.5" style="padding-left: ${indent}px">
                                     <span class="material-symbols-outlined text-[18px] text-brand-600/70 shrink-0">${row.depth === 0 ? (row.icon || 'folder') : 'subdirectory_arrow_right'}</span>
                                     <span class="${row.depth === 0 ? 'font-semibold text-surface-800' : 'font-medium text-surface-600'} text-xs truncate" title="${row.title}">${row.title}</span>
+                                    ${isReadOnly ? '<span class="text-[9px] px-1.5 py-0.5 bg-yellow-100 text-yellow-700 rounded-full font-bold uppercase tracking-wider">Menu</span>' : ''}
                                 </div>
                             </td>
                         `;
@@ -588,7 +600,7 @@
                                     .pop();
                                 rowHtml += `
                                         <label class="flex items-center gap-1.5 px-2 py-1 rounded bg-surface-100 border border-surface-200 cursor-pointer hover:bg-surface-200 transition-colors">
-                                            <input type="checkbox" name="permissions[]" value="${p.id}" class="perm-checkbox row-all row-all-${rowId} rounded border-surface-300 text-brand-600 focus:ring-brand-500/20 w-3 h-3" ${checked}>
+                                            <input type="checkbox" name="permissions[]" value="${p.id}" class="perm-checkbox row-all row-all-${rowId} rounded border-surface-300 text-brand-600 focus:ring-brand-500/20 w-3 h-3 cursor-pointer" ${checked}>
                                             <span class="text-[10px] text-surface-700 font-medium capitalize whitespace-nowrap">${name}</span>
                                         </label>
                                     `;
@@ -608,11 +620,84 @@
                     </div>
                     `;
 
+                if (permData.apiEndpointPermissions && permData.apiEndpointPermissions.length > 0) {
+                    html += `
+                        <div class="mt-8 border border-surface-200/80 rounded-2xl bg-white overflow-hidden shadow-sm">
+                            <div class="bg-surface-50/80 px-4 py-3 border-b border-surface-200/80 flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <span class="material-symbols-outlined text-brand-600 text-[20px]">api</span>
+                                    <h3 class="font-semibold text-surface-800 text-sm">API Endpoint Permissions</h3>
+                                </div>
+                                <div class="relative w-64">
+                                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[16px] text-surface-400">search</span>
+                                    <input type="text" onkeyup="filterApiEndpoints(this.value)" placeholder="Search endpoints..." class="w-full pl-9 pr-3 py-1.5 bg-white border border-surface-300 rounded-lg text-xs text-surface-700 focus:ring-1 focus:ring-brand-500 focus:border-brand-500 transition-all">
+                                </div>
+                            </div>
+                            <div class="p-0 overflow-y-auto max-h-96">
+                                <table class="w-full text-left text-sm border-collapse">
+                                    <thead class="sticky top-0 z-10 bg-surface-50/90 backdrop-blur-sm shadow-[0_1px_0_0_rgba(0,0,0,0.05)]">
+                                        <tr>
+                                            <th class="px-4 py-2 font-medium text-surface-600 text-xs w-1/3 border-b border-surface-200/80">Endpoint Entity</th>
+                                            <th class="px-4 py-2 font-medium text-surface-600 text-xs w-2/3 border-b border-surface-200/80">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                    `;
+                    
+                    permData.apiEndpointPermissions.forEach((endpoint, i) => {
+                        html += `
+                            <tr class="api-endpoint-row hover:bg-surface-50/50 transition-colors border-b border-surface-100 last:border-0" data-search="${endpoint.entity.toLowerCase()}">
+                                <td class="px-4 py-3 align-top border-r border-surface-100">
+                                    <div class="font-medium text-surface-800 text-xs">${endpoint.entity}</div>
+                                    <div class="text-[10px] text-surface-500 mt-0.5 font-mono">api.endpoint.${endpoint.entity}.*</div>
+                                </td>
+                                <td class="px-4 py-3">
+                                    <div class="flex flex-wrap gap-4">
+                        `;
+                        
+                        endpoint.permissions.forEach(p => {
+                            const checked = assignedIds.includes(p.id) ? 'checked' : '';
+                            const name = p.action ? p.action.name : p.permission_key.split('.').pop();
+                            html += `
+                                <label class="flex items-center gap-1.5 cursor-pointer hover:bg-surface-100/80 px-2 py-1 rounded transition-colors -ml-2">
+                                    <input type="checkbox" name="permissions[]" value="${p.id}" class="perm-checkbox rounded border-surface-300 text-brand-600 focus:ring-brand-500/20 w-4 h-4 cursor-pointer" ${checked}>
+                                    <span class="text-xs text-surface-700 font-medium capitalize select-none">${name}</span>
+                                </label>
+                            `;
+                        });
+                        
+                        html += `
+                                    </div>
+                                </td>
+                            </tr>
+                        `;
+                    });
+                    
+                    html += `
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    `;
+                }
+
                 document.getElementById('perm-content').innerHTML = html ||
                     '<p class="text-surface-500 text-center py-4">Tidak ada hak akses yang tersedia.</p>';
             } catch (err) {
                 document.getElementById('perm-content').innerHTML = `<p class="text-red-600">${err.message}</p>`;
             }
+        }
+
+        function filterApiEndpoints(val) {
+            const query = val.toLowerCase().trim();
+            const rows = document.querySelectorAll('.api-endpoint-row');
+            rows.forEach(row => {
+                if (row.getAttribute('data-search').includes(query)) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            });
         }
 
         async function saveRolePermissions() {

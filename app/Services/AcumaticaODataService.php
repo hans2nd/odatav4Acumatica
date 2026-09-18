@@ -27,15 +27,15 @@ class AcumaticaODataService
 
     public function __construct()
     {
-        $this->baseUrl   = rtrim(config('acumatica.url'), '/');
-        $this->tenant    = config('acumatica.tenant');
-        $this->username  = config('acumatica.username');
-        $this->password  = config('acumatica.password');
+        $this->baseUrl = rtrim(config('acumatica.url'), '/');
+        $this->tenant = config('acumatica.tenant');
+        $this->username = config('acumatica.username');
+        $this->password = config('acumatica.password');
         $this->verifySsl = config('acumatica.verify_ssl', false);
         $this->odataAuth = config('acumatica.odata_auth', 'basic');
         $this->includeTenantInODataUrl = (bool) config('acumatica.odata_include_tenant', false);
-        $this->pageSize  = config('acumatica.page_size', 500);
-        $this->timeout   = config('acumatica.timeout', 300);
+        $this->pageSize = config('acumatica.page_size', 500);
+        $this->timeout = config('acumatica.timeout', 300);
     }
 
     /**
@@ -44,13 +44,49 @@ class AcumaticaODataService
     public function setConnectionConfig(array $connection): void
     {
         $creds = $connection['credentials'] ?? [];
-        $this->baseUrl   = rtrim($creds['url'] ?? $this->baseUrl, '/');
-        $this->tenant    = $creds['tenant'] ?? $this->tenant;
-        $this->username  = $creds['username'] ?? $this->username;
-        $this->password  = $creds['password'] ?? $this->password;
         
-        if (isset($creds['odata_path'])) {
-            config(['acumatica.odata_path' => $creds['odata_path']]);
+        $this->tenant = $creds['tenant'] ?? $this->tenant;
+        $this->username = $creds['username'] ?? $this->username;
+        $this->password = $creds['password'] ?? $this->password;
+        
+        if (isset($creds['odata_auth'])) {
+            $this->odataAuth = $creds['odata_auth'];
+        }
+
+        // Use Explicit OData URL if provided
+        if (!empty($creds['odata_url'])) {
+            $this->baseUrl = rtrim($creds['odata_url'], '/');
+            $this->includeTenantInODataUrl = false;
+            config(['acumatica.odata_path' => '']);
+        } else {
+            $base = rtrim($creds['url'] ?? $creds['base_url'] ?? $this->baseUrl, '/');
+            $tenant = trim($this->tenant, '/');
+            
+            $protocol = $creds['protocol'] ?? 'odata_v4';
+            $endpoint = ($protocol === 'odata_v3' || $protocol === 'v3') ? 'odata' : 'odatav4';
+            
+            if (!empty($tenant)) {
+                if (str_ends_with(strtolower($base), strtolower("/{$tenant}"))) {
+                    $this->baseUrl = "{$base}/{$endpoint}";
+                } else {
+                    $this->baseUrl = "{$base}/{$tenant}/{$endpoint}";
+                }
+            } else {
+                $this->baseUrl = "{$base}/{$endpoint}";
+            }
+            
+            $this->includeTenantInODataUrl = false;
+            config(['acumatica.odata_path' => '']);
+        }
+    }
+
+    /**
+     * Override default page size with entity configuration
+     */
+    public function setPageSize(int $pageSize): void
+    {
+        if ($pageSize > 0) {
+            $this->pageSize = $pageSize;
         }
     }
 
@@ -65,28 +101,41 @@ class AcumaticaODataService
      */
     public function login(): bool
     {
+        $cacheKey = 'acumatica_cookie_' . md5($this->baseUrl . $this->tenant . $this->username);
+
+        // Coba pulihkan session dari cache
+        $cachedCookies = \Illuminate\Support\Facades\Cache::get($cacheKey);
+        if ($cachedCookies instanceof CookieJar) {
+            $this->cookieJar = $cachedCookies;
+            $this->authenticated = true;
+            Log::debug('Acumatica: Session reused from cache.');
+            return true;
+        }
+
         $this->cookieJar = new CookieJar();
 
         try {
             $response = Http::retry(3, 5000)->withOptions([
                 'cookies' => $this->cookieJar,
-                'verify'  => $this->verifySsl,
+                'verify' => $this->verifySsl,
                 'timeout' => $this->timeout,
-                'curl'    => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
+                'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
             ])->post($this->baseUrl . '/entity/auth/login', [
-                'name'     => $this->username,
-                'password' => $this->password,
-                'company'  => $this->tenant,
-            ]);
+                        'name' => $this->username,
+                        'password' => $this->password,
+                        'company' => $this->tenant,
+                    ]);
 
             if ($response->status() === 204 || $response->successful()) {
                 $this->authenticated = true;
-                Log::info('Acumatica: Login successful.');
+                // Simpan cookie ke cache selama 30 menit (standar timeout Acumatica)
+                \Illuminate\Support\Facades\Cache::put($cacheKey, $this->cookieJar, now()->addMinutes(30));
+                Log::info('Acumatica: Login successful. Session cached.');
                 return true;
             }
 
             Log::error('Acumatica: Login failed.', [
-                'status'   => $response->status(),
+                'status' => $response->status(),
                 'response' => $response->body(),
             ]);
 
@@ -103,26 +152,16 @@ class AcumaticaODataService
      */
     public function logout(): void
     {
-        if (! $this->authenticated || ! $this->cookieJar) {
+        if (!$this->authenticated || !$this->cookieJar) {
             return;
-        }
-
-        try {
-            Http::withOptions([
-                'cookies' => $this->cookieJar,
-                'verify'  => $this->verifySsl,
-                'timeout' => 30,
-            ])->post($this->baseUrl . '/entity/auth/logout');
-
-            Log::info('Acumatica: Logout successful.');
-
-        } catch (\Exception $e) {
-            Log::warning('Acumatica: Logout failed.', ['message' => $e->getMessage()]);
-        } finally {
+            // Jika menggunakan Session Reuse, kita TIDAK secara aktif melakukan logout ke server Acumatica
+            // agar sesi yang di-cache masih bisa dipakai oleh request lain.
+            // Cukup lepas reference ke cookieJar di memory saat ini saja.
             $this->authenticated = false;
             $this->cookieJar = null;
         }
     }
+
 
     /*
     |--------------------------------------------------------------------------
@@ -141,23 +180,27 @@ class AcumaticaODataService
 
         $pathParts = [
             $this->baseUrl,
-            config('acumatica.odata_path', 'odatav4'),
         ];
+        
+        $odataPath = config('acumatica.odata_path', 'odatav4');
+        if (!empty($odataPath)) {
+            $pathParts[] = $odataPath;
+        }
 
         if ($this->includeTenantInODataUrl) {
             $pathParts[] = rawurlencode($this->tenant);
         }
 
         $pathParts[] = $odataEntity;
-        
+
         $queryCount = '';
         if ($includeCount) {
-            $isV4 = config('acumatica.odata_path', 'odatav4') === 'odatav4';
+            $isV4 = config('acumatica.odata_path') === 'odatav4' || stripos($this->baseUrl, 'odatav4') !== false;
             $queryCount = $isV4 ? '&$count=true' : '&$inlinecount=allpages&$format=json';
         }
-        
+
         $url = implode('/', $pathParts) . sprintf('?$top=%d&$skip=%d%s', $top, $skip, $queryCount);
-        
+
         if (!empty($filter)) {
             $url .= '&$filter=' . rawurlencode($filter);
         }
@@ -178,25 +221,110 @@ class AcumaticaODataService
 
         $request = $this->getPersistentRequest();
 
-        $response = $request->get($url);
+        try {
+            $response = $request->get($url);
+        } catch (\Illuminate\Http\Client\RequestException $e) {
+            $response = $e->response;
+        } catch (\Exception $e) {
+            throw new \RuntimeException("OData fetch failed for {$odataEntity}: Connection error: " . $e->getMessage());
+        }
 
-        if (! $response->successful()) {
-            $body = $response->body();
+        // Jika Unauthorized (401), session mungkin sudah kadaluarsa.
+        if ($response && $response->status() === 401 && $this->usesSessionAuth()) {
+            Log::warning("Acumatica OData: Session expired. Retrying login...");
+            $cacheKey = 'acumatica_cookie_' . md5($this->baseUrl . $this->tenant . $this->username);
+            \Illuminate\Support\Facades\Cache::forget($cacheKey);
+            $this->authenticated = false;
+            $this->cookieJar = null;
+
+            if ($this->login()) {
+                $request = $this->getPersistentRequest();
+                try {
+                    $response = $request->get($url);
+                } catch (\Illuminate\Http\Client\RequestException $e) {
+                    $response = $e->response;
+                }
+            }
+        }
+
+        if (!$response || !$response->successful()) {
+            $status = $response ? $response->status() : 0;
+            $body = $response ? $response->body() : 'No response';
+            
             Log::error("Acumatica OData: Failed to fetch {$odataEntity}", [
-                'status' => $response->status(),
-                'body'   => mb_substr($body, 0, 1000),
-                'url'    => $url,
+                'status' => $status,
+                'body' => mb_substr($body, 0, 1000),
+                'url' => $url,
             ]);
-            $hint = $response->status() === 404
+            $hint = $status === 404
                 ? ' Entity not found in OData. Check that the Generic Inquiry/entity name is exposed for OData.'
                 : '';
 
+            if (stripos($body, '<html') !== false) {
+                throw new \RuntimeException("OData fetch failed for {$odataEntity} (HTTP {$status}). Acumatica returned an HTML page (likely a login/redirect page or 404 page) instead of JSON. Requested URL: {$url}. {$hint}");
+            }
+
             throw new \RuntimeException(
-                "OData fetch failed for {$odataEntity}: HTTP {$response->status()} - " . mb_substr($body, 0, 500) . $hint
+                "OData fetch failed for {$odataEntity}: HTTP {$status} - " . mb_substr($body, 0, 500) . $hint . ". Requested URL: {$url}"
             );
         }
 
-        return $response->json();
+        $json = $response->json();
+        
+        if ($json === null) {
+            $body = $response->body();
+            if (stripos($body, '<html') !== false) {
+                throw new \RuntimeException("OData fetch failed for {$odataEntity}: Acumatica returned an HTML page (likely a login/redirect page) instead of JSON. Please check your Connection Management credentials and authentication type (Basic vs Session).");
+            }
+            throw new \RuntimeException("OData fetch failed for {$odataEntity}: Response is not valid JSON.");
+        }
+
+        return $json;
+    }
+
+    /**
+     * Fetch the OData EDMX metadata XML document.
+     */
+    public function fetchMetadataXml(): string
+    {
+        if ($this->usesSessionAuth()) {
+            $this->ensureAuthenticated();
+        }
+
+        $pathParts = [
+            $this->baseUrl,
+            config('acumatica.odata_path', 'odatav4'),
+        ];
+
+        if ($this->includeTenantInODataUrl) {
+            $pathParts[] = rawurlencode($this->tenant);
+        }
+
+        $url = implode('/', array_filter($pathParts, fn($p) => $p !== '')) . '/$metadata';
+
+        Log::debug("Acumatica OData: Fetching Metadata XML", ['url' => $url]);
+
+        $request = Http::retry(3, 5000)->withOptions([
+            'verify' => $this->verifySsl,
+            'timeout' => $this->timeout,
+            'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
+        ]);
+
+        if ($this->usesSessionAuth()) {
+            $request = $request->withOptions(['cookies' => $this->cookieJar]);
+        } else {
+            $request = $request->withBasicAuth($this->username, $this->password);
+        }
+
+        $response = $request->get($url);
+
+        if (!$response->successful()) {
+            throw new \RuntimeException(
+                "OData metadata fetch failed: HTTP {$response->status()} - " . mb_substr($response->body(), 0, 500)
+            );
+        }
+
+        return $response->body();
     }
 
     /**
@@ -227,7 +355,7 @@ class AcumaticaODataService
             $records = $result['d']['results'] ?? $result['value'] ?? [];
             $recordsCount = count($records);
             $totalFetched += $recordsCount;
-            
+
             $total = null;
             if (isset($result['@odata.count'])) {
                 $total = (int) $result['@odata.count'];
@@ -238,7 +366,7 @@ class AcumaticaODataService
             if ($onProgress) {
                 $onProgress($totalFetched, $total);
             }
-            
+
             if ($onPageFetched) {
                 if ($recordsCount > 0) {
                     $onPageFetched($records);
@@ -289,16 +417,16 @@ class AcumaticaODataService
 
             return [
                 'connected' => $loginOk,
-                'ping_ms'   => $elapsed,
-                'message'   => $loginOk ? 'Connected' : 'Login failed',
+                'ping_ms' => $elapsed,
+                'message' => $loginOk ? 'Connected' : 'Login failed',
             ];
 
         } catch (\Exception $e) {
             $elapsed = round((microtime(true) - $start) * 1000);
             return [
                 'connected' => false,
-                'ping_ms'   => $elapsed,
-                'message'   => $e->getMessage(),
+                'ping_ms' => $elapsed,
+                'message' => $e->getMessage(),
             ];
         }
     }
@@ -329,7 +457,7 @@ class AcumaticaODataService
             $url = implode('/', $pathParts);
 
             $request = Http::retry(3, 5000)->withOptions([
-                'verify'  => $this->verifySsl,
+                'verify' => $this->verifySsl,
                 'timeout' => 30,
             ])->acceptJson();
 
@@ -350,21 +478,21 @@ class AcumaticaODataService
             if ($response->successful()) {
                 return [
                     'connected' => true,
-                    'ping_ms'   => $elapsed,
-                    'message'   => 'Connected',
+                    'ping_ms' => $elapsed,
+                    'message' => 'Connected',
                 ];
             }
 
             return [
                 'connected' => false,
-                'ping_ms'   => $elapsed,
-                'message'   => 'HTTP ' . $response->status() . ' - ' . mb_substr($response->body(), 0, 200),
+                'ping_ms' => $elapsed,
+                'message' => 'HTTP ' . $response->status() . ' - ' . mb_substr($response->body(), 0, 200),
             ];
         } catch (\Exception $e) {
             return [
                 'connected' => false,
-                'ping_ms'   => 0,
-                'message'   => $e->getMessage(),
+                'ping_ms' => 0,
+                'message' => $e->getMessage(),
             ];
         }
     }
@@ -393,9 +521,9 @@ class AcumaticaODataService
             $url = implode('/', $pathParts);
 
             $request = Http::retry(3, 5000)->withOptions([
-                'verify'  => $this->verifySsl,
+                'verify' => $this->verifySsl,
                 'timeout' => 30,
-                'curl'    => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
+                'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
             ])->acceptJson();
 
             if ($this->usesSessionAuth()) {
@@ -437,9 +565,9 @@ class AcumaticaODataService
 
     private function ensureAuthenticated(): void
     {
-        if (! $this->authenticated || ! $this->cookieJar) {
+        if (!$this->authenticated || !$this->cookieJar) {
             $ok = $this->login();
-            if (! $ok) {
+            if (!$ok) {
                 throw new \RuntimeException('Unable to authenticate with Acumatica.');
             }
         }
@@ -452,17 +580,17 @@ class AcumaticaODataService
     private function getPersistentRequest(): PendingRequest
     {
         // Lazily create a shared HandlerStack so Guzzle can reuse connections.
-        if (! $this->handlerStack) {
+        if (!$this->handlerStack) {
             $this->handlerStack = HandlerStack::create();
         }
 
         // Build a fresh PendingRequest each call (Laravel clones internally),
         // but share the handler so the underlying cURL handles are reused.
         $request = Http::retry(3, 2000)->withOptions([
-            'verify'  => $this->verifySsl,
+            'verify' => $this->verifySsl,
             'timeout' => $this->timeout,
             'handler' => $this->handlerStack,
-            'curl'    => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
+            'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
         ])->acceptJson();
 
         if ($this->usesSessionAuth()) {
