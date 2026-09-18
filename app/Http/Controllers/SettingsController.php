@@ -300,6 +300,37 @@ class SettingsController extends Controller
             ], 500);
         }
     }
+
+    public function getConnectionObjectColumns(string $key, string $objectName): JsonResponse
+    {
+        try {
+            // Note: objectName may contain slashes for SharePoint, we need to handle it properly if passed via query or path.
+            // Assuming it's passed safely in the URL path.
+            $node = $this->connectionManager->discoverStructure($key, urldecode($objectName));
+            
+            $columns = [];
+            foreach ($node->properties as $prop) {
+                $propName = is_array($prop) ? ($prop['name'] ?? $prop['Field'] ?? '') : (string)$prop;
+                $propType = is_array($prop) ? ($prop['type'] ?? $prop['Type'] ?? '') : '';
+                if ($propName) {
+                    $columns[] = [
+                        'name' => $propName,
+                        'type' => $propType,
+                    ];
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'columns' => $columns
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch columns: ' . $e->getMessage()
+            ], 500);
+        }
+    }
     public function fetchSharePointSites(Request $request): JsonResponse
     {
         $credentials = $request->validate([

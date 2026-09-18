@@ -39,6 +39,7 @@ class ScheduleController extends Controller
         return view('scheduler.index', [
             'schedules' => $transformedSchedules,
             'stats' => $stats,
+            'availableEntities' => \App\Models\SyncEntity::pluck('code'),
         ]);
     }
 

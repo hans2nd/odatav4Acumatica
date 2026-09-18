@@ -251,7 +251,7 @@ class SyncService
                 \Illuminate\Support\Facades\Schema::connection($destConnection)->dropIfExists($stagingTableName);
             }
 
-            $processChunkCallback = function ($recordsChunk) use (&$fetchedCount, &$insertedCount, &$hasData, &$totalRecordsCount, $tableName, $isIncremental, $customFilters, $syncJobId, $destConnection, $log, $schedule, $syncStartTime, $entityKey, $workerId, $isFullSync, $stagingTableName, $writeTableName) {
+            $processChunkCallback = function ($recordsChunk) use (&$fetchedCount, &$insertedCount, &$hasData, &$totalRecordsCount, $tableName, $isIncremental, $customFilters, $syncJobId, $destConnection, $log, $schedule, $syncStartTime, $entityKey, $workerId, $isFullSync, $stagingTableName, $writeTableName, $entity) {
                 // Heartbeat to extend the distributed lock
                 $this->syncStateService->heartbeatSynchronizationLock($schedule->id, $workerId);
 
@@ -274,15 +274,33 @@ class SyncService
                 $fetchedCount += $chunkSize;
 
                 if ($isFirstChunk) {
+                    $fieldMappings = $entity['field_mappings'] ?? [];
+                    
+                    // Validation: The table MUST already exist (Schema-on-Configuration)
+                    if (!\Illuminate\Support\Facades\Schema::connection($destConnection)->hasTable($tableName)) {
+                        $errorMsg = "Target table [{$tableName}] does not exist. Please save 'Manage Fields' configuration first to generate the schema.";
+                        Log::error("Sync [{$entityKey}]: {$errorMsg}");
+                        
+                        // Let's also update the SyncJob to failed
+                        if ($syncJobId) {
+                            \App\Models\SyncJob::where('id', $syncJobId)->update([
+                                'status' => \App\Models\SyncJob::STATUS_FAILED,
+                                'error_message' => $errorMsg,
+                                'completed_at' => now(),
+                            ]);
+                        }
+                        throw new \Exception($errorMsg);
+                    }
+
                     if ($isFullSync) {
-                        $this->schemaManager->ensureTable($destConnection, $tableName, $recordsChunk[0]);
-                        $this->schemaManager->ensureTable($destConnection, $stagingTableName, $recordsChunk[0]);
-                    } else {
-                        $this->schemaManager->ensureTable($destConnection, $tableName, $recordsChunk[0]);
+                        // Create staging table strictly from mappings
+                        $this->schemaManager->ensureTableFromMappings($destConnection, $stagingTableName, $fieldMappings);
                     }
                 }
 
-                $cleanData = $this->schemaManager->cleanRecords($recordsChunk);
+                // Clean and strictly filter unmapped fields
+                $fieldMappings = $entity['field_mappings'] ?? [];
+                $cleanData = $this->schemaManager->cleanRecords($recordsChunk, $fieldMappings);
                 $cleanSize = count($cleanData);
 
                 Log::info("STEP 2: Rows after transformation. {$cleanSize} rows");

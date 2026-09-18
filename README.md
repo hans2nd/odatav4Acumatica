@@ -15,6 +15,13 @@ A powerful synchronization engine built on Laravel to bridge Acumatica ERP (ODat
 
 ## Changelog
 
+### v1.4.7 (Schema Validation & Scheduler UI Fixes)
+- **Feature: Strict Schema-on-Configuration**: Replaced flexible legacy DB mapping with strict schema generation in `EntityController` and `SchemaManager`. Tables are now accurately built with strict data types based exactly on the user's mapping configuration in "Manage Fields".
+- **Enhancement: Settings UI Modernization**: Redesigned the "Manage Fields" table. Upgraded legacy inputs to modern global Alpine components (`customSelect`) for Data Types and Semantic Types, and implemented resizable textareas (`resize-y`) to cleanly wrap long aliases, descriptions, and SQL transformations.
+- **Bugfix: SQL Server Binary Timestamp Migration**: Fixed `SQLSTATE[22007]: Invalid datetime format` during SQL Server Master Warehouse syncs by strictly casting Acumatica `tstamp` rowversion hex codes to `string` columns in the `SchemaManager`.
+- **Bugfix: Scheduler Preset Creation (404 Error)**: Added a dynamic Entity selection dropdown to the "Add Preset" modal in Scheduler Management. This fixes a bug where attempting to create a new schedule sent an empty Entity Key to the `PUT /api/scheduler/` endpoint.
+- **Bugfix: Scheduler Alpine.js Rendering**: Fixed a fatal `sortedSchedules is not defined` template loop bug, and added optional-chaining (`?.`) to prevent `TypeError: Cannot read properties of null` when toggling the cron preview UI before it generated data.
+
 ### v1.4.6 (Report Builder Templates & Excel Export Fixes)
 - **Feature: Dynamic Template Auto-Loading**: Re-engineered the Report Templates CRUD interface. Clicking "Edit" on a saved template now seamlessly redirects and auto-loads the configuration directly into the interactive Report Builder.
 - **Enhancement: In-Place Template Updates**: The Report Builder now supports `PUT` requests when saving an actively loaded template, allowing users to continuously update existing reports without creating duplicates.

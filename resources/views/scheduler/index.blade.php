@@ -70,7 +70,7 @@
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-surface-100">
-                    <template x-for="schedule in sortedSchedules" :key="schedule.entity_key">
+                    <template x-for="schedule in filteredSchedules" :key="schedule.entity_key">
                         <tr class="hover:bg-surface-50/50 transition-colors group">
                             <td class="px-5 py-4">
                                 <span class="font-medium text-surface-800" x-text="schedule.entity_key"></span>
@@ -143,13 +143,24 @@
         <!-- Dialog -->
         <div x-show="isModalOpen" x-transition.scale.origin.bottom class="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col overflow-hidden border border-surface-200/60 z-10">
             <div class="px-6 py-4 border-b border-surface-100 flex justify-between items-center bg-surface-50/50">
-                <h3 class="text-h3 text-surface-800" x-text="'Edit Schedule: ' + modalData.entityKey"></h3>
+                <h3 class="text-h3 text-surface-800" x-text="isEditing ? 'Edit Schedule: ' + modalData.entityKey : 'Add New Schedule'"></h3>
                 <button @click="closeModal()" class="text-surface-400 hover:text-surface-600 transition-colors">
                     <span class="material-symbols-outlined text-[20px]">close</span>
                 </button>
             </div>
             
             <div class="p-6 space-y-4 overflow-y-auto max-h-[70vh]">
+                <!-- Entity Selection -->
+                <div x-show="!isEditing">
+                    <label class="block text-label-sm font-semibold text-surface-700 mb-1.5">Entity to Schedule</label>
+                    <select x-model="modalData.entityKey" class="w-full bg-white border border-surface-300 rounded-lg px-3 py-2 text-body-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 outline-none">
+                        <option value="">-- Select an Entity --</option>
+                        <template x-for="entity in availableEntities" :key="entity">
+                            <option :value="entity" x-text="entity"></option>
+                        </template>
+                    </select>
+                </div>
+
                 <!-- Preset -->
                 <div>
                     <label class="block text-label-sm font-semibold text-surface-700 mb-1.5">Preset</label>
@@ -204,11 +215,11 @@
                     </button>
                     
                     <div x-show="previewData" class="mt-4 p-4 bg-slate-50 border border-slate-200 rounded-lg text-sm space-y-2">
-                        <p><strong>Expression:</strong> <code class="bg-white px-1.5 py-0.5 rounded border border-slate-200" x-text="previewData.cron"></code></p>
-                        <p><strong>Description:</strong> <span class="text-slate-600" x-text="previewData.description"></span></p>
+                        <p><strong>Expression:</strong> <code class="bg-white px-1.5 py-0.5 rounded border border-slate-200" x-text="previewData?.cron"></code></p>
+                        <p><strong>Description:</strong> <span class="text-slate-600" x-text="previewData?.description"></span></p>
                         <p><strong>Next 3 Runs:</strong></p>
                         <ul class="list-disc pl-5 text-slate-600 space-y-0.5">
-                            <template x-for="run in previewData.next_runs">
+                            <template x-for="run in previewData?.next_runs || []">
                                 <li x-text="run"></li>
                             </template>
                         </ul>
@@ -232,12 +243,14 @@
 function schedulerApp() {
     return {
         schedules: @json($schedules),
+        availableEntities: @json($availableEntities),
         search: '',
         statusFilter: 'all',
         sortCol: 'entity_key',
         sortAsc: true,
         
         isModalOpen: false,
+        isEditing: false,
         isSaving: false,
         isLoadingPreview: false,
         modalData: {
@@ -383,6 +396,7 @@ function schedulerApp() {
 
         openEditModal(schedule) {
             if (schedule) {
+                this.isEditing = true;
                 this.modalData = {
                     entityKey: schedule.entity_key,
                     preset: 'Every 15 Minutes', // Assuming UI default; real persistence logic would re-parse cron to preset if we stored preset.
@@ -391,6 +405,17 @@ function schedulerApp() {
                     dayOfMonth: '',
                     customCron: schedule.cron_expression,
                     isActive: schedule.is_active
+                };
+            } else {
+                this.isEditing = false;
+                this.modalData = {
+                    entityKey: '',
+                    preset: 'Every 15 Minutes',
+                    time: '',
+                    dayOfWeek: '',
+                    dayOfMonth: '',
+                    customCron: '',
+                    isActive: true
                 };
             }
             this.previewData = null;
@@ -432,6 +457,10 @@ function schedulerApp() {
         },
 
         async saveSchedule() {
+            if (!this.modalData.entityKey) {
+                if (typeof showToast !== 'undefined') showToast('Please select an entity first', 'error');
+                return;
+            }
             this.isSaving = true;
             try {
                 let res = await fetch(`/api/scheduler/${this.modalData.entityKey}`, {

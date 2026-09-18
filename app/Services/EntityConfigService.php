@@ -181,6 +181,9 @@ class EntityConfigService
                 if (!$record->exists) {
                     $record->data_type = is_array($fieldData) ? ($fieldData['data_type'] ?? null) : null;
                     $record->semantic_type = is_array($fieldData) ? ($fieldData['semantic_type'] ?? null) : null;
+                    if (is_array($fieldData) && isset($fieldData['is_key'])) {
+                        $record->is_key = $fieldData['is_key'];
+                    }
                     $record->save();
                 } else {
                     $dirty = false;
@@ -193,6 +196,8 @@ class EntityConfigService
                             $record->semantic_type = $fieldData['semantic_type'];
                             $dirty = true;
                         }
+                        // We only auto-set is_key if it wasn't manually defined before (or we could just not touch it on existing records)
+                        // It's safer to only set it on creation so we don't overwrite user changes.
                     }
                     if ($dirty) $record->save();
                 }

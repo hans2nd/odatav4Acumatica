@@ -78,12 +78,23 @@ class SyncEntity extends Model
             'is_active'              => $this->is_active,
         ];
 
-        // Include available_fields if fields relationship is loaded
+        // Include available_fields and full field mappings if fields relationship is loaded
         if ($this->relationLoaded('fields') && $this->fields->isNotEmpty()) {
             $config['available_fields'] = $this->fields
                 ->where('is_enabled', true)
                 ->pluck('source_field')
                 ->values()
+                ->toArray();
+                
+            $config['field_mappings'] = $this->fields
+                ->where('is_enabled', true)
+                ->keyBy('source_field')
+                ->map(function ($field) {
+                    return [
+                        'destination_field' => $field->destination_field,
+                        'data_type' => $field->data_type,
+                    ];
+                })
                 ->toArray();
         }
 

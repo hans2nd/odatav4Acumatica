@@ -119,16 +119,19 @@ class MetadataRepository implements MetadataRepositoryInterface
                             $semanticType = 'dimension';
                         }
 
+                        $isPrimaryKey = (strcasecmp($propName, 'id') === 0 || preg_match('/ID$/i', $propName));
+
                         $fieldNames[] = [
                             'name'          => $propName,
                             'data_type'     => $dataType,
                             'semantic_type' => $semanticType,
+                            'is_key'        => $isPrimaryKey,
                         ];
 
                         $fields[] = new MetadataField(
                             name: $propName,
                             dataType: $dataType,
-                            isPrimaryKey: (strcasecmp($propName, 'id') === 0 || preg_match('/ID$/i', $propName))
+                            isPrimaryKey: $isPrimaryKey
                         );
                     }
                 }

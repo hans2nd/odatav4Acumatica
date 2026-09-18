@@ -9,3 +9,276 @@
         font-display: block;
     }
 }
+
+@layer components {
+    /* ── Modal Animations ───────────────────────────────── */
+    .modal-backdrop {
+        @apply fixed inset-0 z-50;
+        animation: modal-backdrop-in 200ms ease-out forwards;
+    }
+    .modal-backdrop.closing {
+        animation: modal-backdrop-out 200ms ease-in forwards;
+    }
+    @keyframes modal-backdrop-in {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+    @keyframes modal-backdrop-out {
+        from { opacity: 1; }
+        to { opacity: 0; }
+    }
+
+    .modal-overlay {
+        @apply absolute inset-0;
+        background: rgba(15, 23, 42, 0.45);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+    }
+
+    .modal-panel {
+        animation: modal-panel-in 300ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+    .modal-backdrop.closing .modal-panel {
+        animation: modal-panel-out 200ms ease-in forwards;
+    }
+    @keyframes modal-panel-in {
+        from {
+            opacity: 0;
+            transform: scale(0.95) translateY(12px);
+        }
+        to {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+        }
+    }
+    @keyframes modal-panel-out {
+        from {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+        }
+        to {
+            opacity: 0;
+            transform: scale(0.95) translateY(12px);
+        }
+    }
+
+    /* ── Card Component ──────────────────────────────────── */
+    .ui-card {
+        @apply bg-white rounded-2xl border border-surface-200/60 flex flex-col overflow-hidden;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.03);
+        transition: box-shadow 300ms ease, transform 300ms ease;
+    }
+    .ui-card:hover {
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.05);
+        transform: translateY(-1px);
+    }
+    .ui-card-header {
+        @apply px-5 py-4 border-b border-surface-100 flex justify-between items-center;
+        background: linear-gradient(180deg, rgba(248,250,252,0.8) 0%, rgba(255,255,255,0.4) 100%);
+    }
+    .ui-card-icon {
+        @apply p-2 rounded-xl flex items-center justify-center;
+    }
+
+    /* ── Button Variants ─────────────────────────────────── */
+    .ui-btn {
+        @apply inline-flex items-center justify-center gap-1.5 font-medium rounded-xl transition-all duration-200 active:scale-[0.97] relative overflow-hidden;
+    }
+    .ui-btn-sm {
+        @apply px-3 py-1.5 text-label-sm;
+    }
+    .ui-btn-md {
+        @apply px-4 py-2 text-label-md;
+    }
+
+    .ui-btn-primary {
+        @apply bg-brand-600 text-white shadow-sm;
+    }
+    .ui-btn-primary:hover {
+        @apply bg-brand-700;
+        box-shadow: 0 2px 8px rgba(99,102,241,0.3);
+    }
+    .ui-btn-secondary {
+        @apply bg-surface-100 text-surface-600 border border-surface-200;
+    }
+    .ui-btn-secondary:hover {
+        @apply bg-surface-200 text-surface-800;
+    }
+    .ui-btn-danger {
+        @apply bg-red-50 text-red-600 border border-red-100 shadow-sm;
+    }
+    .ui-btn-danger:hover {
+        @apply bg-red-100;
+    }
+    .ui-btn-danger-solid {
+        @apply bg-red-600 text-white shadow-sm;
+    }
+    .ui-btn-danger-solid:hover {
+        @apply bg-red-700;
+        box-shadow: 0 2px 8px rgba(239,68,68,0.3);
+    }
+    .ui-btn-ghost {
+        @apply bg-transparent text-surface-500;
+    }
+    .ui-btn-ghost:hover {
+        @apply bg-surface-100 text-surface-800;
+    }
+    .ui-btn-outline {
+        @apply bg-white border border-surface-200 text-surface-600;
+    }
+    .ui-btn-outline:hover {
+        @apply bg-surface-50 border-surface-300;
+    }
+    .ui-btn-accent {
+        @apply bg-indigo-50 text-indigo-600 border border-indigo-200;
+    }
+    .ui-btn-accent:hover {
+        @apply bg-indigo-100;
+    }
+    .ui-btn-test {
+        @apply bg-blue-50 text-blue-600 border border-blue-200;
+    }
+    .ui-btn-test:hover {
+        @apply bg-blue-100;
+    }
+    .ui-btn-diag {
+        @apply bg-purple-50 text-purple-600 border border-purple-200;
+    }
+    .ui-btn-diag:hover {
+        @apply bg-purple-100;
+    }
+
+    /* ── Icon Button ──────────────────────────────────────── */
+    .ui-icon-btn {
+        @apply p-1.5 rounded-lg transition-all duration-200;
+    }
+    .ui-icon-btn:hover {
+        @apply bg-surface-100;
+    }
+
+    /* ── Badge Variants ──────────────────────────────────── */
+    .ui-badge {
+        @apply inline-flex items-center px-2.5 py-1 rounded-lg text-label-sm font-semibold;
+    }
+    .ui-badge-success {
+        background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+        @apply text-emerald-700 border border-emerald-200/60;
+    }
+    .ui-badge-info {
+        background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+        @apply text-sky-700 border border-sky-200/60;
+    }
+    .ui-badge-warning {
+        background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+        @apply text-amber-700 border border-amber-200/60;
+    }
+    .ui-badge-violet {
+        background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
+        @apply text-violet-700 border border-violet-200/60;
+    }
+    .ui-badge-teal {
+        background: linear-gradient(135deg, #f0fdfa 0%, #ccfbf1 100%);
+        @apply text-teal-700 border border-teal-200/60;
+    }
+    .ui-badge-neutral {
+        @apply bg-surface-100 text-surface-600 border border-surface-200/60;
+    }
+
+    /* ── Form Controls ───────────────────────────────────── */
+    .ui-input {
+        @apply w-full border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800;
+        @apply focus:outline-none focus:border-brand-500;
+        background: rgba(248, 250, 252, 0.5);
+        transition: border-color 200ms ease, box-shadow 200ms ease, background-color 200ms ease;
+    }
+    .ui-input:focus {
+        background: #fff;
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+    }
+    .ui-input::placeholder {
+        @apply text-surface-400;
+    }
+    .ui-input-mono {
+        @apply font-mono;
+    }
+
+    .ui-select {
+        @apply w-full border border-surface-200 rounded-xl px-3.5 py-2.5 text-body-sm text-surface-800;
+        @apply focus:outline-none focus:border-brand-500;
+        background: rgba(248, 250, 252, 0.5);
+        transition: border-color 200ms ease, box-shadow 200ms ease;
+    }
+    .ui-select:focus {
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+    }
+
+    .ui-label {
+        @apply text-label-md text-surface-600 block mb-1.5;
+    }
+    .ui-hint {
+        @apply text-[11px] text-surface-400 mt-1;
+    }
+
+    .ui-checkbox {
+        @apply w-4 h-4 rounded border-surface-300 text-brand-600 focus:ring-brand-500 cursor-pointer;
+    }
+
+    /* ── Data Table ───────────────────────────────────────── */
+    .ui-table {
+        @apply w-full text-left border-collapse;
+    }
+    .ui-table thead {
+        @apply bg-surface-50 border-b border-surface-200;
+    }
+    .ui-table th {
+        @apply py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider;
+    }
+    .ui-table tbody {
+        @apply text-body-md text-surface-700 divide-y divide-surface-100;
+    }
+    .ui-table tbody tr {
+        @apply transition-colors duration-150;
+    }
+    .ui-table tbody tr:hover {
+        background: linear-gradient(90deg, rgba(99,102,241,0.02) 0%, rgba(248,250,252,0.5) 100%);
+    }
+    .ui-table td {
+        @apply py-3 px-5;
+    }
+
+    /* ── Status Dot ───────────────────────────────────────── */
+    .status-dot {
+        @apply w-2 h-2 rounded-full inline-block;
+    }
+    .status-dot-online {
+        @apply bg-emerald-500;
+        box-shadow: 0 0 8px rgba(16,185,129,0.4);
+    }
+    .status-dot-offline {
+        @apply bg-surface-300;
+    }
+    .status-dot-error {
+        @apply bg-red-500;
+        box-shadow: 0 0 8px rgba(239,68,68,0.4);
+    }
+
+    /* ── Loading Overlay ──────────────────────────────────── */
+    .ui-loading-overlay {
+        @apply absolute inset-0 z-10 flex flex-col items-center justify-center;
+        background: rgba(255,255,255,0.85);
+        backdrop-filter: blur(4px);
+        -webkit-backdrop-filter: blur(4px);
+    }
+
+    /* ── Section Divider ──────────────────────────────────── */
+    .ui-section {
+        @apply p-4 rounded-xl border border-surface-200/60 space-y-4;
+        background: linear-gradient(135deg, rgba(248,250,252,0.5) 0%, rgba(255,255,255,0.3) 100%);
+    }
+
+    /* ── Watermark Container ──────────────────────────────── */
+    .ui-watermark-section {
+        @apply grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 rounded-xl border border-amber-200/60;
+        background: linear-gradient(135deg, rgba(255,251,235,0.5) 0%, rgba(254,243,199,0.3) 100%);
+    }
+}

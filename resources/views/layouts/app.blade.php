@@ -610,6 +610,73 @@
                 }
             }, 10000);
         });
+
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('customSelect', (selectId) => ({
+                open: false,
+                selectedValue: '',
+                selectedLabel: 'Select...',
+                options: [],
+                
+                init() {
+                    this.syncOptions();
+                    
+                    const selectEl = document.getElementById(selectId);
+                    if (selectEl) {
+                        selectEl.addEventListener('change', () => this.syncValue());
+                        
+                        // MutationObserver to watch for options dynamically changing
+                        const observer = new MutationObserver(() => this.syncOptions());
+                        observer.observe(selectEl, { childList: true, subtree: true });
+                    }
+                },
+                
+                syncOptions() {
+                    const selectEl = document.getElementById(selectId);
+                    if (!selectEl) return;
+                    
+                    this.options = Array.from(selectEl.options).map(opt => ({
+                        value: opt.value,
+                        label: opt.text,
+                        disabled: opt.disabled
+                    })).filter(opt => !opt.disabled); 
+                    
+                    this.syncValue();
+                },
+                
+                syncValue() {
+                    const selectEl = document.getElementById(selectId);
+                    if (!selectEl) return;
+                    this.selectedValue = selectEl.value;
+                    const selectedOpt = this.options.find(o => o.value === this.selectedValue);
+                    
+                    if (selectedOpt) {
+                        this.selectedLabel = selectedOpt.label;
+                    } else {
+                        const activeOpt = Array.from(selectEl.options).find(o => o.selected);
+                        this.selectedLabel = activeOpt ? activeOpt.text : 'Select...';
+                    }
+                },
+                
+                toggle() {
+                    this.open = !this.open;
+                },
+                
+                close() {
+                    this.open = false;
+                },
+                
+                selectOption(val) {
+                    const selectEl = document.getElementById(selectId);
+                    if (selectEl) {
+                        selectEl.value = val;
+                        selectEl.dispatchEvent(new Event('change'));
+                    }
+                    this.syncValue();
+                    this.close();
+                }
+            }));
+        });
     </script>
 
     @yield('scripts')

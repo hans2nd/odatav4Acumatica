@@ -206,6 +206,24 @@ class EntityController extends Controller
 
         $this->entityConfig->updateFields($entity->id, $validated['fields']);
 
+        // Explicit Schema Generation on Save
+        try {
+            $entity->load('fields'); // Refresh the relationship so the new fields are loaded
+            $config = $entity->toConfigArray();
+            $destConnection = $config['destination_connection'] ?? 'database_default';
+            $tableName = $config['table'];
+            
+            // toConfigArray() will load fields, so we can use it to get mappings
+            $fieldMappings = $config['field_mappings'] ?? [];
+            if (!empty($fieldMappings) && $tableName) {
+                $schemaManager = app(\App\Services\SchemaManager::class);
+                $schemaManager->ensureTableFromMappings($destConnection, $tableName, $fieldMappings);
+            }
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error("Failed to generate strict schema for {$key}: " . $e->getMessage());
+            // We don't fail the request here, but log it so the user can be warned or it can be retried during sync.
+        }
+
         // Auto-refresh AI schema cache to reflect Semantic Type changes for Suggest Semantics
         try {
             $connectionId = \App\Models\AiSetting::getConfig('analytics_connection_id');

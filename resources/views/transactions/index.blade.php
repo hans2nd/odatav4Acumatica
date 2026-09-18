@@ -101,7 +101,7 @@
 </div>
     {{-- Sync Filter Modal --}}
     <div id="syncModal" class="fixed inset-0 z-[100] hidden items-center justify-center bg-black/40 backdrop-blur-sm transition-all duration-200 opacity-0">
-        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col transform transition-all duration-200 scale-95 border border-surface-200/60">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col transform transition-all duration-200 scale-95 border border-surface-200/60">
             <div class="px-6 py-4 border-b border-surface-100 flex justify-between items-center">
             <div>
                 <h2 class="text-h2 text-surface-800">Sync <span id="syncModalEntityName" class="text-brand-600"></span></h2>
@@ -113,11 +113,11 @@
         </div>
         
         <div class="p-6 overflow-y-auto max-h-[60vh]">
-            <div id="syncModalContent" class="space-y-4">
+            <div id="syncModalContent" class="space-y-4 min-h-[300px] pb-32">
                 <div class="flex justify-between items-end">
                     <label class="text-label-lg text-surface-700">Custom Filters (Optional)</label>
                     <div class="flex gap-2">
-                        <button onclick="refreshEntityFields()" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-100 text-surface-700 text-label-sm hover:bg-surface-200 transition-all duration-200" title="Refresh available fields from Acumatica">
+                        <button onclick="refreshEntityFields()" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-100 text-surface-700 text-label-sm hover:bg-surface-200 transition-all duration-200" title="Refresh available fields from source">
                             <span class="material-symbols-outlined text-[14px]">refresh</span> Refresh Fields
                         </button>
                         <button onclick="addFilterRow()" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-100 text-surface-700 text-label-sm hover:bg-surface-200 transition-all duration-200">
@@ -128,14 +128,12 @@
                 
                 <div id="syncModalLoading" class="hidden flex items-center justify-center py-4 bg-surface-50 rounded-xl border border-surface-100">
                     <span class="material-symbols-outlined text-[20px] text-brand-500 spin mr-2">sync</span>
-                    <p class="text-label-sm text-surface-500">Fetching available fields from server...</p>
+                    <p class="text-label-sm text-surface-500">Fetching available fields from source...</p>
                 </div>
 
                 <div id="filtersContainer" class="space-y-2">
                     <!-- Filter rows will be inserted here -->
                 </div>
-                
-                <datalist id="acumaticaFieldsDataList"></datalist>
                 
                 <div id="emptyFiltersMsg" class="py-6 text-center border-2 border-dashed border-surface-200 rounded-xl bg-surface-50">
                     <span class="material-symbols-outlined text-surface-300 text-3xl mb-2 block">filter_alt_off</span>
@@ -388,12 +386,24 @@
         }
 
         function populateDatalist(fields, currentFiltersToRestore) {
-            const datalist = document.getElementById('acumaticaFieldsDataList');
-            datalist.innerHTML = '';
-            fields.forEach(f => {
-                const opt = document.createElement('option');
-                opt.value = f;
-                datalist.appendChild(opt);
+            // Populate the dropdown lists for all existing filter rows
+            const lists = document.querySelectorAll('ul[id$="-list"]');
+            lists.forEach(ul => {
+                ul.innerHTML = '';
+                fields.forEach(f => {
+                    const li = document.createElement('li');
+                    li.className = 'px-3.5 py-2 hover:bg-surface-100 cursor-pointer text-sm font-mono text-surface-800 transition-colors';
+                    li.textContent = f;
+                    li.onclick = function() {
+                        const inputId = ul.id.replace('-list', '-input');
+                        const dropdownId = ul.id.replace('-list', '-dropdown');
+                        const input = document.getElementById(inputId);
+                        input.value = f;
+                        document.getElementById(dropdownId).classList.add('hidden');
+                        handleFieldChange(input);
+                    };
+                    ul.appendChild(li);
+                });
             });
 
             if (currentFiltersToRestore && currentFiltersToRestore.length > 0) {
@@ -408,35 +418,109 @@
             loadEntityFields(currentSyncEntity, [], true);
         }
 
+        function filterSyncFieldsList(input, listId) {
+            const filter = input.value.toLowerCase();
+            const list = document.getElementById(listId);
+            if(!list) return;
+            const items = list.getElementsByTagName('li');
+            for (let i = 0; i < items.length; i++) {
+                const text = items[i].textContent || items[i].innerText;
+                if (text.toLowerCase().indexOf(filter) > -1) {
+                    items[i].style.display = "";
+                } else {
+                    items[i].style.display = "none";
+                }
+            }
+        }
+
         function addFilterRow(field = '', op = 'eq', val = '') {
             const container = document.getElementById('filtersContainer');
+            const uniqueId = 'field-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+            const selectId = 'op-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
 
             const row = document.createElement('div');
-            row.className = 'flex items-center gap-2 filter-row animate-fade-up';
+            row.className = 'flex flex-col sm:flex-row items-start sm:items-center gap-2 filter-row animate-fade-up';
 
             row.innerHTML = `
-            <input type="text" list="acumaticaFieldsDataList" class="filter-field flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Search or select field..." onchange="handleFieldChange(this)">
-            <select class="filter-operator w-36 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2">
-                <option value="eq" ${op === 'eq' ? 'selected' : ''}>Equals (=)</option>
-                <option value="ne" ${op === 'ne' ? 'selected' : ''}>Not Eq (!=)</option>
-                <option value="contains" ${op === 'contains' ? 'selected' : ''}>Contains</option>
-                <option value="startswith" ${op === 'startswith' ? 'selected' : ''}>Starts With</option>
-                <option value="endswith" ${op === 'endswith' ? 'selected' : ''}>Ends With</option>
-                <option value="gt" ${op === 'gt' ? 'selected' : ''}>Greater (>)</option>
-                <option value="ge" ${op === 'ge' ? 'selected' : ''}>Greater Eq (>=)</option>
-                <option value="lt" ${op === 'lt' ? 'selected' : ''}>Less (<)</option>
-                <option value="le" ${op === 'le' ? 'selected' : ''}>Less Eq (<=)</option>
-            </select>
-            <input type="text" class="filter-value flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Value...">
-            <button onclick="removeFilterRow(this)" class="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all duration-200" title="Remove filter">
-                <span class="material-symbols-outlined text-[16px]">delete</span>
-            </button>
+            <div class="relative flex-1 w-full">
+                <input type="text" id="${uniqueId}-input" class="filter-field w-full rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2 px-3" 
+                    placeholder="Search or select field..." 
+                    autocomplete="off"
+                    onfocus="document.getElementById('${uniqueId}-dropdown').classList.remove('hidden')"
+                    onblur="setTimeout(() => { document.getElementById('${uniqueId}-dropdown').classList.add('hidden'); }, 200)"
+                    oninput="filterSyncFieldsList(this, '${uniqueId}-list'); handleFieldChange(this)">
+                
+                <div id="${uniqueId}-dropdown" class="absolute z-20 w-full mt-1 bg-white border border-surface-200 rounded-xl shadow-lg max-h-48 overflow-y-auto hidden">
+                    <ul id="${uniqueId}-list" class="py-1">
+                        <!-- Populated below -->
+                    </ul>
+                </div>
+            </div>
+            
+            <div x-data="customSelect('${selectId}')" class="relative w-full sm:w-36">
+                <select id="${selectId}" class="filter-operator hidden">
+                    <option value="eq" ${op === 'eq' ? 'selected' : ''}>Equals (=)</option>
+                    <option value="ne" ${op === 'ne' ? 'selected' : ''}>Not Eq (!=)</option>
+                    <option value="contains" ${op === 'contains' ? 'selected' : ''}>Contains</option>
+                    <option value="startswith" ${op === 'startswith' ? 'selected' : ''}>Starts With</option>
+                    <option value="endswith" ${op === 'endswith' ? 'selected' : ''}>Ends With</option>
+                    <option value="gt" ${op === 'gt' ? 'selected' : ''}>Greater (>)</option>
+                    <option value="ge" ${op === 'ge' ? 'selected' : ''}>Greater Eq (>=)</option>
+                    <option value="lt" ${op === 'lt' ? 'selected' : ''}>Less (<)</option>
+                    <option value="le" ${op === 'le' ? 'selected' : ''}>Less Eq (<=)</option>
+                </select>
+                
+                <button type="button" @click="toggle" @click.away="close" class="ui-input flex justify-between items-center w-full bg-surface-50 border-surface-200 text-left focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 py-2 px-3 h-full rounded-xl">
+                    <span x-text="selectedLabel" class="truncate text-surface-900 text-body-sm"></span>
+                    <span class="material-symbols-outlined text-[18px] text-surface-400 transition-transform duration-200" :class="open ? 'rotate-180' : ''">expand_more</span>
+                </button>
+                
+                <div x-show="open" x-transition.opacity.duration.200ms class="absolute z-30 w-full mt-1 bg-white border border-surface-200 rounded-xl shadow-lg max-h-60 overflow-y-auto" style="display: none;">
+                    <ul class="py-1">
+                        <template x-for="option in options" :key="option.value">
+                            <li @click="selectOption(option.value)" 
+                                class="px-3.5 py-2.5 hover:bg-surface-50 cursor-pointer text-sm transition-colors flex justify-between items-center"
+                                :class="option.value === selectedValue ? 'bg-brand-50 text-brand-700 font-medium' : 'text-surface-700'"
+                            >
+                                <span x-text="option.label"></span>
+                                <span x-show="option.value === selectedValue" class="material-symbols-outlined text-[16px] text-brand-600">check</span>
+                            </li>
+                        </template>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-2 flex-1 w-full">
+                <input type="text" class="filter-value flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2 px-3" placeholder="Value...">
+                <button onclick="removeFilterRow(this)" class="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all duration-200" title="Remove filter">
+                    <span class="material-symbols-outlined text-[16px]">delete</span>
+                </button>
+            </div>
         `;
         
             row.querySelector('.filter-field').value = field;
             row.querySelector('.filter-value').value = val;
-
             container.appendChild(row);
+
+            // Populate the dropdown list for this specific row if fields are available
+            const ul = row.querySelector(`#${uniqueId}-list`);
+            if (ul && window.entityMetadataCache && currentSyncEntity) {
+                const fields = window.entityMetadataCache[currentSyncEntity] || availableFields || [];
+                ul.innerHTML = '';
+                fields.forEach(f => {
+                    const li = document.createElement('li');
+                    li.className = 'px-3.5 py-2 hover:bg-surface-100 cursor-pointer text-sm font-mono text-surface-800 transition-colors';
+                    li.textContent = f;
+                    li.onclick = function() {
+                        const input = document.getElementById(`${uniqueId}-input`);
+                        input.value = f;
+                        document.getElementById(`${uniqueId}-dropdown`).classList.add('hidden');
+                        handleFieldChange(input);
+                    };
+                    ul.appendChild(li);
+                });
+            }
+
             checkEmptyFilters();
         }
 
