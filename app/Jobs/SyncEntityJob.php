@@ -6,6 +6,7 @@ use App\Models\SyncJob;
 use App\Services\AcumaticaODataService;
 use App\Services\SyncService;
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
@@ -13,7 +14,7 @@ use Illuminate\Queue\SerializesModels;
 
 use Illuminate\Support\Facades\Log;
 
-class SyncEntityJob implements ShouldQueue
+class SyncEntityJob implements ShouldQueue, ShouldBeUnique
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
@@ -44,6 +45,14 @@ class SyncEntityJob implements ShouldQueue
         public ?string $syncJobId = null
     ) {
         $this->workerId = uniqid("worker_{$this->entityKey}_");
+    }
+
+    /**
+     * Tentukan ID unik untuk job ini agar Laravel tidak menduplikasi antrean.
+     */
+    public function uniqueId(): string
+    {
+        return $this->entityKey;
     }
 
     public function handle(SyncService $syncService): void

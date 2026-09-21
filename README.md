@@ -15,6 +15,9 @@ A powerful synchronization engine built on Laravel to bridge Acumatica ERP (ODat
 
 ## Changelog
 
+### v1.4.8 (Queue Stability & Background Sync Hardening)
+- **Enhancement: Unique Queue Jobs**: Mengimplementasikan interface `ShouldBeUnique` dan method `uniqueId()` pada `SyncEntityJob`. Hal ini menjamin bahwa antrean sinkronisasi yang duplikat untuk entitas yang sama akan otomatis ditolak oleh Laravel jika job sebelumnya masih berjalan. Update ini mencegah penumpukan antrean (queue buildup), proses yang tumpang tindih, dan resource VPS (RAM/CPU) yang hang di production.
+
 ### v1.4.7 (Schema Validation & Scheduler UI Fixes)
 - **Feature: Strict Schema-on-Configuration**: Replaced flexible legacy DB mapping with strict schema generation in `EntityController` and `SchemaManager`. Tables are now accurately built with strict data types based exactly on the user's mapping configuration in "Manage Fields".
 - **Enhancement: Settings UI Modernization**: Redesigned the "Manage Fields" table. Upgraded legacy inputs to modern global Alpine components (`customSelect`) for Data Types and Semantic Types, and implemented resizable textareas (`resize-y`) to cleanly wrap long aliases, descriptions, and SQL transformations.
