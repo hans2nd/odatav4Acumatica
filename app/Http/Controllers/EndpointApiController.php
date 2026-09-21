@@ -108,9 +108,16 @@ class EndpointApiController extends Controller
         $all = $this->connectionService->getAll();
         $dbConnections = [];
         $allTables = [];
+        $user = auth()->user();
 
         foreach ($all as $key => $conn) {
             if (in_array($conn['type'] ?? '', \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes()) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
+                
+                // Check permissions
+                if ($user && !$user->isSuperAdmin() && !$user->hasPermission("connection.{$key}.access")) {
+                    continue;
+                }
+
                 $dbConnections[] = [
                     'key'  => $key,
                     'name' => $conn['name'] ?? $key,

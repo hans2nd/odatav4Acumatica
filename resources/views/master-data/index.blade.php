@@ -125,6 +125,48 @@
             <div class="p-6 overflow-y-auto max-h-[60vh]">
                 <div id="syncModalContent" class="space-y-4 min-h-[300px] pb-32">
                     <div class="flex justify-between items-end">
+                        <label class="text-label-lg text-surface-700">Sync Mode</label>
+                    </div>
+                    <div class="mb-4">
+                        <select id="syncModeOverride" onchange="toggleSyncWatermark()" class="w-full rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2 px-3">
+                            <option value="default">Default (Follow Settings)</option>
+                            <option value="incremental">Force Incremental Sync (Upsert only)</option>
+                            <option value="full">Force Full Sync (Replace all data)</option>
+                        </select>
+                    </div>
+
+                    <div id="syncWatermarkOverrideContainer" class="hidden space-y-4 mb-4 p-4 bg-surface-50 border border-surface-100 rounded-xl">
+                        <div class="text-label-sm font-semibold text-surface-700 mb-2">Incremental Sync Overrides (Optional)</div>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label class="text-label-sm text-surface-700 block mb-1">Watermark Type</label>
+                                <select id="watermarkTypeOverride" class="w-full rounded-xl border-surface-200 bg-white text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2 px-3">
+                                    <option value="">Default Settings</option>
+                                    <option value="datetime">DateTime</option>
+                                    <option value="integer">Integer</option>
+                                    <option value="string">String</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-label-sm text-surface-700 flex justify-between items-center mb-1">
+                                    <span>Watermark Column</span>
+                                </label>
+                                <div class="relative">
+                                    <input type="text" id="watermarkColumnOverride" placeholder="e.g. LastModifiedDateTime" autocomplete="off"
+                                        onfocus="document.getElementById('watermarkColumnDropdownOverride').classList.remove('hidden')"
+                                        onblur="setTimeout(() => { document.getElementById('watermarkColumnDropdownOverride').classList.add('hidden'); }, 200)"
+                                        oninput="filterSyncFieldsList(this, 'watermarkColumnListOverride')"
+                                        class="w-full rounded-xl border-surface-200 bg-white text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2 px-3">
+                                    
+                                    <div id="watermarkColumnDropdownOverride" class="absolute z-20 w-full mt-1 bg-white border border-surface-200 rounded-xl shadow-lg max-h-48 overflow-y-auto hidden">
+                                        <ul id="watermarkColumnListOverride" class="py-1"></ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-between items-end mt-4">
                         <label class="text-label-lg text-surface-700">Custom Filters (Optional)</label>
                         <div class="flex gap-2">
                             <button onclick="refreshEntityFields()"
@@ -331,6 +373,10 @@
                 modal.classList.add('hidden');
                 modal.classList.remove('flex');
                 document.getElementById('filtersContainer').innerHTML = '';
+                document.getElementById('syncModeOverride').value = 'default';
+                if (document.getElementById('watermarkTypeOverride')) document.getElementById('watermarkTypeOverride').value = '';
+                if (document.getElementById('watermarkColumnOverride')) document.getElementById('watermarkColumnOverride').value = '';
+                if (typeof toggleSyncWatermark === 'function') toggleSyncWatermark();
                 checkEmptyFilters();
             }, 200);
         }
@@ -434,6 +480,23 @@
             if (currentFiltersToRestore && currentFiltersToRestore.length > 0) {
                 currentFiltersToRestore.forEach(f => {
                     addFilterRow(f.field, f.operator, f.value);
+                });
+            }
+
+            // Populate watermark override list
+            const watermarkList = document.getElementById('watermarkColumnListOverride');
+            if (watermarkList) {
+                watermarkList.innerHTML = '';
+                fields.forEach(f => {
+                    const li = document.createElement('li');
+                    li.className = 'px-3.5 py-2 hover:bg-surface-100 cursor-pointer text-sm font-mono text-surface-800 transition-colors';
+                    li.textContent = f;
+                    li.onmousedown = function(e) {
+                        e.preventDefault(); // Prevent onblur from firing first
+                        document.getElementById('watermarkColumnOverride').value = f;
+                        document.getElementById('watermarkColumnDropdownOverride').classList.add('hidden');
+                    };
+                    watermarkList.appendChild(li);
                 });
             }
         }
@@ -579,6 +642,20 @@
             }
         }
 
+        function toggleSyncWatermark() {
+            const mode = document.getElementById('syncModeOverride').value;
+            const container = document.getElementById('syncWatermarkOverrideContainer');
+            if (container) {
+                if (mode === 'incremental') {
+                    container.classList.remove('hidden');
+                } else {
+                    container.classList.add('hidden');
+                    document.getElementById('watermarkTypeOverride').value = '';
+                    document.getElementById('watermarkColumnOverride').value = '';
+                }
+            }
+        }
+
         async function executeFilteredSync() {
             const rows = document.querySelectorAll('.filter-row');
             const custom_filters = [];
@@ -626,7 +703,10 @@
 
             const payload = {
                 custom_filters: custom_filters,
-                save_filters: document.getElementById('saveFiltersCb').checked
+                save_filters: document.getElementById('saveFiltersCb').checked,
+                sync_mode_override: document.getElementById('syncModeOverride').value,
+                watermark_type_override: document.getElementById('watermarkTypeOverride') ? document.getElementById('watermarkTypeOverride').value : null,
+                watermark_column_override: document.getElementById('watermarkColumnOverride') ? document.getElementById('watermarkColumnOverride').value : null
             };
 
             try {

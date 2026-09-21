@@ -74,7 +74,7 @@ class SyncService
     |--------------------------------------------------------------------------
     */
 
-    public function syncEntity(string $entityKey, array $customFilters = [], string $source = 'manual', ?string $syncJobId = null, ?string $workerId = null): SyncLog
+    public function syncEntity(string $entityKey, array $customFilters = [], string $source = 'manual', ?string $syncJobId = null, ?string $workerId = null, ?string $syncModeOverride = null, ?string $watermarkTypeOverride = null, ?string $watermarkColumnOverride = null): SyncLog
     {
         $entity = $this->entityConfigService->get($entityKey);
 
@@ -131,10 +131,16 @@ class SyncService
             // --- BEGIN INCREMENTAL LOGIC ---
             $filter = '';
             $isIncremental = ($entity['sync_mode'] ?? 'full') === 'incremental';
+            if ($syncModeOverride === 'full') {
+                $isIncremental = false;
+            } elseif ($syncModeOverride === 'incremental') {
+                $isIncremental = true;
+            }
             $watermark = null;
 
             if ($isIncremental && $this->schemaManager->tableExists($destConnection, $tableName)) {
-                $lastModifiedCol = $entity['watermark_column'] ?? null;
+                $lastModifiedCol = $watermarkColumnOverride ?: ($entity['watermark_column'] ?? null);
+                $watermarkType = $watermarkTypeOverride ?: ($entity['watermark_type'] ?? 'datetime');
                 
                 // Fallback to auto-detect if no specific watermark column was configured
                 if (empty($lastModifiedCol)) {
@@ -154,8 +160,15 @@ class SyncService
 
                 if ($lastModifiedCol) {
                     $maxModifiedStr = DB::connection($destConnection)->table($tableName)->max($lastModifiedCol);
-                    if ($maxModifiedStr) {
-                        $watermark = new \App\Services\Sync\Watermarks\TimestampWatermark($lastModifiedCol, $maxModifiedStr);
+                    if ($maxModifiedStr !== null) {
+                        if ($watermarkType === 'integer') {
+                            $watermark = new \App\Services\Sync\Watermarks\IntegerWatermark($lastModifiedCol, $maxModifiedStr);
+                        } elseif ($watermarkType === 'string') {
+                            $watermark = new \App\Services\Sync\Watermarks\StringWatermark($lastModifiedCol, $maxModifiedStr);
+                        } else {
+                            $watermark = new \App\Services\Sync\Watermarks\TimestampWatermark($lastModifiedCol, $maxModifiedStr);
+                        }
+                        
                         $filter = $watermark->toFilterString();
                         Log::info("Sync [{$entityKey}] Session [{$workerId}]: Incremental sync starting from {$filter}");
                     } else {

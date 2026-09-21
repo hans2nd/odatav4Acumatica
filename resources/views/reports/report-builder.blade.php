@@ -335,21 +335,33 @@
             tableInput.value = '';
             tableInput.disabled = true;
             tableList.innerHTML =
-                '<li class="px-4 py-2 text-sm text-surface-400 italic">-- Select Connection First --</li>';
+                '<li class="px-4 py-2 text-sm text-surface-400 italic">-- Loading tables... --</li>';
             hideSteps();
 
-            // Populate tables from Blade (preloaded)
-            const tables = preloadedTables[connKey] || [];
-
-            if (tables.length === 0) {
-                tableList.innerHTML =
-                    '<li class="px-4 py-2 text-sm text-surface-400 italic">-- No tables found --</li>';
-            } else {
-                renderRbTableDropdown(tables);
+            try {
+                // Fetch tables dynamically with refresh flag if not auto-loading
+                const refreshParam = isAutoLoad ? '0' : '1';
+                const res = await fetch(`/api/report-builder/tables?connection=${encodeURIComponent(connKey)}&refresh=${refreshParam}`);
+                const data = await res.json();
+                
+                if (data.success) {
+                    const tables = data.tables || [];
+                    preloadedTables[connKey] = tables; // Update local state
+                    if (tables.length === 0) {
+                        tableList.innerHTML = '<li class="px-4 py-2 text-sm text-surface-400 italic">-- No tables found --</li>';
+                    } else {
+                        renderRbTableDropdown(tables);
+                    }
+                    tableInput.disabled = false;
+                    if (!isAutoLoad) showToast('Berhasil dikoneksikan dan daftar table telah di-refresh.', 'success');
+                } else {
+                    tableList.innerHTML = '<li class="px-4 py-2 text-sm text-red-500 italic">-- Failed to load tables --</li>';
+                    if (!isAutoLoad) showToast(data.message || 'Gagal mengambil table', 'error');
+                }
+            } catch (e) {
+                tableList.innerHTML = '<li class="px-4 py-2 text-sm text-red-500 italic">-- Error loading tables --</li>';
+                if (!isAutoLoad) showToast('Error loading tables', 'error');
             }
-
-            tableInput.disabled = false;
-            if (!isAutoLoad) showToast('Berhasil dikoneksikan ke database, silakan pilih table.', 'success');
         }
 
         function renderRbTableDropdown(tables) {

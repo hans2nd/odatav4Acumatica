@@ -681,6 +681,66 @@
                     `;
                 }
 
+                if (permData.dbConnectionPermissions && permData.dbConnectionPermissions.length > 0) {
+                    html += `
+                        <div class="mt-8 border border-surface-200/80 rounded-2xl bg-white overflow-hidden shadow-sm">
+                            <div class="bg-surface-50/80 px-4 py-3 border-b border-surface-200/80 flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <span class="material-symbols-outlined text-brand-600 text-[20px]">database</span>
+                                    <h3 class="font-semibold text-surface-800 text-sm">Database Connection Permissions</h3>
+                                </div>
+                                <div class="relative w-64">
+                                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[16px] text-surface-400">search</span>
+                                    <input type="text" onkeyup="filterDbConnections(this.value)" placeholder="Search connections..." class="w-full pl-9 pr-3 py-1.5 bg-white border border-surface-300 rounded-lg text-xs text-surface-700 focus:ring-1 focus:ring-brand-500 focus:border-brand-500 transition-all">
+                                </div>
+                            </div>
+                            <div class="p-0 overflow-y-auto max-h-96">
+                                <table class="w-full text-left text-sm border-collapse">
+                                    <thead class="sticky top-0 z-10 bg-surface-50/90 backdrop-blur-sm shadow-[0_1px_0_0_rgba(0,0,0,0.05)]">
+                                        <tr>
+                                            <th class="px-4 py-2 font-medium text-surface-600 text-xs w-1/3 border-b border-surface-200/80">Connection Name</th>
+                                            <th class="px-4 py-2 font-medium text-surface-600 text-xs w-2/3 border-b border-surface-200/80">Access</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                    `;
+                    
+                    permData.dbConnectionPermissions.forEach((conn, i) => {
+                        html += `
+                            <tr class="db-connection-row hover:bg-surface-50/50 transition-colors border-b border-surface-100 last:border-0" data-search="${conn.entity.toLowerCase()}">
+                                <td class="px-4 py-3 align-top border-r border-surface-100">
+                                    <div class="font-medium text-surface-800 text-xs">${conn.entity}</div>
+                                    <div class="text-[10px] text-surface-500 mt-0.5 font-mono">connection.${conn.key}.access</div>
+                                </td>
+                                <td class="px-4 py-3">
+                                    <div class="flex flex-wrap gap-4">
+                        `;
+                        
+                        conn.permissions.forEach(p => {
+                            const checked = assignedIds.includes(p.id) ? 'checked' : '';
+                            html += `
+                                <label class="flex items-center gap-1.5 cursor-pointer hover:bg-surface-100/80 px-2 py-1 rounded transition-colors -ml-2">
+                                    <input type="checkbox" name="permissions[]" value="${p.id}" class="perm-checkbox rounded border-surface-300 text-brand-600 focus:ring-brand-500/20 w-4 h-4 cursor-pointer" ${checked}>
+                                    <span class="text-xs text-surface-700 font-medium capitalize select-none">Allow Connection Access</span>
+                                </label>
+                            `;
+                        });
+                        
+                        html += `
+                                    </div>
+                                </td>
+                            </tr>
+                        `;
+                    });
+                    
+                    html += `
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    `;
+                }
+
                 document.getElementById('perm-content').innerHTML = html ||
                     '<p class="text-surface-500 text-center py-4">Tidak ada hak akses yang tersedia.</p>';
             } catch (err) {
@@ -691,6 +751,18 @@
         function filterApiEndpoints(val) {
             const query = val.toLowerCase().trim();
             const rows = document.querySelectorAll('.api-endpoint-row');
+            rows.forEach(row => {
+                if (row.getAttribute('data-search').includes(query)) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+        }
+
+        function filterDbConnections(val) {
+            const query = val.toLowerCase().trim();
+            const rows = document.querySelectorAll('.db-connection-row');
             rows.forEach(row => {
                 if (row.getAttribute('data-search').includes(query)) {
                     row.style.display = '';

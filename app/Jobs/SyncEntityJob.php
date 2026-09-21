@@ -42,7 +42,10 @@ class SyncEntityJob implements ShouldQueue, ShouldBeUnique
         public string $entityKey,
         public array $customFilters = [],
         public string $source = 'manual',
-        public ?string $syncJobId = null
+        public ?string $syncJobId = null,
+        public ?string $syncModeOverride = null,
+        public ?string $watermarkTypeOverride = null,
+        public ?string $watermarkColumnOverride = null
     ) {
         $this->workerId = uniqid("worker_{$this->entityKey}_");
     }
@@ -93,7 +96,7 @@ class SyncEntityJob implements ShouldQueue, ShouldBeUnique
                 'job_id' => $this->syncJobId
             ]);
 
-            $syncService->syncEntity($this->entityKey, $this->customFilters, $this->source, $this->syncJobId, $this->workerId);
+            $syncService->syncEntity($this->entityKey, $this->customFilters, $this->source, $this->syncJobId, $this->workerId, $this->syncModeOverride, $this->watermarkTypeOverride, $this->watermarkColumnOverride);
             
             // Note: SyncService->syncEntity() now guarantees it will update the SyncJob 
             // with the accurate final processed_rows, or it will throw an exception.

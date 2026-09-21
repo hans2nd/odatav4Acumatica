@@ -15,6 +15,12 @@ A powerful synchronization engine built on Laravel to bridge Acumatica ERP (ODat
 
 ## Changelog
 
+### v1.5.0 (Database Connection RBAC & Metadata Caching)
+- **Feature: Database Connection Permissions**: Mengimplementasikan izin khusus per-koneksi database (`connection.{key}.access`). Pengguna kini dapat dibatasi untuk hanya bisa melihat dan menggunakan koneksi database tertentu. Aturan ini diterapkan secara universal pada *dropdown* pilihan koneksi di menu **Report Builder**, **Endpoint API**, **Query Builder**, dan **Query Repository**.
+- **Enhancement: Database Metadata Caching**: Mengoptimalkan performa pemuatan Report Builder dan Query Builder dengan *caching* struktur tabel selama 24 jam. Menambahkan tombol *refresh* pada UI agar pengguna dapat memuat ulang struktur tabel tanpa perlu menjalankan `php artisan cache:clear` secara manual dari *backend*.
+- **UI/UX: Permission Matrix Update**: Menambahkan seksi khusus "Database Connection Permissions" pada menu Users & Roles, memungkinkan admin untuk secara interaktif mencentang hak akses koneksi database untuk masing-masing peran pengguna.
+
+
 ### v1.4.9 (RBAC Granularity & System Utilities Updates)
 - **Security & Authorization**: Menerapkan arsitektur RBAC granular yang lebih ketat di seluruh modul aplikasi.
   - Memisahkan izin `query_builder.view` dari `manage` agar user dengan akses *read-only* tetap dapat mengeksekusi *query* yang telah dibuat.

@@ -28,9 +28,16 @@ class QueryBuilderController extends Controller
     {
         $all = $this->connectionService->getAll();
         $dbConnections = [];
+        $user = auth()->user();
 
         foreach ($all as $key => $conn) {
             if (in_array($conn['type'] ?? '', \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes()) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
+                
+                // Check permissions
+                if ($user && !$user->isSuperAdmin() && !$user->hasPermission("connection.{$key}.access")) {
+                    continue;
+                }
+
                 try {
                     $connName = $this->connectionService->resolveConnectionName($key);
                     $driver = DB::connection($connName)->getDriverName();

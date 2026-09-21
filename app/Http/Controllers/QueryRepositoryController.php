@@ -29,7 +29,11 @@ class QueryRepositoryController extends Controller
 
     public function create()
     {
-        $connections = Connection::where('is_active', true)->get();
+        $user = auth()->user();
+        $connections = Connection::where('is_active', true)->get()->filter(function($conn) use ($user) {
+            if ($user && $user->isSuperAdmin()) return true;
+            return $user && $user->hasPermission("connection.{$conn->key}.access");
+        });
         return view('reports.query-repository.form', compact('connections'));
     }
 
@@ -65,7 +69,11 @@ class QueryRepositoryController extends Controller
     public function edit($id)
     {
         $query = QueryRepository::findOrFail($id);
-        $connections = Connection::where('is_active', true)->get();
+        $user = auth()->user();
+        $connections = Connection::where('is_active', true)->get()->filter(function($conn) use ($user) {
+            if ($user && $user->isSuperAdmin()) return true;
+            return $user && $user->hasPermission("connection.{$conn->key}.access");
+        });
         return view('reports.query-repository.form', compact('query', 'connections'));
     }
 

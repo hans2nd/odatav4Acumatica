@@ -438,6 +438,11 @@ class UserManagementController extends Controller
                 continue;
             }
 
+            // Extract connection.*.access permissions (Database Connections Access)
+            if ($prefix === 'connection' && isset($parts[2]) && $parts[2] === 'access') {
+                continue; // We'll handle dbConnections separately below
+            }
+
             $assigned = false;
 
             // Special case: sync_engine goes to Synchronization
@@ -489,11 +494,52 @@ class UserManagementController extends Controller
 
         $menuTree = $buildArrayTree($menusArray);
 
+        // Ensure DB connection permissions exist
+        $dbConnectionPermissions = [];
+        
+        // Use ConnectionService to get the name/metadata
+        $allConnections = app(\App\Services\ConnectionService::class)->getAll();
+        
+        $reportModule = \App\Models\Module::where('code', 'report')->first();
+        $accessAction = \App\Models\Action::where('code', 'access')->first() ?? \App\Models\Action::firstOrCreate(['code' => 'access'], ['name' => 'Access', 'sort_order' => 100]);
+
+        foreach ($allConnections as $key => $conn) {
+            if (in_array($conn['type'] ?? '', \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes())) {
+                
+                $resource = \App\Models\Resource::firstOrCreate(
+                    ['slug' => "connection.{$key}"],
+                    [
+                        'name' => "Database Connection: " . ($conn['name'] ?? $key),
+                        'module_id' => $reportModule ? $reportModule->id : 1,
+                        'description' => "Dynamically generated Database Connection"
+                    ]
+                );
+
+                $perm = \App\Models\Permission::firstOrCreate(
+                    [
+                        'permission_key' => "connection.{$key}.access"
+                    ],
+                    [
+                        'resource_id' => $resource->id,
+                        'action_id' => $accessAction->id,
+                        'description' => "Access connection " . ($conn['name'] ?? $key)
+                    ]
+                );
+                
+                $dbConnectionPermissions[] = [
+                    'entity' => $conn['name'] ?? $key,
+                    'key' => $key,
+                    'permissions' => [$perm]
+                ];
+            }
+        }
+
         return response()->json([
-            'success'                => true,
-            'menus'                  => $menuTree,
-            'otherPermissions'       => $finalOther,
-            'apiEndpointPermissions' => array_values($apiEndpointPermissions),
+            'success'                 => true,
+            'menus'                   => $menuTree,
+            'otherPermissions'        => $finalOther,
+            'apiEndpointPermissions'  => array_values($apiEndpointPermissions),
+            'dbConnectionPermissions' => $dbConnectionPermissions,
         ]);
     }
 }

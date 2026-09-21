@@ -192,6 +192,12 @@ class SyncController extends Controller
 
             // custom_filters should be an array of associative arrays: [['field' => 'X', 'operator' => 'eq', 'value' => 'Y']]
             $customFilters = $request->input('custom_filters', []);
+            $syncModeOverride = $request->input('sync_mode_override', 'default');
+            if ($syncModeOverride === 'default') {
+                $syncModeOverride = null;
+            }
+            $watermarkTypeOverride = $request->input('watermark_type_override');
+            $watermarkColumnOverride = $request->input('watermark_column_override');
 
             if ($request->boolean('save_filters')) {
                 \App\Models\SyncSchedule::updateOrCreate(
@@ -254,7 +260,7 @@ class SyncController extends Controller
                 'progress' => 0,
             ]);
 
-            SyncEntityJob::dispatch($entity, $customFilters, 'manual', $jobRecord->id);
+            SyncEntityJob::dispatch($entity, $customFilters, 'manual', $jobRecord->id, $syncModeOverride, $watermarkTypeOverride, $watermarkColumnOverride);
 
             try {
                 $this->queueWorker->startBackgroundWorker();
