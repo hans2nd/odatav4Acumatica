@@ -158,11 +158,11 @@ class AiSettingsController extends Controller
                 ]);
             }
 
-            if ($status === 404 && str_contains($body, 'No endpoints available matching your guardrail restrictions and data policy')) {
+            if ($status === 404 && (str_contains($body, 'No endpoints available matching your guardrail restrictions') || str_contains($body, 'matching your guardrail restrictions and data policy'))) {
                 return response()->json([
                     'success' => false,
                     'reason' => 'no_compliant_endpoint',
-                    'message' => 'Tidak ada endpoint AI yang kompatibel dengan kebijakan keamanan data aplikasi untuk model yang dipilih. Silakan pilih model lain.'
+                    'message' => 'Tidak ada endpoint AI yang kompatibel dengan kebijakan keamanan data aplikasi untuk model yang dipilih. Silakan periksa pengaturan guardrails di workspace OpenRouter Anda, atau pilih model lain.'
                 ]);
             }
             

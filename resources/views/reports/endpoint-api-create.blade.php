@@ -60,17 +60,30 @@
 
                 <div class="relative z-20">
                     <label class="text-label-md text-surface-700 mb-1.5 block">Source Table</label>
-                    <div class="relative">
-                        <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-surface-400 text-[18px]">search</span>
-                        <input type="text" id="apiTableSearch" placeholder="Validate connection first..." disabled required value="{{ old('table_name') }}"
-                            class="w-full rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 pl-9"
-                            onfocus="document.getElementById('apiTableDropdown').classList.remove('hidden')"
-                            oninput="filterApiTableList(this.value)">
-                        <input type="hidden" name="table_name" id="apiTableInput" value="{{ old('table_name') }}" required>
+                    <div x-data="customSelect('apiTableInput')" class="relative">
+                        <select name="table_name" id="apiTableInput" class="hidden" x-ref="select" required onchange="window.selectApiTable(this.value)">
+                            <option value="">Select connection first...</option>
+                        </select>
                         
-                        <ul id="apiTableDropdown" class="hidden absolute left-0 right-0 z-50 w-full mt-1 max-h-60 overflow-y-auto bg-white border border-surface-200 rounded-xl shadow-xl">
-                            <li class="px-3 py-2 text-surface-500 text-body-sm text-center">No tables available</li>
-                        </ul>
+                        <button type="button" @click="toggle" @click.away="close" class="w-full bg-surface-50 border border-surface-200 px-3 py-2 text-sm rounded-xl focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all font-mono shadow-sm flex justify-between items-center text-left" :disabled="options.length <= 1">
+                            <span x-text="selectedLabel" class="truncate" :class="!selectedValue ? 'text-surface-400' : 'text-surface-900'"></span>
+                            <span class="material-symbols-outlined text-[18px] text-surface-400 transition-transform duration-200" :class="open ? 'rotate-180' : ''">expand_more</span>
+                        </button>
+                        
+                        <div x-show="open" x-transition.opacity.duration.200ms class="absolute z-30 w-full mt-1 bg-white border border-surface-200 rounded-xl shadow-lg max-h-60 overflow-y-auto" style="display: none;">
+                            <ul class="py-1">
+                                <template x-for="option in options" :key="option.value">
+                                    <li @click="selectOption(option.value)" 
+                                        class="px-3.5 py-2.5 hover:bg-surface-50 cursor-pointer text-sm transition-colors flex justify-between items-center"
+                                        :class="option.value === selectedValue ? 'bg-brand-50 text-brand-700 font-medium' : 'text-surface-700'"
+                                        x-show="option.value !== ''"
+                                    >
+                                        <span x-text="option.label"></span>
+                                        <span x-show="option.value === selectedValue" class="material-symbols-outlined text-[16px] text-brand-600">check</span>
+                                    </li>
+                                </template>
+                            </ul>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -150,8 +163,7 @@
 
     function validateConnection(forceFocus = true) {
         const conn = document.getElementById('apiConnection').value;
-        const searchInput = document.getElementById('apiTableSearch');
-        const hiddenInput = document.getElementById('apiTableInput');
+        const tableSelect = document.getElementById('apiTableInput');
         
         if (!conn) {
             alert('Please select a database connection first.');
@@ -161,31 +173,18 @@
         // Save to localStorage so it remembers the connection
         localStorage.setItem('last_endpoint_connection', conn);
         
-        searchInput.value = '';
-        hiddenInput.value = '';
-        searchInput.disabled = false;
+        tableSelect.value = '';
         
         document.getElementById('columnsContainer').innerHTML = '<p class="col-span-full text-center text-surface-400 text-body-sm mt-6">Select a table to load columns</p>';
         allFetchedColumns = [];
         populateFilterDataList();
         
-        searchInput.placeholder = 'Search table...';
-        const ul = document.getElementById('apiTableDropdown');
-        
-        if (forceFocus) {
-            ul.classList.remove('hidden');
-            searchInput.focus();
-        }
-
         renderApiTableDropdown(allTablesData[conn] || []);
     }
 
     // Expose select table globally for inline onclick
     window.selectApiTable = function(table) {
-        const ul = document.getElementById('apiTableDropdown');
-        document.getElementById('apiTableSearch').value = table;
-        document.getElementById('apiTableInput').value = table;
-        ul.classList.add('hidden');
+        if (!table) return;
         
         // Fetch columns
         fetchColumns(document.getElementById('apiConnection').value, table);
@@ -199,46 +198,21 @@
     };
 
     function renderApiTableDropdown(tables) {
-        const ul = document.getElementById('apiTableDropdown');
+        const select = document.getElementById('apiTableInput');
         
         if (tables.length === 0) {
-            ul.innerHTML = '<li class="px-3 py-2 text-surface-500 text-body-sm text-center">No tables available for this connection</li>';
+            select.innerHTML = '<option value="">No tables available for this connection</option>';
             return;
         }
 
-        const maxTables = 100;
-        const visibleTables = tables.slice(0, maxTables);
-
-        let html = '';
-        visibleTables.forEach(table => {
-            // Escape quotes in table name
-            const escapedTable = table.replace(/'/g, "\\'");
-            html += `<li onclick="window.selectApiTable('${escapedTable}')" class="px-4 py-3 hover:bg-surface-50 cursor-pointer text-body-sm font-medium text-surface-700 transition-colors border-b border-surface-50 last:border-0">${table}</li>`;
+        let html = '<option value="">Select table...</option>';
+        tables.forEach(table => {
+            html += `<option value="${table}">${table}</option>`;
         });
         
-        if (tables.length > maxTables) {
-            html += `<li class="px-4 py-3 text-surface-400 text-[11px] text-center border-t border-surface-50 bg-surface-50 italic">Showing first ${maxTables} tables. Type to search more...</li>`;
-        }
-        
-        ul.innerHTML = html;
+        select.innerHTML = html;
+        // Alpine's MutationObserver in customSelect will automatically pick up the DOM changes
     }
-
-    function filterApiTableList(query) {
-        const conn = document.getElementById('apiConnection').value;
-        if (!conn) return;
-
-        const tables = allTablesData[conn] || [];
-        const q = query.toLowerCase();
-        const filtered = tables.filter(t => t.toLowerCase().includes(q));
-        renderApiTableDropdown(filtered);
-    }
-
-    document.addEventListener('click', function(e) {
-        const dropdownUl = document.getElementById('apiTableDropdown');
-        if (!e.target.closest('#apiTableSearch') && !e.target.closest('#apiTableDropdown')) {
-            dropdownUl.classList.add('hidden');
-        }
-    });
 
     function generateSlug() {
         const name = document.getElementById('apiName').value;
@@ -321,23 +295,87 @@
         const container = document.getElementById('apiFiltersContainer');
         const row = document.createElement('div');
         row.className = 'flex items-center gap-2 api-filter-row animate-fade-up';
+        
+        const uniqueOpId = 'filter-op-' + Math.random().toString(36).substr(2, 9);
+        const opOptions = `
+            <option value="eq" ${op === 'eq' ? 'selected' : ''}>Equals (=)</option>
+            <option value="ne" ${op === 'ne' ? 'selected' : ''}>Not Eq (!=)</option>
+            <option value="contains" ${op === 'contains' ? 'selected' : ''}>Contains</option>
+            <option value="startswith" ${op === 'startswith' ? 'selected' : ''}>Starts With</option>
+            <option value="endswith" ${op === 'endswith' ? 'selected' : ''}>Ends With</option>
+            <option value="gt" ${op === 'gt' ? 'selected' : ''}>Greater (>)</option>
+            <option value="ge" ${op === 'ge' ? 'selected' : ''}>Greater Eq (>=)</option>
+            <option value="lt" ${op === 'lt' ? 'selected' : ''}>Less (<)</option>
+            <option value="le" ${op === 'le' ? 'selected' : ''}>Less Eq (<=)</option>
+        `;
+
+        const uniqueFieldId = 'filter-field-' + Math.random().toString(36).substr(2, 9);
+        let fieldOptions = '<option value="" disabled ' + (!field ? 'selected' : '') + '>Select Field...</option>';
+        
+        const dl = document.getElementById('apiFilterFieldDataList');
+        if (dl && dl.options) {
+            Array.from(dl.options).forEach(opt => {
+                const c = opt.value;
+                fieldOptions += `<option value="${c}" ${field === c ? 'selected' : ''}>${c}</option>`;
+            });
+        }
 
         row.innerHTML = `
-            <input type="text" list="apiFilterFieldDataList" class="api-filter-field flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Search or select field..." value="${field}" oninput="updateApiFilterType(this)" onchange="updateApiFilterType(this)">
-            <select class="api-filter-operator w-36 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2">
-                <option value="eq" ${op === 'eq' ? 'selected' : ''}>Equals (=)</option>
-                <option value="ne" ${op === 'ne' ? 'selected' : ''}>Not Eq (!=)</option>
-                <option value="contains" ${op === 'contains' ? 'selected' : ''}>Contains</option>
-                <option value="lt" ${op === 'lt' ? 'selected' : ''}>Less (<)</option>
-                <option value="le" ${op === 'le' ? 'selected' : ''}>Less Eq (<=)</option>
-                <option value="gt" ${op === 'gt' ? 'selected' : ''}>Greater (>)</option>
-                <option value="ge" ${op === 'ge' ? 'selected' : ''}>Greater Eq (>=)</option>
-            </select>
-            <input type="text" class="api-filter-value flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Value..." value="${val}">
-            <button type="button" onclick="removeFilterRow(this)" class="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all duration-200" title="Remove filter">
-                <span class="material-symbols-outlined text-[16px]">delete</span>
-            </button>
-        `;
+                <div x-data="customSelect('${uniqueFieldId}')" class="relative flex-1">
+                    <select id="${uniqueFieldId}" class="hidden api-filter-field" x-ref="select" onchange="updateApiFilterType(this)">
+                        ${fieldOptions}
+                    </select>
+                    
+                    <button type="button" @click="toggle" @click.away="close" class="w-full bg-surface-50 border border-surface-200 px-3 py-2 text-sm rounded-xl focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all font-mono shadow-sm flex justify-between items-center text-left">
+                        <span x-text="selectedLabel" class="truncate" :class="!selectedValue ? 'text-surface-400' : 'text-surface-900'"></span>
+                        <span class="material-symbols-outlined text-[18px] text-surface-400 transition-transform duration-200" :class="open ? 'rotate-180' : ''">expand_more</span>
+                    </button>
+                    
+                    <div x-show="open" x-transition.opacity.duration.200ms class="absolute z-30 w-full mt-1 bg-white border border-surface-200 rounded-xl shadow-lg max-h-60 overflow-y-auto" style="display: none;">
+                        <ul class="py-1">
+                            <template x-for="option in options" :key="option.value">
+                                <li @click="selectOption(option.value)" 
+                                    class="px-3.5 py-2.5 hover:bg-surface-50 cursor-pointer text-sm transition-colors flex justify-between items-center"
+                                    :class="option.value === selectedValue ? 'bg-brand-50 text-brand-700 font-medium' : 'text-surface-700'"
+                                >
+                                    <span x-text="option.label"></span>
+                                    <span x-show="option.value === selectedValue" class="material-symbols-outlined text-[16px] text-brand-600">check</span>
+                                </li>
+                            </template>
+                        </ul>
+                    </div>
+                </div>
+                
+                <div x-data="customSelect('${uniqueOpId}')" class="relative w-40 shrink-0">
+                    <select id="${uniqueOpId}" class="hidden api-filter-operator" x-ref="select">
+                        ${opOptions}
+                    </select>
+                    
+                    <button type="button" @click="toggle" @click.away="close" class="w-full bg-surface-50 border border-surface-200 px-3 py-2 text-sm rounded-xl focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all font-mono shadow-sm flex justify-between items-center text-left">
+                        <span x-text="selectedLabel" class="truncate" :class="!selectedValue ? 'text-surface-400' : 'text-surface-900'"></span>
+                        <span class="material-symbols-outlined text-[18px] text-surface-400 transition-transform duration-200" :class="open ? 'rotate-180' : ''">expand_more</span>
+                    </button>
+                    
+                    <div x-show="open" x-transition.opacity.duration.200ms class="absolute z-30 w-full mt-1 bg-white border border-surface-200 rounded-xl shadow-lg max-h-60 overflow-y-auto" style="display: none;">
+                        <ul class="py-1">
+                            <template x-for="option in options" :key="option.value">
+                                <li @click="selectOption(option.value)" 
+                                    class="px-3.5 py-2.5 hover:bg-surface-50 cursor-pointer text-sm transition-colors flex justify-between items-center"
+                                    :class="option.value === selectedValue ? 'bg-brand-50 text-brand-700 font-medium' : 'text-surface-700'"
+                                >
+                                    <span x-text="option.label"></span>
+                                    <span x-show="option.value === selectedValue" class="material-symbols-outlined text-[16px] text-brand-600">check</span>
+                                </li>
+                            </template>
+                        </ul>
+                    </div>
+                </div>
+
+                <input type="text" class="api-filter-value flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Value..." value="${val}">
+                <button type="button" onclick="removeFilterRow(this)" class="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all duration-200 shrink-0" title="Remove filter">
+                    <span class="material-symbols-outlined text-[16px]">delete</span>
+                </button>
+            `;
 
         container.appendChild(row);
         checkEmptyFilters();
@@ -435,7 +473,6 @@
             
             if(oldTable) {
                 // If there's an old table value from validation
-                document.getElementById('apiTableSearch').value = oldTable;
                 tableInput.value = oldTable;
                 const oldColumns = @json(old('columns', []));
                 fetchColumns(connSelect.value, oldTable, oldColumns);
