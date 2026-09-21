@@ -1,5 +1,5 @@
 ---
 deployment:
   tasks:
-    - export DEPLOYPATH=/home/panganle/public_html/subdom/datawhs.panganlestari.id/
+    - export DEPLOYPATH=/home/panganlestari/public_html/subdom/datawhs.panganlestari.id/
     - /bin/cp -R * $DEPLOYPATH
