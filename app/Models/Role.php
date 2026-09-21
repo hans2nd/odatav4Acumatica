@@ -27,4 +27,9 @@ class Role extends Model
     {
         return $this->belongsToMany(User::class, 'user_roles');
     }
+
+    public function reportTemplates()
+    {
+        return $this->belongsToMany(ReportTemplate::class, 'report_template_role');
+    }
 }

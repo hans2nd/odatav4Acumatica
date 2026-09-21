@@ -12,14 +12,43 @@ class ReportTemplateController extends Controller
      */
     public function index()
     {
-        $templates = ReportTemplate::where('user_id', auth()->id())
+        $user = auth()->user();
+
+        $templates = ReportTemplate::with('roles')
+            ->where('user_id', $user->id)
+            ->orWhereHas('roles', function($q) use ($user) {
+                $q->whereIn('roles.id', $user->roles->pluck('id'));
+            })
             ->orderBy('created_at', 'desc')
             ->get();
 
+        $myTemplates = $templates->where('user_id', $user->id);
+        $sharedTemplates = $templates->where('user_id', '!=', $user->id);
+
         return view('reports.templates.index', [
             'activeTab' => 'report.templates',
-            'templates' => $templates,
+            'myTemplates' => $myTemplates,
+            'sharedTemplates' => $sharedTemplates,
+            'allRoles' => \App\Models\Role::all(),
         ]);
+    }
+
+    public function getSharedRoles($id)
+    {
+        $template = ReportTemplate::where('user_id', auth()->id())->findOrFail($id);
+        return response()->json(['roles' => $template->roles->pluck('id')]);
+    }
+
+    public function share(Request $request, $id)
+    {
+        $template = ReportTemplate::where('user_id', auth()->id())->findOrFail($id);
+        $request->validate([
+            'roles' => 'nullable|array',
+            'roles.*' => 'exists:roles,id'
+        ]);
+        
+        $template->roles()->sync($request->input('roles', []));
+        return response()->json(['success' => true, 'message' => 'Template shared successfully']);
     }
 
     /**

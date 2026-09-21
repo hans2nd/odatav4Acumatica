@@ -15,12 +15,12 @@ A powerful synchronization engine built on Laravel to bridge Acumatica ERP (ODat
 
 ## Changelog
 
-### v1.5.0 (Database Connection RBAC & Metadata Caching)
-- **Feature: Database Connection Permissions**: Mengimplementasikan izin khusus per-koneksi database (`connection.{key}.access`). Pengguna kini dapat dibatasi untuk hanya bisa melihat dan menggunakan koneksi database tertentu. Aturan ini diterapkan secara universal pada *dropdown* pilihan koneksi di menu **Report Builder**, **Endpoint API**, **Query Builder**, dan **Query Repository**.
+### v1.5.0 (Table-Level Dynamic RBAC & Metadata Caching & Report Template Sharing)
+- **Feature: Share Report Templates to Roles**: Menambahkan fitur untuk membagikan *(share)* Report Template ke *Role* tertentu. Pengguna (seperti Superadmin) dapat membagikan template laporan yang telah dibuat ke peran lain, sehingga pengguna dalam peran tersebut dapat langsung menggunakannya melalui tab "Shared with Me" di menu Report Templates tanpa perlu membuat ulang konfigurasi dari awal.
+- **Feature: Dynamic Table Level Access**: Mengimplementasikan pembatasan akses dinamis di level tabel (`connection.{key}.table.{table}.access`). UI baru "Table Access" pada menu Users & Roles memungkinkan Super Admin untuk menentukan tabel spesifik mana saja yang dapat dilihat dan dikueri oleh peran (Role) tertentu untuk setiap koneksi database, tanpa memperberat Permission Matrix utama. Aturan ini diterapkan otomatis pada **Report Builder**, **Query Builder**, **Query Repository**, dan **Endpoint API**.
+- **Feature: Database Connection Permissions**: Mengimplementasikan izin khusus per-koneksi database (`connection.{key}.access`). Pengguna kini dapat dibatasi untuk hanya bisa melihat dan menggunakan koneksi database tertentu. 
 - **Enhancement: Database Metadata Caching**: Mengoptimalkan performa pemuatan Report Builder dan Query Builder dengan *caching* struktur tabel selama 24 jam. Menambahkan tombol *refresh* pada UI agar pengguna dapat memuat ulang struktur tabel tanpa perlu menjalankan `php artisan cache:clear` secara manual dari *backend*.
 - **UI/UX: Permission Matrix Update**: Menambahkan seksi khusus "Database Connection Permissions" pada menu Users & Roles, memungkinkan admin untuk secara interaktif mencentang hak akses koneksi database untuk masing-masing peran pengguna.
-
-
 ### v1.4.9 (RBAC Granularity & System Utilities Updates)
 - **Security & Authorization**: Menerapkan arsitektur RBAC granular yang lebih ketat di seluruh modul aplikasi.
   - Memisahkan izin `query_builder.view` dari `manage` agar user dengan akses *read-only* tetap dapat mengeksekusi *query* yang telah dibuat.

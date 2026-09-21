@@ -61,6 +61,10 @@ class ReportBuilderController extends Controller
                     
                     foreach ($tree->nodes as $node) {
                         if (!in_array(strtolower($node->name), $systemTables)) {
+                            // Check table-level permission
+                            if ($user && !$user->isSuperAdmin() && !$user->hasPermission("connection.{$key}.table.{$node->name}.access")) {
+                                continue;
+                            }
                             $tables[] = $node->name;
                         }
                     }
@@ -72,7 +76,13 @@ class ReportBuilderController extends Controller
             }
         }
 
-        $templates = \App\Models\ReportTemplate::where('user_id', auth()->id())
+        $templates = \App\Models\ReportTemplate::with('roles')
+            ->where('user_id', $user ? $user->id : null)
+            ->orWhereHas('roles', function($q) use ($user) {
+                if ($user) {
+                    $q->whereIn('roles.id', $user->roles->pluck('id'));
+                }
+            })
             ->orderBy('created_at', 'desc')
             ->get();
 
@@ -167,8 +177,12 @@ class ReportBuilderController extends Controller
                 'cache', 'cache_locks', 'sessions'
             ];
             
+            $user = auth()->user();
             foreach ($tree->nodes as $node) {
                 if (!in_array(strtolower($node->name), $systemTables)) {
+                    if ($user && !$user->isSuperAdmin() && !$user->hasPermission("connection.{$connKey}.table.{$node->name}.access")) {
+                        continue;
+                    }
                     $tables[] = $node->name;
                 }
             }

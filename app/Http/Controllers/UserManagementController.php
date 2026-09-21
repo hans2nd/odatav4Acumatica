@@ -22,11 +22,23 @@ class UserManagementController extends Controller
         $roles = Role::withCount(['users', 'permissions'])->get();
         $modules = \App\Models\Module::with(['resources.permissions.action'])->orderBy('sort_order')->get();
 
+        $connections = app(\App\Services\ConnectionService::class)->getAll();
+        $sqlConnections = [];
+        foreach ($connections as $key => $conn) {
+            if (in_array($conn['type'] ?? '', ['sqlserver', 'mysql', 'pgsql', 'sqlite', 'firebird'])) {
+                $sqlConnections[] = [
+                    'key' => $key,
+                    'name' => $conn['name'] ?? $key,
+                ];
+            }
+        }
+
         return view('users.index', [
-            'users'       => $users,
-            'roles'       => $roles,
-            'modules'     => $modules,
-            'activeTab'   => 'users',
+            'users'          => $users,
+            'roles'          => $roles,
+            'modules'        => $modules,
+            'sqlConnections' => $sqlConnections,
+            'activeTab'      => 'users',
         ]);
     }
 
@@ -540,6 +552,114 @@ class UserManagementController extends Controller
             'otherPermissions'        => $finalOther,
             'apiEndpointPermissions'  => array_values($apiEndpointPermissions),
             'dbConnectionPermissions' => $dbConnectionPermissions,
+        ]);
+    }
+
+    public function getTablePermissions(Request $request, \App\Models\Role $role)
+    {
+        $connKey = $request->query('connection');
+        if (!$connKey) {
+            return response()->json(['success' => false, 'message' => 'Connection key is required']);
+        }
+
+        try {
+            $connManager = app(\App\Services\Connections\ConnectionManager::class);
+            $tree = $connManager->discoverMetadata($connKey);
+            $systemTables = [
+                'migrations', 'users', 'password_reset_tokens', 'personal_access_tokens',
+                'failed_jobs', 'jobs', 'api_endpoints', 'connections', 
+                'sync_jobs', 'sync_logs', 'sync_metadata_definitions', 
+                'sync_metadata_fields', 'sync_metadata_history', 
+                'sync_metadata_refresh_history', 'permissions', 'roles', 
+                'model_has_permissions', 'model_has_roles', 'role_has_permissions',
+                'cache', 'cache_locks', 'sessions'
+            ];
+
+            $tables = [];
+            foreach ($tree->nodes as $node) {
+                if (!in_array(strtolower($node->name), $systemTables)) {
+                    $tables[] = $node->name;
+                }
+            }
+            sort($tables);
+
+            // Fetch the role's current table permissions for this connection
+            $rolePermissions = $role->permissions()
+                ->where('permission_key', 'LIKE', "connection.{$connKey}.table.%.access")
+                ->pluck('permission_key')
+                ->toArray();
+
+            $allowedTables = [];
+            foreach ($rolePermissions as $perm) {
+                if (preg_match('/connection\.[^\.]+\.table\.(.+)\.access/', $perm, $matches)) {
+                    $allowedTables[] = $matches[1];
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'tables' => $tables,
+                'allowed_tables' => $allowedTables
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    public function updateTablePermissions(Request $request, \App\Models\Role $role)
+    {
+        if ($role->is_superadmin) {
+            return response()->json(['success' => false, 'message' => 'Cannot modify permissions for superadmin role.'], 422);
+        }
+
+        $request->validate([
+            'connection' => 'required|string',
+            'tables' => 'nullable|array',
+            'tables.*' => 'string'
+        ]);
+
+        $connKey = $request->input('connection');
+        $allowedTables = $request->input('tables', []);
+
+        // Find or create the resource for the connection
+        $resource = \App\Models\Resource::firstOrCreate(
+            ['name' => "Database Connection"],
+            ['slug' => 'database-connection', 'description' => "Database Connection permissions"]
+        );
+
+        $accessAction = \App\Models\Action::firstOrCreate(
+            ['code' => 'access'],
+            ['name' => 'Access']
+        );
+
+        $permissionIdsToSync = [];
+        foreach ($allowedTables as $table) {
+            $perm = \App\Models\Permission::firstOrCreate(
+                ['permission_key' => "connection.{$connKey}.table.{$table}.access"],
+                [
+                    'resource_id' => $resource->id,
+                    'action_id' => $accessAction->id,
+                    'description' => "Access table {$table} on {$connKey}"
+                ]
+            );
+            $permissionIdsToSync[] = $perm->id;
+        }
+
+        // We want to sync ONLY the table permissions for THIS connection.
+        // So we get the role's current permissions, remove the ones for this connection's tables,
+        // and then merge the new ones.
+        $currentPermIds = $role->permissions()->pluck('permissions.id')->toArray();
+        $connTablePermIds = \App\Models\Permission::where('permission_key', 'LIKE', "connection.{$connKey}.table.%.access")
+            ->pluck('id')->toArray();
+
+        $filteredPermIds = array_diff($currentPermIds, $connTablePermIds);
+        $finalPermIds = array_merge($filteredPermIds, $permissionIdsToSync);
+
+        $role->permissions()->sync($finalPermIds);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Table permissions updated successfully.'
         ]);
     }
 }

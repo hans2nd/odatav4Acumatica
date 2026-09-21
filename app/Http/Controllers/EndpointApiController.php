@@ -138,6 +138,9 @@ class EndpointApiController extends Controller
                     
                     foreach ($tree->nodes as $node) {
                         if (!in_array(strtolower($node->name), $systemTables)) {
+                            if ($user && !$user->isSuperAdmin() && !$user->hasPermission("connection.{$key}.table.{$node->name}.access")) {
+                                continue;
+                            }
                             $tables[] = $node->name;
                         }
                     }

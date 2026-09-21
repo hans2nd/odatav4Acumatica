@@ -138,6 +138,8 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/api/report-builder/prepare', [ReportBuilderController::class, 'prepare']);
         Route::get('/api/report-builder/progress', [ReportBuilderController::class, 'checkProgress']);
         Route::get('/api/report-builder/download/{token}', [ReportBuilderController::class, 'download'])->name('report.builder.download');
+        Route::get('/api/report-templates/{id}/shared-roles', [ReportTemplateController::class, 'getSharedRoles']);
+        Route::post('/api/report-templates/{id}/share', [ReportTemplateController::class, 'share']);
         Route::resource('report-templates', ReportTemplateController::class);
     });
 
@@ -270,6 +272,8 @@ Route::middleware(['auth'])->group(function () {
 
         Route::post('/api/roles', [UserManagementController::class, 'storeRole'])->name('api.roles.store');
         Route::put('/api/roles/{role}/permissions', [UserManagementController::class, 'updateRolePermissions'])->name('api.roles.permissions');
+        Route::get('/api/roles/{role}/table-permissions', [UserManagementController::class, 'getTablePermissions'])->name('api.roles.table-permissions.get');
+        Route::put('/api/roles/{role}/table-permissions', [UserManagementController::class, 'updateTablePermissions'])->name('api.roles.table-permissions.update');
         Route::delete('/api/roles/{role}', [UserManagementController::class, 'destroyRole'])->name('api.roles.destroy');
     });
     /*

@@ -117,6 +117,12 @@
                     {{ $role->name === 'Administrator' ? 'All' : $role->permissions_count }} permissions</span>
                 <div class="flex gap-1">
                     <button
+                        onclick="openTablePermissionsModal({{ $role->id }}, '{{ $role->name }}', {{ $role->name === 'Administrator' ? 'true' : 'false' }})"
+                        class="p-1.5 rounded-lg hover:bg-surface-100 text-surface-400 hover:text-surface-700 transition-all duration-200"
+                        title="Table Access">
+                        <span class="material-symbols-outlined text-[16px]">table_chart</span>
+                    </button>
+                    <button
                         onclick="openRolePermissionsModal({{ $role->id }}, '{{ $role->name }}', {{ $role->name === 'Administrator' ? 'true' : 'false' }})"
                         class="p-1.5 rounded-lg hover:bg-surface-100 text-surface-400 hover:text-surface-700 transition-all duration-200"
                         title="Edit Permissions">
@@ -231,6 +237,39 @@
                     <button id="perm-save-btn" onclick="saveRolePermissions()"
                         class="px-4 py-2 bg-brand-600 text-white rounded-xl hover:bg-brand-700 transition-all duration-200 text-label-md shadow-sm active:scale-[0.97]">Save
                         Permissions</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {{-- Modal: Table Permissions --}}
+    <div id="table-permissions-modal" class="fixed inset-0 z-50 hidden">
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" onclick="closeModal('table-permissions-modal')"></div>
+        <div class="absolute inset-0 flex items-center justify-center p-4">
+            <div class="bg-white rounded-2xl border border-surface-200/60 shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col animate-fade-up overflow-hidden">
+                <div class="px-5 py-4 border-b border-surface-100 flex justify-between items-center">
+                    <div>
+                        <h3 id="table-perm-modal-title" class="text-h3 text-surface-800">Table Permissions</h3>
+                        <p class="text-body-sm text-surface-500 mt-1">Select table access for this role</p>
+                    </div>
+                    <div class="w-64">
+                        <select id="table-perm-connection" onchange="fetchTablePermissions()" class="w-full bg-surface-50 border border-surface-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                            <option value="">Select Connection...</option>
+                            @foreach($sqlConnections as $conn)
+                                <option value="{{ $conn['key'] }}">{{ $conn['name'] }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                </div>
+                <div id="table-perm-content" class="p-5 overflow-y-auto flex-1">
+                    <div class="text-center text-surface-500 py-10">
+                        <span class="material-symbols-outlined text-[48px] mb-2 opacity-50">table_chart</span>
+                        <p>Select a database connection to load tables.</p>
+                    </div>
+                </div>
+                <div class="px-5 py-4 border-t border-surface-100 flex justify-end gap-2">
+                    <button onclick="closeModal('table-permissions-modal')" class="px-4 py-2 rounded-xl text-label-md text-surface-600 hover:bg-surface-100 transition-all duration-200">Cancel</button>
+                    <button id="table-perm-save-btn" onclick="saveTablePermissions()" class="px-4 py-2 bg-brand-600 text-white rounded-xl hover:bg-brand-700 transition-all duration-200 text-label-md shadow-sm active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed">Save Permissions</button>
                 </div>
             </div>
         </div>
@@ -842,6 +881,124 @@
                 if (data.success) setTimeout(() => location.reload(), 800);
             } catch (err) {
                 showToast(err.message, 'error');
+            }
+        }
+
+        let currentTablePermRoleId = null;
+
+        async function openTablePermissionsModal(roleId, roleName, isSuperAdmin) {
+            currentTablePermRoleId = roleId;
+            document.getElementById('table-perm-modal-title').textContent = `Table Access: ${roleName}`;
+            
+            const btn = document.getElementById('table-perm-save-btn');
+            const content = document.getElementById('table-perm-content');
+            const select = document.getElementById('table-perm-connection');
+
+            if (isSuperAdmin) {
+                btn.style.display = 'none';
+                select.style.display = 'none';
+                content.innerHTML = '<p class="text-surface-500 text-center py-10">Super Administrators have full access to all tables.</p>';
+            } else {
+                btn.style.display = 'block';
+                select.style.display = 'block';
+                select.value = ''; // Reset selection
+                content.innerHTML = `
+                    <div class="text-center text-surface-500 py-10">
+                        <span class="material-symbols-outlined text-[48px] mb-2 opacity-50">table_chart</span>
+                        <p>Select a database connection to load tables.</p>
+                    </div>
+                `;
+            }
+            openModal('table-permissions-modal');
+        }
+
+        async function fetchTablePermissions() {
+            const connKey = document.getElementById('table-perm-connection').value;
+            const content = document.getElementById('table-perm-content');
+            const btn = document.getElementById('table-perm-save-btn');
+
+            if (!connKey) {
+                content.innerHTML = `
+                    <div class="text-center text-surface-500 py-10">
+                        <span class="material-symbols-outlined text-[48px] mb-2 opacity-50">table_chart</span>
+                        <p>Select a database connection to load tables.</p>
+                    </div>
+                `;
+                btn.disabled = true;
+                return;
+            }
+
+            content.innerHTML = '<p class="text-surface-500 text-center py-10">Loading tables...</p>';
+            btn.disabled = true;
+
+            try {
+                const res = await fetch(`/api/roles/${currentTablePermRoleId}/table-permissions?connection=${connKey}`, {
+                    headers: { 'Accept': 'application/json' }
+                });
+                const data = await res.json();
+
+                if (!data.success) throw new Error(data.message);
+
+                if (!data.tables || data.tables.length === 0) {
+                    content.innerHTML = '<p class="text-surface-500 text-center py-10">No tables found for this connection.</p>';
+                    return;
+                }
+
+                let html = `
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                `;
+
+                data.tables.forEach(table => {
+                    const isChecked = data.allowed_tables.includes(table) ? 'checked' : '';
+                    html += `
+                        <label class="flex items-center gap-2 p-3 border border-surface-200 rounded-xl hover:bg-surface-50 cursor-pointer transition-colors">
+                            <input type="checkbox" name="table_permissions[]" value="${table}" class="table-perm-checkbox rounded border-surface-300 text-brand-600 focus:ring-brand-500/20 w-4 h-4 cursor-pointer" ${isChecked}>
+                            <span class="text-sm text-surface-700 font-medium truncate" title="${table}">${table}</span>
+                        </label>
+                    `;
+                });
+
+                html += '</div>';
+                content.innerHTML = html;
+                btn.disabled = false;
+            } catch (err) {
+                content.innerHTML = `<p class="text-red-600 text-center py-10">${err.message}</p>`;
+            }
+        }
+
+        async function saveTablePermissions() {
+            const connKey = document.getElementById('table-perm-connection').value;
+            if (!connKey) return;
+
+            const selectedTables = [...document.querySelectorAll('.table-perm-checkbox:checked')].map(c => c.value);
+            const btn = document.getElementById('table-perm-save-btn');
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+
+            try {
+                const res = await fetch(`/api/roles/${currentTablePermRoleId}/table-permissions`, {
+                    method: 'PUT',
+                    headers: {
+                        'X-CSRF-TOKEN': csrfToken,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        connection: connKey,
+                        tables: selectedTables
+                    }),
+                });
+                const data = await res.json();
+                showToast(data.message, data.success ? 'success' : 'error');
+                if (data.success) {
+                    closeModal('table-permissions-modal');
+                }
+            } catch (err) {
+                showToast(err.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
             }
         }
     </script>

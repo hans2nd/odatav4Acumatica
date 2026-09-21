@@ -39,95 +39,180 @@
         </div>
     @endif
 
-    {{-- Templates Grid / List --}}
-    <div class="bg-white rounded-2xl border border-surface-200/80 shadow-sm overflow-hidden">
-        @if($templates->count() > 0)
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 p-6 bg-surface-50/50">
-                @foreach($templates as $template)
-                    <div class="group relative flex flex-col bg-white border border-surface-200 rounded-2xl p-5 transition-all duration-300 hover:shadow-xl hover:border-brand-300 hover:-translate-y-1">
-                        
-                        {{-- Top Section: Name & Actions --}}
-                        <div class="flex items-start justify-between mb-4 gap-4">
-                            <div class="flex-1 min-w-0">
-                                <h3 class="text-h4 text-surface-900 font-semibold truncate group-hover:text-brand-700 transition-colors" title="{{ $template->name }}">{{ $template->name }}</h3>
-                                <p class="text-[11px] font-medium text-surface-400 mt-1 uppercase tracking-wider flex items-center gap-1">
-                                    <span class="material-symbols-outlined text-[14px]">schedule</span>
-                                    {{ $template->created_at->diffForHumans() }}
-                                </p>
-                            </div>
-                            
-                            <div class="flex items-center opacity-0 group-hover:opacity-100 transition-opacity duration-200 absolute top-4 right-4 bg-white/90 backdrop-blur-sm rounded-lg shadow-sm border border-surface-100 p-1">
-                                <a href="{{ route('report.builder', ['template' => $template->id]) }}" class="w-8 h-8 flex items-center justify-center text-surface-500 hover:text-amber-600 hover:bg-amber-50 rounded-md transition-colors" title="Edit Template Configuration">
-                                    <span class="material-symbols-outlined text-[18px]">edit</span>
-                                </a>
-                                <div class="w-px h-4 bg-surface-200 mx-1"></div>
-                                <form action="{{ route('report-templates.destroy', $template->id) }}" method="POST" onsubmit="return confirm('Delete this template permanently?');">
-                                    @csrf
-                                    @method('DELETE')
-                                    <button type="submit" class="w-8 h-8 flex items-center justify-center text-surface-500 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors" title="Delete Template">
-                                        <span class="material-symbols-outlined text-[18px]">delete</span>
-                                    </button>
-                                </form>
-                            </div>
-                        </div>
+    {{-- Tabs --}}
+    <div class="flex border-b border-surface-200 gap-6">
+        <button onclick="switchTab('my-templates')" id="tab-my-templates" class="pb-3 border-b-2 text-label-md transition-colors font-semibold border-brand-600 text-brand-700">
+            My Templates
+            <span class="ml-1.5 px-2 py-0.5 rounded-full text-[10px] bg-surface-100 text-surface-600">{{ $myTemplates->count() }}</span>
+        </button>
+        <button onclick="switchTab('shared-templates')" id="tab-shared-templates" class="pb-3 border-b-2 border-transparent text-label-md text-surface-500 hover:text-surface-700 transition-colors font-medium">
+            Shared with Me
+            <span class="ml-1.5 px-2 py-0.5 rounded-full text-[10px] bg-surface-100 text-surface-600">{{ $sharedTemplates->count() }}</span>
+        </button>
+    </div>
 
-                        {{-- Details Section --}}
-                        <div class="space-y-3 mt-auto">
-                            <div class="flex items-center gap-3 p-3 rounded-xl bg-surface-50 border border-surface-100 group-hover:bg-brand-50/30 group-hover:border-brand-100 transition-colors">
-                                <div class="w-8 h-8 rounded-lg bg-white border border-surface-200 flex items-center justify-center shrink-0">
-                                    <span class="material-symbols-outlined text-[16px] text-surface-600">database</span>
-                                </div>
-                                <div class="min-w-0">
-                                    <p class="text-[10px] uppercase font-bold tracking-wider text-surface-400">Connection</p>
-                                    <p class="text-body-sm font-medium text-surface-800 truncate font-mono mt-0.5">{{ $template->connection_key }}</p>
-                                </div>
-                            </div>
-                            
-                            <div class="flex items-center gap-3 p-3 rounded-xl bg-surface-50 border border-surface-100 group-hover:bg-brand-50/30 group-hover:border-brand-100 transition-colors">
-                                <div class="w-8 h-8 rounded-lg bg-white border border-surface-200 flex items-center justify-center shrink-0">
-                                    <span class="material-symbols-outlined text-[16px] text-surface-600">table_rows</span>
-                                </div>
-                                <div class="min-w-0">
-                                    <p class="text-[10px] uppercase font-bold tracking-wider text-surface-400">Table</p>
-                                    <p class="text-body-sm font-medium text-surface-800 truncate font-mono mt-0.5">{{ $template->table_name }}</p>
-                                </div>
-                            </div>
-                            
-                            @php
-                                $config = $template->configuration;
-                                if (is_string($config)) { $config = json_decode($config, true) ?: []; }
-                                $colCount = count($config['columns'] ?? []);
-                                $filterCount = count($config['filters'] ?? []);
-                            @endphp
-                            
-                            <div class="flex items-center justify-between pt-4 mt-2 border-t border-surface-100">
-                                <div class="flex items-center gap-1.5 text-surface-500" title="{{ $colCount }} Columns Selected">
-                                    <span class="material-symbols-outlined text-[16px]">view_column</span>
-                                    <span class="text-xs font-bold">{{ $colCount }}</span> <span class="text-xs">Cols</span>
-                                </div>
-                                <div class="flex items-center gap-1.5 text-surface-500" title="{{ $filterCount }} Filters Applied">
-                                    <span class="material-symbols-outlined text-[16px]">filter_alt</span>
-                                    <span class="text-xs font-bold">{{ $filterCount }}</span> <span class="text-xs">Filters</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+    {{-- Content: My Templates --}}
+    <div id="content-my-templates" class="bg-white rounded-2xl border border-surface-200/80 shadow-sm overflow-hidden block">
+        @if($myTemplates->count() > 0)
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 p-6 bg-surface-50/50">
+                @foreach($myTemplates as $template)
+                    @include('reports.templates.partials.template-card', ['template' => $template, 'isOwner' => true])
                 @endforeach
             </div>
         @else
-            <div class="py-24 flex flex-col items-center justify-center text-center px-4 bg-surface-50/50">
-                <div class="w-24 h-24 bg-brand-50 rounded-full flex items-center justify-center mb-6 shadow-inner relative">
-                    <div class="absolute inset-0 bg-brand-100 rounded-full animate-ping opacity-20"></div>
-                    <span class="material-symbols-outlined text-[48px] text-brand-500 relative z-10" style="font-variation-settings: 'FILL' 1;">inventory_2</span>
-                </div>
-                <h3 class="text-h3 text-surface-900 mb-2">No Templates Found</h3>
-                <p class="text-body-md text-surface-500 max-w-md mx-auto mb-8">You haven't saved any report templates yet. Go to the Report Builder to create your first configuration.</p>
-                <a href="{{ route('report.builder') }}" class="inline-flex items-center gap-2 px-6 py-3 bg-brand-600 text-white rounded-xl hover:bg-brand-700 transition-all shadow-md hover:shadow-lg font-medium">
-                    <span class="material-symbols-outlined text-[20px]">play_arrow</span>
-                    Start Building
-                </a>
-            </div>
+            @include('reports.templates.partials.empty-state', ['message' => 'You haven\'t saved any report templates yet.'])
         @endif
     </div>
+
+    {{-- Content: Shared with Me --}}
+    <div id="content-shared-templates" class="bg-white rounded-2xl border border-surface-200/80 shadow-sm overflow-hidden hidden">
+        @if($sharedTemplates->count() > 0)
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 p-6 bg-surface-50/50">
+                @foreach($sharedTemplates as $template)
+                    @include('reports.templates.partials.template-card', ['template' => $template, 'isOwner' => false])
+                @endforeach
+            </div>
+        @else
+            @include('reports.templates.partials.empty-state', ['message' => 'No templates have been shared with you yet.'])
+        @endif
+    </div>
+
 </div>
+
+{{-- Share Modal --}}
+<div id="share-modal" class="fixed inset-0 z-50 hidden">
+    <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" onclick="closeShareModal()"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl border border-surface-200/60 shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col animate-fade-up overflow-hidden">
+            <div class="px-5 py-4 border-b border-surface-100">
+                <h3 class="text-h3 text-surface-800">Share Template</h3>
+                <p class="text-body-sm text-surface-500 mt-1">Select roles that can access this template</p>
+            </div>
+            <div class="p-5 overflow-y-auto flex-1">
+                <input type="hidden" id="share-template-id">
+                
+                <div id="share-loading" class="text-center py-8 hidden">
+                    <span class="material-symbols-outlined animate-spin text-brand-600 text-[32px]">sync</span>
+                    <p class="text-surface-500 text-sm mt-2">Loading roles...</p>
+                </div>
+                
+                <div id="share-roles-list" class="space-y-3">
+                    @foreach($allRoles as $role)
+                        @if(!$role->isSuperAdmin())
+                            <label class="flex items-start gap-3 p-3 rounded-xl border border-surface-200 hover:bg-surface-50 hover:border-brand-300 cursor-pointer transition-colors group">
+                                <div class="mt-0.5">
+                                    <input type="checkbox" value="{{ $role->id }}" class="role-checkbox w-4 h-4 text-brand-600 bg-surface-100 border-surface-300 rounded focus:ring-brand-500 focus:ring-2">
+                                </div>
+                                <div class="flex-1">
+                                    <p class="text-label-md text-surface-900 group-hover:text-brand-700">{{ $role->name }}</p>
+                                    @if($role->description)
+                                        <p class="text-body-sm text-surface-500 mt-0.5">{{ $role->description }}</p>
+                                    @endif
+                                </div>
+                            </label>
+                        @endif
+                    @endforeach
+                </div>
+            </div>
+            <div class="px-5 py-4 border-t border-surface-100 flex justify-end gap-2 bg-surface-50">
+                <button type="button" onclick="closeShareModal()" class="px-4 py-2 rounded-xl text-label-md text-surface-600 hover:bg-surface-200 transition-all duration-200">Cancel</button>
+                <button type="button" id="share-save-btn" onclick="saveShareSettings()" class="px-4 py-2 bg-brand-600 text-white rounded-xl hover:bg-brand-700 transition-all duration-200 text-label-md shadow-sm active:scale-[0.97]">
+                    Save Sharing
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function switchTab(tab) {
+        // Reset Tabs
+        document.getElementById('tab-my-templates').className = 'pb-3 border-b-2 border-transparent text-label-md text-surface-500 hover:text-surface-700 transition-colors font-medium';
+        document.getElementById('tab-shared-templates').className = 'pb-3 border-b-2 border-transparent text-label-md text-surface-500 hover:text-surface-700 transition-colors font-medium';
+        
+        // Hide content
+        document.getElementById('content-my-templates').classList.add('hidden');
+        document.getElementById('content-my-templates').classList.remove('block');
+        document.getElementById('content-shared-templates').classList.add('hidden');
+        document.getElementById('content-shared-templates').classList.remove('block');
+        
+        // Show active tab
+        const activeTabBtn = document.getElementById('tab-' + tab);
+        activeTabBtn.className = 'pb-3 border-b-2 text-label-md transition-colors font-semibold border-brand-600 text-brand-700';
+        
+        const activeContent = document.getElementById('content-' + tab);
+        activeContent.classList.remove('hidden');
+        activeContent.classList.add('block');
+    }
+
+    async function openShareModal(templateId) {
+        document.getElementById('share-modal').classList.remove('hidden');
+        document.getElementById('share-template-id').value = templateId;
+        
+        // Reset checkboxes
+        document.querySelectorAll('.role-checkbox').forEach(cb => cb.checked = false);
+        
+        // Show loading
+        document.getElementById('share-loading').classList.remove('hidden');
+        document.getElementById('share-roles-list').classList.add('hidden');
+        
+        try {
+            const response = await fetch(`/api/report-templates/${templateId}/shared-roles`);
+            const data = await response.json();
+            
+            if(data.roles) {
+                document.querySelectorAll('.role-checkbox').forEach(cb => {
+                    if (data.roles.includes(parseInt(cb.value))) {
+                        cb.checked = true;
+                    }
+                });
+            }
+        } catch (error) {
+            console.error('Error fetching shared roles:', error);
+            alert('Failed to load sharing settings.');
+        } finally {
+            document.getElementById('share-loading').classList.add('hidden');
+            document.getElementById('share-roles-list').classList.remove('hidden');
+        }
+    }
+
+    function closeShareModal() {
+        document.getElementById('share-modal').classList.add('hidden');
+    }
+
+    async function saveShareSettings() {
+        const templateId = document.getElementById('share-template-id').value;
+        const btn = document.getElementById('share-save-btn');
+        const roles = Array.from(document.querySelectorAll('.role-checkbox:checked')).map(cb => cb.value);
+        
+        btn.disabled = true;
+        btn.innerHTML = '<span class="material-symbols-outlined animate-spin text-[18px]">sync</span> Saving...';
+        
+        try {
+            const response = await fetch(`/api/report-templates/${templateId}/share`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify({ roles })
+            });
+            
+            const data = await response.json();
+            if(data.success) {
+                closeShareModal();
+                // Optionally show a toast notification here
+            } else {
+                alert(data.message || 'Error saving settings');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('Failed to save sharing settings.');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = 'Save Sharing';
+        }
+    }
+</script>
 @endsection
