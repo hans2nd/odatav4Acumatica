@@ -111,7 +111,11 @@ class SystemUtilityController extends Controller
 
         try {
             if ($command === 'db:seed') {
-                Artisan::call('db:seed', ['--force' => true]);
+                $params = ['--force' => true];
+                if ($request->has('class') && !empty($request->input('class'))) {
+                    $params['--class'] = $request->input('class');
+                }
+                Artisan::call('db:seed', $params);
             } else {
                 Artisan::call($command);
             }

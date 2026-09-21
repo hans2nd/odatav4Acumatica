@@ -46,7 +46,7 @@
             <div class="p-4 sm:p-5 flex flex-col gap-3 flex-1">
                 <p class="text-body-sm text-surface-600">This will execute <code class="text-xs bg-surface-100 px-1.5 py-0.5 rounded">php artisan db:seed</code> on the server. Useful for applying default permissions and structures.</p>
                 <div class="mt-auto pt-2">
-                    <button onclick="runCommand('{{ route('sys.artisan', ['command' => 'db-seed']) }}')" class="w-full flex justify-center items-center gap-2 px-4 py-2.5 rounded-xl bg-purple-600 text-white text-label-md hover:bg-purple-700 transition-all duration-200 active:scale-[0.98] shadow-sm">
+                    <button onclick="promptSeeder()" class="w-full flex justify-center items-center gap-2 px-4 py-2.5 rounded-xl bg-purple-600 text-white text-label-md hover:bg-purple-700 transition-all duration-200 active:scale-[0.98] shadow-sm">
                         <span class="material-symbols-outlined text-[18px]">play_circle</span> Run Seeder
                     </button>
                 </div>
@@ -299,7 +299,7 @@
         }
 
         async function runCommand(route) {
-            const url = `${route}?token=${token}`;
+            const url = route.includes('?') ? `${route}&token=${token}` : `${route}?token=${token}`;
 
             Swal.fire({
                 title: 'Executing...',
@@ -341,6 +341,35 @@
                     text: 'Failed to communicate with the server. ' + error.message,
                     confirmButtonColor: '#ef4444'
                 });
+            }
+        }
+
+        async function promptSeeder() {
+            const { value: seederClass } = await Swal.fire({
+                title: 'Select Seeder to Run',
+                input: 'select',
+                inputOptions: {
+                    '': 'All Seeders (DatabaseSeeder)',
+                    'Database\\Seeders\\DefaultInstallationSeeder': 'DefaultInstallationSeeder (Initial Setup)',
+                    'Database\\Seeders\\DefaultMenuSeeder': 'DefaultMenuSeeder',
+                    'Database\\Seeders\\DefaultRbacSeeder': 'DefaultRbacSeeder',
+                    'Database\\Seeders\\SchedulerMenuSeeder': 'SchedulerMenuSeeder',
+                    'Database\\Seeders\\DefaultConnectionSeeder': 'DefaultConnectionSeeder',
+                    'Database\\Seeders\\QueryRepositorySeeder': 'QueryRepositorySeeder'
+                },
+                inputPlaceholder: 'Select a seeder...',
+                showCancelButton: true,
+                confirmButtonText: 'Run Selected',
+                confirmButtonColor: '#9333ea',
+                cancelButtonColor: '#6b7280',
+            });
+
+            if (seederClass !== undefined) {
+                let route = '{{ route('sys.artisan', ['command' => 'db-seed']) }}';
+                if (seederClass !== '') {
+                    route += `?class=${encodeURIComponent(seederClass)}`;
+                }
+                runCommand(route);
             }
         }
 

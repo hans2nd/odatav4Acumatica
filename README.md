@@ -15,6 +15,14 @@ A powerful synchronization engine built on Laravel to bridge Acumatica ERP (ODat
 
 ## Changelog
 
+### v1.4.9 (RBAC Granularity & System Utilities Updates)
+- **Security & Authorization**: Menerapkan arsitektur RBAC granular yang lebih ketat di seluruh modul aplikasi.
+  - Memisahkan izin `query_builder.view` dari `manage` agar user dengan akses *read-only* tetap dapat mengeksekusi *query* yang telah dibuat.
+  - Memperkenalkan izin `sync_engine.view` untuk halaman Sinkronisasi Riwayat dan Scheduler agar user auditor dapat memantau log tanpa bisa menjalankan sinkronisasi manual.
+  - Mengunci Endpoint Sinkronisasi (`SyncController`) agar mewajibkan izin eksklusif per entitas (misalnya `customers.sync`), mencegah user tanpa izin sinkronisasi entitas tertentu untuk menjalankannya.
+  - Mengunci Endpoint Penghapusan Log Massal agar membutuhkan izin spesifik `logs.delete`.
+- **Feature: Interactive Seeder Selection**: Memodifikasi fitur *Run Seeder* di halaman System Utilities dengan pop-up (modal) interaktif. Pengguna sekarang dapat memilih dan mengeksekusi kelas seeder tertentu (misalnya `DefaultMenuSeeder` atau `DefaultRbacSeeder`) secara individual untuk mencegah duplikasi data saat migrasi inkremental di *production*.
+
 ### v1.4.8 (Queue Stability & Background Sync Hardening)
 - **Enhancement: Unique Queue Jobs**: Mengimplementasikan interface `ShouldBeUnique` dan method `uniqueId()` pada `SyncEntityJob`. Hal ini menjamin bahwa antrean sinkronisasi yang duplikat untuk entitas yang sama akan otomatis ditolak oleh Laravel jika job sebelumnya masih berjalan. Update ini mencegah penumpukan antrean (queue buildup), proses yang tumpang tindih, dan resource VPS (RAM/CPU) yang hang di production.
 

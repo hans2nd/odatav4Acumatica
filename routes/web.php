@@ -56,23 +56,27 @@ Route::middleware(['auth'])->group(function () {
     |--------------------------------------------------------------------------
     */
 
-    Route::middleware(['permission:sync_engine.manage'])->group(function () {
-        Route::post('/sync/all', [SyncController::class, 'syncAll'])->name('sync.all');
-        Route::post('/sync/control/{id}', [SyncController::class, 'control'])->name('sync.control');
-        Route::post('/sync/{entity}', [SyncController::class, 'syncEntity'])->name('sync.entity');
-
-        // New Sync History & Progress MVP Routes
+    Route::middleware(['permission:sync_engine.view'])->group(function () {
+        // Sync History (View Only)
         Route::get('/sync-history', [\App\Http\Controllers\SyncJobController::class, 'page'])->name('sync-history.index');
         Route::get('/api/sync-jobs', [\App\Http\Controllers\SyncJobController::class, 'index'])->name('api.sync-jobs.index');
         Route::get('/api/sync-jobs/active', [\App\Http\Controllers\SyncJobController::class, 'active'])->name('api.sync-jobs.active');
         Route::get('/api/sync-jobs/{id}', [\App\Http\Controllers\SyncJobController::class, 'show'])->name('api.sync-jobs.show');
         
-        // Scheduler MVP Routes
+        // Scheduler (View Only)
         Route::get('/scheduler', [\App\Http\Controllers\ScheduleController::class, 'index'])->name('scheduler.index');
         Route::get('/api/scheduler/{entity}', [\App\Http\Controllers\ScheduleController::class, 'show'])->name('api.scheduler.show');
+        Route::post('/api/scheduler/preview', [\App\Http\Controllers\ScheduleController::class, 'preview'])->name('api.scheduler.preview');
+    });
+
+    Route::middleware(['permission:sync_engine.manage'])->group(function () {
+        Route::post('/sync/all', [SyncController::class, 'syncAll'])->name('sync.all');
+        Route::post('/sync/control/{id}', [SyncController::class, 'control'])->name('sync.control');
+        Route::post('/sync/{entity}', [SyncController::class, 'syncEntity'])->name('sync.entity');
+
+        // Scheduler (Manage)
         Route::put('/api/scheduler/{entity}', [\App\Http\Controllers\ScheduleController::class, 'update'])->name('api.scheduler.update');
         Route::patch('/api/scheduler/{entity}/toggle', [\App\Http\Controllers\ScheduleController::class, 'toggle'])->name('api.scheduler.toggle');
-        Route::post('/api/scheduler/preview', [\App\Http\Controllers\ScheduleController::class, 'preview'])->name('api.scheduler.preview');
         Route::post('/api/scheduler/{entity}/run-now', [\App\Http\Controllers\ScheduleController::class, 'runNow'])->name('api.scheduler.run-now');
     });
 
@@ -131,13 +135,10 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/api/report-builder/connections', [ReportBuilderController::class, 'connections']);
         Route::get('/api/report-builder/tables', [ReportBuilderController::class, 'tables']);
         Route::get('/api/report-builder/columns', [ReportBuilderController::class, 'columns']);
+        Route::post('/api/report-builder/prepare', [ReportBuilderController::class, 'prepare']);
         Route::get('/api/report-builder/progress', [ReportBuilderController::class, 'checkProgress']);
         Route::get('/api/report-builder/download/{token}', [ReportBuilderController::class, 'download'])->name('report.builder.download');
         Route::resource('report-templates', ReportTemplateController::class);
-    });
-
-    Route::middleware(['permission:report_builder.manage'])->group(function () {
-        Route::post('/api/report-builder/prepare', [ReportBuilderController::class, 'prepare']);
     });
 
     Route::middleware(['permission:query_builder.view'])->group(function () {
@@ -145,9 +146,6 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/api/query-builder/tables', [QueryBuilderController::class, 'tables']);
         Route::get('/api/query-builder/columns', [QueryBuilderController::class, 'columns']);
         Route::get('/api/query-builder/download/{token}', [QueryBuilderController::class, 'download'])->name('query.builder.download');
-    });
-
-    Route::middleware(['permission:query_builder.manage'])->group(function () {
         Route::post('/api/query-builder/execute', [QueryBuilderController::class, 'execute']);
         Route::post('/api/query-builder/export', [QueryBuilderController::class, 'export']);
         Route::post('/api/query-builder/save', [QueryBuilderController::class, 'save']);

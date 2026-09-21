@@ -175,6 +175,13 @@ class SyncController extends Controller
     public function syncEntity(Request $request, string $entity): JsonResponse
     {
         try {
+            if (!$request->user()->hasPermission("{$entity}.sync") && !$request->user()->hasPermission('sync_engine.manage')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "You do not have permission to sync {$entity}.",
+                ], 403);
+            }
+
             $config = $this->entityConfigService->get($entity);
             if (!$config) {
                 return response()->json([

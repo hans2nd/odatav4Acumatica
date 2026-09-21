@@ -167,7 +167,7 @@ class DefaultMenuSeeder extends Seeder
                 'type' => 'link',
                 'is_active' => true,
                 'is_visible' => true,
-                'permission_key' => 'sync_engine.manage',
+                'permission_key' => 'sync_engine.view',
             ]
         );
 
@@ -181,7 +181,7 @@ class DefaultMenuSeeder extends Seeder
                 'type' => 'link',
                 'is_active' => true,
                 'is_visible' => true,
-                'permission_key' => 'sync_engine.manage',
+                'permission_key' => 'sync_engine.view',
             ]
         );
 

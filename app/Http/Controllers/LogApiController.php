@@ -123,6 +123,10 @@ class LogApiController extends Controller
             return response()->json(['success' => false, 'message' => 'Invalid action.'], 400);
         }
 
+        if ($action === 'delete') {
+            abort_unless($request->user()->hasPermission('logs.delete'), 403, 'You do not have permission to delete logs.');
+        }
+
         $query = SyncLog::query();
 
         if ($targetType === 'ids') {

@@ -74,7 +74,7 @@ class PermissionGeneratorService
 
         $systemResources = [
             ['name' => 'Settings', 'slug' => 'settings', 'module_id' => $systemModule->id, 'actions' => ['manage', 'view']],
-            ['name' => 'Sync Engine', 'slug' => 'sync_engine', 'module_id' => $systemModule->id, 'actions' => ['manage', 'execute']],
+            ['name' => 'Sync Engine', 'slug' => 'sync_engine', 'module_id' => $systemModule->id, 'actions' => ['manage', 'execute', 'view']],
             ['name' => 'Sync Logs', 'slug' => 'logs', 'module_id' => $systemModule->id, 'actions' => ['view', 'delete']],
             ['name' => 'Users & Roles', 'slug' => 'users', 'module_id' => $systemModule->id, 'actions' => ['manage', 'view']],
             ['name' => 'Report Builder', 'slug' => 'report_builder', 'module_id' => $reportModule->id, 'actions' => ['manage', 'view']],
