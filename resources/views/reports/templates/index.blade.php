@@ -98,19 +98,17 @@
                 
                 <div id="share-roles-list" class="space-y-3">
                     @foreach($allRoles as $role)
-                        @if(!$role->isSuperAdmin())
-                            <label class="flex items-start gap-3 p-3 rounded-xl border border-surface-200 hover:bg-surface-50 hover:border-brand-300 cursor-pointer transition-colors group">
-                                <div class="mt-0.5">
-                                    <input type="checkbox" value="{{ $role->id }}" class="role-checkbox w-4 h-4 text-brand-600 bg-surface-100 border-surface-300 rounded focus:ring-brand-500 focus:ring-2">
-                                </div>
-                                <div class="flex-1">
-                                    <p class="text-label-md text-surface-900 group-hover:text-brand-700">{{ $role->name }}</p>
-                                    @if($role->description)
-                                        <p class="text-body-sm text-surface-500 mt-0.5">{{ $role->description }}</p>
-                                    @endif
-                                </div>
-                            </label>
-                        @endif
+                        <label class="flex items-start gap-3 p-3 rounded-xl border border-surface-200 hover:bg-surface-50 hover:border-brand-300 cursor-pointer transition-colors group">
+                            <div class="mt-0.5">
+                                <input type="checkbox" value="{{ $role->id }}" class="role-checkbox w-4 h-4 text-brand-600 bg-surface-100 border-surface-300 rounded focus:ring-brand-500 focus:ring-2">
+                            </div>
+                            <div class="flex-1">
+                                <p class="text-label-md text-surface-900 group-hover:text-brand-700">{{ $role->name }}</p>
+                                @if($role->description)
+                                    <p class="text-body-sm text-surface-500 mt-0.5">{{ $role->description }}</p>
+                                @endif
+                            </div>
+                        </label>
                     @endforeach
                 </div>
             </div>
