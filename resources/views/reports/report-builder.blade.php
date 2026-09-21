@@ -548,22 +548,50 @@
             const container = document.getElementById('rbFiltersContainer');
             const row = document.createElement('div');
             row.className = 'flex items-center gap-2 rb-filter-row animate-fade-up';
+            
+            const uniqueId = 'filter-op-' + Math.random().toString(36).substr(2, 9);
+            const opOptions = `
+                <option value="eq" ${op === 'eq' ? 'selected' : ''}>Equals (=)</option>
+                <option value="ne" ${op === 'ne' ? 'selected' : ''}>Not Eq (!=)</option>
+                <option value="contains" ${op === 'contains' ? 'selected' : ''}>Contains</option>
+                <option value="startswith" ${op === 'startswith' ? 'selected' : ''}>Starts With</option>
+                <option value="endswith" ${op === 'endswith' ? 'selected' : ''}>Ends With</option>
+                <option value="gt" ${op === 'gt' ? 'selected' : ''}>Greater (>)</option>
+                <option value="ge" ${op === 'ge' ? 'selected' : ''}>Greater Eq (>=)</option>
+                <option value="lt" ${op === 'lt' ? 'selected' : ''}>Less (<)</option>
+                <option value="le" ${op === 'le' ? 'selected' : ''}>Less Eq (<=)</option>
+            `;
 
             row.innerHTML = `
                     <input type="text" list="rbFilterFieldDataList" class="rb-filter-field flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Search or select field..." value="${field}" oninput="updateRbFilterType(this)" onchange="updateRbFilterType(this)">
-                    <select class="rb-filter-operator w-36 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2">
-                        <option value="eq" ${op === 'eq' ? 'selected' : ''}>Equals (=)</option>
-                        <option value="ne" ${op === 'ne' ? 'selected' : ''}>Not Eq (!=)</option>
-                        <option value="contains" ${op === 'contains' ? 'selected' : ''}>Contains</option>
-                        <option value="startswith" ${op === 'startswith' ? 'selected' : ''}>Starts With</option>
-                        <option value="endswith" ${op === 'endswith' ? 'selected' : ''}>Ends With</option>
-                        <option value="gt" ${op === 'gt' ? 'selected' : ''}>Greater (>)</option>
-                        <option value="ge" ${op === 'ge' ? 'selected' : ''}>Greater Eq (>=)</option>
-                        <option value="lt" ${op === 'lt' ? 'selected' : ''}>Less (<)</option>
-                        <option value="le" ${op === 'le' ? 'selected' : ''}>Less Eq (<=)</option>
-                    </select>
+                    
+                    <div x-data="customSelect('${uniqueId}')" class="relative w-40 shrink-0">
+                        <select id="${uniqueId}" class="hidden rb-filter-operator" x-ref="select">
+                            ${opOptions}
+                        </select>
+                        
+                        <button type="button" @click="toggle" @click.away="close" class="w-full bg-surface-50 border border-surface-200 px-3 py-2 text-sm rounded-xl focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all font-mono shadow-sm flex justify-between items-center text-left">
+                            <span x-text="selectedLabel" class="truncate" :class="!selectedValue ? 'text-surface-400' : 'text-surface-900'"></span>
+                            <span class="material-symbols-outlined text-[18px] text-surface-400 transition-transform duration-200" :class="open ? 'rotate-180' : ''">expand_more</span>
+                        </button>
+                        
+                        <div x-show="open" x-transition.opacity.duration.200ms class="absolute z-30 w-full mt-1 bg-white border border-surface-200 rounded-xl shadow-lg max-h-60 overflow-y-auto" style="display: none;">
+                            <ul class="py-1">
+                                <template x-for="option in options" :key="option.value">
+                                    <li @click="selectOption(option.value)" 
+                                        class="px-3.5 py-2.5 hover:bg-surface-50 cursor-pointer text-sm transition-colors flex justify-between items-center"
+                                        :class="option.value === selectedValue ? 'bg-brand-50 text-brand-700 font-medium' : 'text-surface-700'"
+                                    >
+                                        <span x-text="option.label"></span>
+                                        <span x-show="option.value === selectedValue" class="material-symbols-outlined text-[16px] text-brand-600">check</span>
+                                    </li>
+                                </template>
+                            </ul>
+                        </div>
+                    </div>
+
                     <input type="text" class="rb-filter-value flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Value..." value="${val}">
-                    <button onclick="removeReportFilterRow(this)" class="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all duration-200" title="Remove filter">
+                    <button onclick="removeReportFilterRow(this)" class="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all duration-200 shrink-0" title="Remove filter">
                         <span class="material-symbols-outlined text-[16px]">delete</span>
                     </button>
                 `;
