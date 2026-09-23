@@ -87,7 +87,7 @@ class MetadataRepository implements MetadataRepositoryInterface
                 $odataEntity = $config['odata_entity'];
                 
                 // Use the newly dedicated method and discover structure through the ConnectionManager
-                $metadataNode = $this->connectionManager->discoverStructure($sourceConnName, $odataEntity);
+                $metadataNode = $this->connectionManager->discoverStructure($sourceConnName, $odataEntity, $forceRefresh);
                 $providerNetworkMs = round((microtime(true) - $tProvNetStart) * 1000);
                 
                 $tProvProcStart = microtime(true);

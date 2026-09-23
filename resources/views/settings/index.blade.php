@@ -244,10 +244,15 @@
                     </x-ui.form-group>
                     <div>
                         <label class="ui-label flex justify-between items-center">
-                            Source Object / Entity <span class="text-red-500">*</span>
-                            <button type="button" onclick="fetchSourceObjects(true)" tabindex="-1" class="text-[11px] text-brand-600 hover:text-brand-700 flex items-center gap-0.5">
-                                <span class="material-symbols-outlined text-[13px]">refresh</span> Reload
-                            </button>
+                            <span>Source Object / Entity <span class="text-red-500">*</span></span>
+                            <div class="flex items-center gap-2">
+                                <button type="button" onclick="downloadSourceObject()" id="btn-download-source" class="text-[11px] text-emerald-600 hover:text-emerald-700 flex items-center gap-0.5 hidden">
+                                    <span class="material-symbols-outlined text-[13px]">download</span> Download
+                                </button>
+                                <button type="button" onclick="fetchSourceObjects(true)" tabindex="-1" class="text-[11px] text-brand-600 hover:text-brand-700 flex items-center gap-0.5">
+                                    <span class="material-symbols-outlined text-[13px]">refresh</span> Reload
+                                </button>
+                            </div>
                         </label>
                         <div class="relative" id="form-odata-container">
                             <input type="text" id="form-odata" required placeholder="Search or type object name" autocomplete="off"
@@ -264,10 +269,28 @@
                                 <span class="material-symbols-outlined text-[20px] text-surface-400 spin">sync</span>
                             </div>
                         </div>
-                        
                         <select id="form-odata-select" onchange="document.getElementById('form-odata').value = this.value; updateWatermarkOptions(this.value, true)" class="hidden ui-select ui-input-mono" style="background:#fff;">
                             <option value="" disabled selected>Select an object</option>
                         </select>
+                        <div class="mt-3 hidden" id="form-sheet-container">
+                            <label class="ui-label flex justify-between items-center mb-1">
+                                <span class="text-surface-500">Specific Sheet Name (Optional, for Excel files)</span>
+                                <span id="form-sheet-loading" class="text-[11px] text-surface-500 hidden flex items-center gap-1">
+                                    <span class="material-symbols-outlined text-[13px] spin">sync</span> Loading...
+                                </span>
+                            </label>
+                            <div class="relative">
+                                <input type="text" id="form-sheet" placeholder="Search or type sheet name" autocomplete="off"
+                                    onfocus="document.getElementById('form-sheet-dropdown').classList.remove('hidden')"
+                                    onblur="setTimeout(() => { document.getElementById('form-sheet-dropdown').classList.add('hidden'); }, 200)"
+                                    oninput="filterList(this, 'form-sheet-list')"
+                                    class="ui-input ui-input-mono" style="background:#fff;">
+                                
+                                <div id="form-sheet-dropdown" class="absolute z-20 w-full mt-1 bg-white border border-surface-200 rounded-xl shadow-lg max-h-48 overflow-y-auto hidden">
+                                    <ul id="form-sheet-list" class="py-1"></ul>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 

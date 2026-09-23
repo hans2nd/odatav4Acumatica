@@ -98,7 +98,14 @@
             document.getElementById('form-original-key').value = editKey;
             document.getElementById('form-key').value = editKey;
             document.getElementById('form-type').value = e.type;
-            document.getElementById('form-odata').value = e.odata_entity;
+            if (e.odata_entity && e.odata_entity.includes('::')) {
+                const parts = e.odata_entity.split('::');
+                document.getElementById('form-odata').value = parts[0];
+                document.getElementById('form-sheet').value = parts[1] || '';
+            } else {
+                document.getElementById('form-odata').value = e.odata_entity || '';
+                document.getElementById('form-sheet').value = '';
+            }
             document.getElementById('form-table').value = e.table;
             document.getElementById('form-icon').value = e.icon || '';
             document.getElementById('form-desc').value = e.description;
@@ -138,6 +145,7 @@
             
             document.getElementById('form-watermark-column').value = '';
             document.getElementById('form-is-active').checked = true;
+            document.getElementById('form-sheet').value = '';
             
             const typeEl = document.getElementById('form-type');
             if(typeEl) typeEl.dispatchEvent(new Event('change'));
@@ -264,7 +272,22 @@
     }
 
     async function fetchSourceObjects(force = false) {
-        const connKey = document.getElementById('form-source-conn').value;
+        const connEl = document.getElementById('form-source-conn');
+        const connKey = connEl.value;
+        const sheetContainer = document.getElementById('form-sheet-container');
+        
+        const btnDownload = document.getElementById('btn-download-source');
+        if (btnDownload) btnDownload.classList.add('hidden');
+        
+        if (connEl.options[connEl.selectedIndex] && connEl.options[connEl.selectedIndex].text.includes('(SHAREPOINT)')) {
+            if (sheetContainer) sheetContainer.classList.remove('hidden');
+        } else {
+            if (sheetContainer) {
+                sheetContainer.classList.add('hidden');
+                document.getElementById('form-sheet').value = '';
+            }
+        }
+
         if (!connKey) {
             renderSourceObjects([]);
             return;
@@ -303,10 +326,61 @@
 
     let cachedWatermarkColumns = [];
 
+    function downloadSourceObject() {
+        const connKey = document.getElementById('form-source-conn').value;
+        const objectName = document.getElementById('form-odata').value;
+        if (!connKey || !objectName) return;
+        
+        window.location.href = `/api/connections/${connKey}/objects/${encodeURIComponent(objectName)}/download`;
+    }
+
+    async function fetchExcelSheets(objectName) {
+        if (!objectName) return;
+        const connEl = document.getElementById('form-source-conn');
+        const connKey = connEl.value;
+        if (!connKey) return;
+        if (!connEl.options[connEl.selectedIndex] || !connEl.options[connEl.selectedIndex].text.includes('(SHAREPOINT)')) return;
+        if (!objectName.toLowerCase().endsWith('.xlsx')) return;
+        
+        const loading = document.getElementById('form-sheet-loading');
+        if (loading) loading.classList.remove('hidden');
+        
+        try {
+            const res = await fetch(`/api/connections/${connKey}/objects/${encodeURIComponent(objectName)}/sheets`);
+            const data = await res.json();
+            const list = document.getElementById('form-sheet-list');
+            if (res.ok && data.success && data.sheets && data.sheets.length > 0) {
+                let html = '';
+                data.sheets.forEach(sheet => {
+                    html += `<li onclick="document.getElementById('form-sheet').value = '${sheet}'; document.getElementById('form-sheet-dropdown').classList.add('hidden');" class="px-3.5 py-2 hover:bg-surface-100 cursor-pointer text-sm font-mono text-surface-800 transition-colors">${sheet}</li>`;
+                });
+                list.innerHTML = html;
+            } else {
+                list.innerHTML = `<li class="px-3.5 py-2 text-sm text-surface-400 italic">No sheets found</li>`;
+            }
+        } catch (e) {
+            console.error('Failed to fetch sheets', e);
+        } finally {
+            if (loading) loading.classList.add('hidden');
+        }
+    }
+
     async function updateWatermarkOptions(objectName, autoSet = true) {
         if (!objectName) return;
-        const connKey = document.getElementById('form-source-conn').value;
+        const connEl = document.getElementById('form-source-conn');
+        const connKey = connEl.value;
         if (!connKey) return;
+        
+        const btnDownload = document.getElementById('btn-download-source');
+        if (btnDownload) {
+            if (connEl.options[connEl.selectedIndex] && connEl.options[connEl.selectedIndex].text.includes('(SHAREPOINT)')) {
+                btnDownload.classList.remove('hidden');
+            } else {
+                btnDownload.classList.add('hidden');
+            }
+        }
+        
+        fetchExcelSheets(objectName);
         
         const loading = document.getElementById('watermark-loading');
         if (loading) loading.classList.remove('hidden');
@@ -386,7 +460,12 @@
         const btn = document.getElementById('form-submit-btn');
         const payload = {
             key: document.getElementById('form-key').value.trim(),
-            odata_entity: document.getElementById('form-odata').value.trim(),
+            odata_entity: (() => {
+                let odata = document.getElementById('form-odata').value.trim();
+                const sheet = document.getElementById('form-sheet').value.trim();
+                if (sheet) odata += '::' + sheet;
+                return odata;
+            })(),
             table: document.getElementById('form-table').value.trim(),
             type: document.getElementById('form-type').value,
             icon: document.getElementById('form-icon').value.trim() || 'database',

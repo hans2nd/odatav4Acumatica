@@ -331,6 +331,24 @@ class SettingsController extends Controller
             ], 500);
         }
     }
+
+    public function getConnectionObjectSheets(string $key, string $objectName): JsonResponse
+    {
+        try {
+            $provider = $this->connectionManager->getProvider($key);
+            if (method_exists($provider, 'listExcelSheets')) {
+                $connection = \App\Models\Connection::where('key', $key)->firstOrFail();
+                $sheets = $provider->listExcelSheets($connection->credentials ?? [], urldecode($objectName));
+                return response()->json(['success' => true, 'sheets' => $sheets]);
+            }
+            return response()->json(['success' => true, 'sheets' => []]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch sheets: ' . $e->getMessage()
+            ], 500);
+        }
+    }
     public function fetchSharePointSites(Request $request): JsonResponse
     {
         $credentials = $request->validate([
@@ -352,6 +370,33 @@ class SettingsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to load sites: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function downloadConnectionObject(string $key, string $objectName)
+    {
+        try {
+            $provider = $this->connectionManager->getProvider($key);
+            if (method_exists($provider, 'downloadObject')) {
+                $connection = \App\Models\Connection::where('key', $key)->firstOrFail();
+                $tempPath = $provider->downloadObject($connection->credentials ?? [], urldecode($objectName));
+
+                if (!$tempPath || !file_exists($tempPath)) {
+                    return response()->json(['success' => false, 'message' => 'Failed to download file from provider.'], 500);
+                }
+
+                $fileName = basename($tempPath);
+                // Strip the temp prefix to get the original name
+                $fileName = preg_replace('/^sp_[a-zA-Z0-9]+_/', '', $fileName);
+
+                return response()->download($tempPath, $fileName)->deleteFileAfterSend(true);
+            }
+            return response()->json(['success' => false, 'message' => 'Download not supported for this provider.'], 400);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to download object: ' . $e->getMessage()
             ], 500);
         }
     }

@@ -527,13 +527,25 @@ class SyncService
                 $data = $client->readExcelFile($driveId, $itemId, $fileName, $sheet);
                 
                 $rows = $data['rows'] ?? [];
-                $totalRecordsCount = count($rows);
+                
+                // If it's a Generator, we don't know the exact count in advance unless provided
+                $totalRecordsCount = is_array($rows) ? count($rows) : null;
                 $progressCallback(0, $totalRecordsCount);
                 
                 $chunkSize = $entity['batch_size'] ?? 1000;
-                $chunks = array_chunk($rows, $chunkSize);
-                foreach ($chunks as $chunk) {
-                    $processChunkCallback($chunk);
+                $currentChunk = [];
+                
+                foreach ($rows as $row) {
+                    $currentChunk[] = $row;
+                    if (count($currentChunk) >= $chunkSize) {
+                        $processChunkCallback($currentChunk);
+                        $progressCallback($fetchedCount, $totalRecordsCount);
+                        $currentChunk = [];
+                    }
+                }
+                
+                if (!empty($currentChunk)) {
+                    $processChunkCallback($currentChunk);
                     $progressCallback($fetchedCount, $totalRecordsCount);
                 }
             }

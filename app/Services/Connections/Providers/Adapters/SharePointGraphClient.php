@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Throwable;
+use PhpOffice\PhpSpreadsheet\Reader\IReadFilter;
 
 /**
  * SharePoint Graph API Client
@@ -17,6 +18,24 @@ use Throwable;
  * SharePoint Online through the Microsoft Graph API to list and download
  * Excel/CSV files from document libraries.
  */
+class ChunkReadFilter implements IReadFilter
+{
+    private $startRow = 0;
+    private $endRow   = 0;
+
+    public function __construct($startRow, $endRow) {
+        $this->startRow = $startRow;
+        $this->endRow   = $endRow;
+    }
+
+    public function readCell(string $columnAddress, int $row, string $worksheetName = ''): bool {
+        if ($row >= $this->startRow && $row <= $this->endRow) {
+            return true;
+        }
+        return false;
+    }
+}
+
 class SharePointGraphClient
 {
     private const TOKEN_URL = 'https://login.microsoftonline.com/%s/oauth2/v2.0/token';
@@ -311,18 +330,82 @@ class SharePointGraphClient
      * @param string|null $sheetName  Specific sheet name, or null for first sheet
      * @return array{headers: string[], rows: array<int, array<string, mixed>>}
      */
-    public function readExcelFile(string $driveId, string $itemId, string $fileName, ?string $sheetName = null): array
+    public function readExcelFile(string $driveId, string $itemId, string $fileName, ?string $sheetName = null, bool $metadataOnly = false): array
     {
+        $ext = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+        
+        // Fast path for XLSX files using Microsoft Graph Excel API
+        // We now use this for ALL reads (not just metadata) to correctly evaluate dynamic array formulas like VSTACK
+        if ($ext === 'xlsx') {
+            try {
+                $token = $this->getAccessToken();
+                
+                if (empty($sheetName)) {
+                    $wsResponse = Http::withToken($token)->acceptJson()->timeout(10)
+                        ->get(self::GRAPH_BASE . "/drives/{$driveId}/items/{$itemId}/workbook/worksheets");
+                    if ($wsResponse->successful()) {
+                        $worksheets = $wsResponse->json('value', []);
+                        if (!empty($worksheets)) {
+                            $sheetName = $worksheets[0]['name'];
+                        }
+                    }
+                }
+
+                if (!empty($sheetName)) {
+                    $encodedSheet = rawurlencode(str_replace("'", "''", $sheetName));
+                    
+                    // For metadata only, we just read the first 50 rows
+                    if ($metadataOnly) {
+                        $rangeUrl = self::GRAPH_BASE . "/drives/{$driveId}/items/{$itemId}/workbook/worksheets('{$encodedSheet}')/range(address='A1:ZZ50')";
+                        $rangeResponse = Http::withToken($token)->acceptJson()->timeout(15)->get($rangeUrl);
+                        
+                        if ($rangeResponse->successful()) {
+                            $values = $rangeResponse->json('values', []);
+                            $valueTypes = $rangeResponse->json('valueTypes', []);
+                            
+                            return $this->processGraphRangePayload($values, $valueTypes, $metadataOnly);
+                        }
+                    } else {
+                        // For full sync, first get the usedRange address
+                        $addressUrl = self::GRAPH_BASE . "/drives/{$driveId}/items/{$itemId}/workbook/worksheets('{$encodedSheet}')/usedRange(valuesOnly=true)?\$select=addressLocal";
+                        // Increase timeout to 60 seconds because Excel Online might need time to open and calculate large files with VSTACK
+                        $addressResponse = Http::withToken($token)->acceptJson()->timeout(60)->get($addressUrl);
+                        
+                        if ($addressResponse->successful()) {
+                            $address = $addressResponse->json('addressLocal'); // e.g. "Sheet1!A1:XFD31102"
+                            if ($address) {
+                                preg_match('/!([A-Z]+)(\d+):([A-Z]+)(\d+)/', $address, $matches);
+                                if (count($matches) === 5) {
+                                    $startCol = $matches[1];
+                                    $startRow = (int)$matches[2];
+                                    $endCol = $matches[3];
+                                    $endRow = (int)$matches[4];
+                                    
+                                    // Limit endCol to ZZ to prevent excessive width requests
+                                    // We will return a Generator inside the 'rows' key
+                                    return [
+                                        'headers' => $this->fetchGraphHeaders($token, $driveId, $itemId, $encodedSheet, $startCol, $endCol),
+                                        'rows' => $this->generateGraphRangeChunks($token, $driveId, $itemId, $encodedSheet, $startCol, $startRow, $endCol, $endRow, $metadataOnly)
+                                    ];
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Graph API fast path failed, falling back to ZIP parser', ['error' => $e->getMessage()]);
+            }
+        }
+
+        // Fallback to downloading the file and parsing with PhpSpreadsheet
         $tempPath = $this->downloadToTemp($driveId, $itemId, $fileName);
 
         try {
-            $ext = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
-
             if ($ext === 'csv') {
                 return $this->readCsvFile($tempPath);
             }
 
-            return $this->readXlsxFile($tempPath, $sheetName);
+            return $this->readXlsxFile($tempPath, $sheetName, $metadataOnly ? 30 : null);
         } finally {
             if (file_exists($tempPath)) {
                 @unlink($tempPath);
@@ -364,100 +447,251 @@ class SharePointGraphClient
     }
 
     /**
-     * Read an XLSX file using PhpSpreadsheet and return structured data.
+     * Read an XLSX file quickly using native ZipArchive and XMLReader without heavy memory footprint.
      */
-    private function readXlsxFile(string $path, ?string $sheetName = null): array
+    private function readXlsxFile(string $path, ?string $sheetName = null, ?int $maxRows = null): array
     {
-        $reader = \PhpOffice\PhpSpreadsheet\IOFactory::createReaderForFile($path);
-        $reader->setReadDataOnly(true);
-
-        if ($sheetName) {
-            $reader->setLoadSheetsOnly([$sheetName]);
+        $zip = new \ZipArchive();
+        if ($zip->open($path) !== true) {
+            throw new \RuntimeException("Cannot open XLSX as ZIP: {$path}");
         }
 
-        $spreadsheet = $reader->load($path);
-        $worksheet = $sheetName
-            ? $spreadsheet->getSheetByName($sheetName)
-            : $spreadsheet->getActiveSheet();
-
-        if (!$worksheet) {
-            throw new RuntimeException("Sheet [{$sheetName}] not found in the Excel file.");
+        // 1. Load shared strings (limit to 1 million to prevent extreme memory use)
+        $sharedStrings = [];
+        if ($zip->locateName('xl/sharedStrings.xml') !== false) {
+            $xml = new \XMLReader();
+            $xml->open('zip://' . $path . '#xl/sharedStrings.xml');
+            while ($xml->read()) {
+                if ($xml->nodeType == \XMLReader::ELEMENT && $xml->name == 'si') {
+                    $node = @simplexml_load_string($xml->readOuterXml());
+                    if ($node) {
+                        $string = '';
+                        if (isset($node->t)) {
+                            $string = (string)$node->t;
+                        } elseif (isset($node->r)) {
+                            foreach ($node->r as $run) {
+                                $string .= (string)$run->t;
+                            }
+                        }
+                        $sharedStrings[] = $string;
+                    }
+                    if (count($sharedStrings) > 1000000) {
+                        break;
+                    }
+                }
+            }
+            $xml->close();
         }
 
-        $data = $worksheet->toArray(null, true, true, true);
+        // 2. Find target sheet XML
+        $targetSheetXml = 'xl/worksheets/sheet1.xml';
+        $workbookXml = $zip->getFromName('xl/workbook.xml');
+        $relsXml = $zip->getFromName('xl/_rels/workbook.xml.rels');
+        
+        if ($workbookXml && $relsXml) {
+            $wb = @simplexml_load_string($workbookXml);
+            $rels = @simplexml_load_string($relsXml);
+            
+            $rId = null;
+            if ($wb && isset($wb->sheets->sheet)) {
+                if ($sheetName) {
+                    foreach ($wb->sheets->sheet as $sheet) {
+                        if (strcasecmp((string)$sheet['name'], $sheetName) === 0) {
+                            $attrs = $sheet->attributes('http://schemas.openxmlformats.org/officeDocument/2006/relationships');
+                            $rId = (string)$attrs['id'];
+                            break;
+                        }
+                    }
+                } else {
+                    if (isset($wb->sheets->sheet[0])) {
+                        $attrs = $wb->sheets->sheet[0]->attributes('http://schemas.openxmlformats.org/officeDocument/2006/relationships');
+                        $rId = (string)$attrs['id'];
+                    }
+                }
+            }
+            
+            if ($rId && $rels && isset($rels->Relationship)) {
+                foreach ($rels->Relationship as $rel) {
+                    if ((string)$rel['Id'] === $rId) {
+                        $targetSheetXml = 'xl/' . ltrim((string)$rel['Target'], '/');
+                        break;
+                    }
+                }
+            } elseif ($sheetName) {
+                $zip->close();
+                throw new \RuntimeException("Sheet [{$sheetName}] not found in the Excel file.");
+            }
+        }
+        
+        $targetSheetXml = str_replace('xl/xl/', 'xl/', $targetSheetXml);
+        
+        if ($zip->locateName($targetSheetXml) === false) {
+            $zip->close();
+            throw new \RuntimeException("Target sheet XML not found inside XLSX: $targetSheetXml");
+        }
 
-        if (empty($data)) {
+        // 3. Read sheet data (max 30 rows for metadata discovery)
+        // 3. Read first 100 rows to detect header
+        $xml = new \XMLReader();
+        $xml->open('zip://' . $path . '#' . $targetSheetXml);
+        
+        $initialData = [];
+        $headerRowIndex = 0;
+        $maxColumns = 0;
+        
+        while ($xml->read()) {
+            if ($xml->nodeType == \XMLReader::ELEMENT && $xml->name == 'row') {
+                $row = [];
+                $rowNode = @simplexml_load_string($xml->readOuterXml());
+                if ($rowNode && isset($rowNode->c)) {
+                    foreach ($rowNode->c as $c) {
+                        $r = (string)$c['r']; 
+                        $t = (string)$c['t']; 
+                        $v = (string)$c->v;
+                        
+                        if ($t === 's') {
+                            $idx = (int)$v;
+                            $v = $sharedStrings[$idx] ?? $v;
+                        } elseif ($t === 'inlineStr' && isset($c->is->t)) {
+                            $v = (string)$c->is->t;
+                        }
+                        
+                        preg_match('/[A-Z]+/', $r, $matches);
+                        $col = $matches[0] ?? '';
+                        if ($col) {
+                            $row[$col] = $v;
+                        }
+                    }
+                }
+                
+                if (!empty($row)) {
+                    $initialData[] = $row;
+                    $nonEmptyCount = count(array_filter($row, fn($v) => $v !== null && trim((string)$v) !== ''));
+                    if ($nonEmptyCount > $maxColumns) {
+                        $maxColumns = $nonEmptyCount;
+                        $headerRowIndex = count($initialData) - 1;
+                    }
+                }
+                
+                // Read up to 100 rows to find header, or stop early if we hit maxRows
+                if (count($initialData) >= 100 || ($maxRows !== null && count($initialData) >= $maxRows)) {
+                    break;
+                }
+            }
+        }
+        
+        if (empty($initialData)) {
+            $xml->close();
+            $zip->close();
             return ['headers' => [], 'rows' => []];
         }
 
-        // Auto-detect header row by finding the row with the maximum number of non-empty columns
-        // within the first 30 rows. This handles Excel files that have report titles at the top.
-        $headerRowIndex = 1;
-        $maxColumns = 0;
+        $headerRow = $initialData[$headerRowIndex];
         
-        $limit = min(30, count($data));
-        $keys = array_keys($data);
-        for ($i = 0; $i < $limit; $i++) {
-            $rowNum = $keys[$i];
-            $nonEmptyCount = count(array_filter($data[$rowNum], fn($v) => $v !== null && trim((string)$v) !== ''));
-            if ($nonEmptyCount > $maxColumns) {
-                $maxColumns = $nonEmptyCount;
-                $headerRowIndex = $rowNum;
-            }
-        }
-
-        $headerRow = $data[$headerRowIndex];
-        
-        \Illuminate\Support\Facades\Log::info('Excel Parse Debug', [
-            'total_rows' => count($data),
+        \Illuminate\Support\Facades\Log::info('Lightweight Excel Parse Debug', [
+            'total_rows_scanned_for_headers' => count($initialData),
             'max_columns_detected' => $maxColumns,
-            'header_row_index' => $headerRowIndex,
             'header_row_content' => $headerRow
         ]);
 
-        // Remove the header row and all rows above it from the data array
-        foreach ($keys as $rowNum) {
-            if ($rowNum <= $headerRowIndex) {
-                unset($data[$rowNum]);
-            }
-        }
-
         $headers = [];
-        $headerColMapping = []; // map column letter (A, B, C) to header name
+        $headerColMapping = []; 
+        $seenHeaders = [];
         
         foreach ($headerRow as $colLetter => $v) {
             if ($v !== null && trim((string)$v) !== '') {
-                // Ensure unique header names
                 $h = trim((string)$v);
-                if (in_array($h, $headers)) {
+                $norm = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $h));
+                
+                if (isset($seenHeaders[$norm])) {
                     $h .= '_' . $colLetter;
+                    $norm = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $h));
                 }
+                
+                $seenHeaders[$norm] = true;
                 $headers[] = $h;
                 $headerColMapping[$colLetter] = $h;
             }
         }
 
-        // Map remaining rows accurately using column letters
-        $rows = [];
-        foreach ($data as $row) {
-            $mapped = [];
-            $hasData = false;
-            foreach ($headerColMapping as $colLetter => $header) {
-                $val = $row[$colLetter] ?? null;
-                $mapped[$header] = $val;
-                
-                if ($val !== null && trim((string)$val) !== '') {
-                    $hasData = true;
-                }
+        return [
+            'headers' => $headers,
+            'rows' => $this->generateXlsxRows($xml, $zip, $sharedStrings, $headerColMapping, $initialData, $headerRowIndex, $maxRows)
+        ];
+    }
+
+    private function generateXlsxRows(\XMLReader $xml, \ZipArchive $zip, array $sharedStrings, array $headerColMapping, array $initialData, int $headerRowIndex, ?int $maxRows): \Generator
+    {
+        $yieldedCount = 0;
+
+        // Yield the rows we already buffered (after header)
+        for ($i = $headerRowIndex + 1; $i < count($initialData); $i++) {
+            $mapped = $this->mapXlsxRow($initialData[$i], $headerColMapping);
+            if ($mapped) {
+                yield $mapped;
             }
-            
-            // Skip completely empty rows
-            if ($hasData) {
-                $rows[] = $mapped;
+            $yieldedCount++;
+            if ($maxRows !== null && $yieldedCount >= $maxRows) {
+                $xml->close();
+                $zip->close();
+                return;
             }
         }
 
-        return ['headers' => $headers, 'rows' => $rows];
+        // Continue reading the rest of the file
+        while ($xml->read()) {
+            if ($xml->nodeType == \XMLReader::ELEMENT && $xml->name == 'row') {
+                $row = [];
+                $rowNode = @simplexml_load_string($xml->readOuterXml());
+                if ($rowNode && isset($rowNode->c)) {
+                    foreach ($rowNode->c as $c) {
+                        $r = (string)$c['r']; 
+                        $t = (string)$c['t']; 
+                        $v = (string)$c->v;
+                        if ($t === 's') {
+                            $idx = (int)$v;
+                            $v = $sharedStrings[$idx] ?? $v;
+                        } elseif ($t === 'inlineStr' && isset($c->is->t)) {
+                            $v = (string)$c->is->t;
+                        }
+                        preg_match('/[A-Z]+/', $r, $matches);
+                        $col = $matches[0] ?? '';
+                        if ($col) {
+                            $row[$col] = $v;
+                        }
+                    }
+                }
+                
+                if (!empty($row)) {
+                    $mapped = $this->mapXlsxRow($row, $headerColMapping);
+                    if ($mapped) {
+                        yield $mapped;
+                    }
+                    $yieldedCount++;
+                    if ($maxRows !== null && $yieldedCount >= $maxRows) {
+                        break;
+                    }
+                }
+            }
+        }
+
+        $xml->close();
+        $zip->close();
+    }
+
+    private function mapXlsxRow(array $row, array $headerColMapping): ?array
+    {
+        $mapped = [];
+        $hasData = false;
+        foreach ($headerColMapping as $colLetter => $header) {
+            $val = $row[$colLetter] ?? null;
+            $mapped[$header] = $val;
+            if ($val !== null && trim((string)$val) !== '') {
+                $hasData = true;
+            }
+        }
+        return $hasData ? $mapped : null;
+    }
     }
 
     /**
@@ -477,10 +711,7 @@ class SharePointGraphClient
             }
 
             $reader = \PhpOffice\PhpSpreadsheet\IOFactory::createReaderForFile($tempPath);
-            $reader->setReadDataOnly(true);
-            $spreadsheet = $reader->load($tempPath);
-
-            return $spreadsheet->getSheetNames();
+            return $reader->listWorksheetNames($tempPath);
         } finally {
             if (file_exists($tempPath)) {
                 @unlink($tempPath);

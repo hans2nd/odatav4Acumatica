@@ -325,23 +325,69 @@ class SharePointProvider implements ConnectionProviderInterface
             $fileName = $parsed['file_name'];
             $sheet    = $parsed['sheet'] ?? null;
 
-            // Read the first few rows to infer column structure
-            $data = $client->readExcelFile($driveId, $itemId, $fileName, $sheet);
+            // Read the first few rows to infer column structure (use fast path)
+            $data = $client->readExcelFile($driveId, $itemId, $fileName, $sheet, true);
 
             $properties = [];
             foreach ($data['headers'] as $header) {
-                // Infer data type from first non-null value
-                $sampleType = 'string';
+                $sampleType = null;
+                $stringCount = 0;
+                $numberCount = 0;
+                $dateCount = 0;
+                $checkedRows = 0;
+                
                 foreach ($data['rows'] as $row) {
-                    $val = $row[$header] ?? null;
-                    if ($val !== null && $val !== '') {
-                        if (is_numeric($val)) {
-                            $sampleType = str_contains((string) $val, '.') ? 'decimal' : 'integer';
-                        } elseif (strtotime((string) $val) !== false && preg_match('/\d{4}[-\/]\d{1,2}[-\/]\d{1,2}/', (string) $val)) {
-                            $sampleType = 'datetime';
-                        }
-                        break;
+                    $cell = $row[$header] ?? ['value' => null, 'type' => 'Empty'];
+                    // Fallback to array wrap if the previous code format returned raw values instead of the new array format
+                    if (!is_array($cell)) {
+                        $cell = ['value' => $cell, 'type' => 'Unknown'];
                     }
+                    
+                    $val = $cell['value'];
+                    $type = $cell['type'];
+                    
+                    if ($val !== null && $val !== '' && $type !== 'Empty') {
+                        // Use exact type from Microsoft Graph API if available
+                        if ($type === 'String' || $type === 'Error') {
+                            $stringCount++;
+                        } elseif ($type === 'Double' || $type === 'Integer') {
+                            // Check if it's actually an Excel Date
+                            if (is_numeric($val) && $val > 25000 && $val < 70000) {
+                                // If the column header suggests a date, or if it's within standard Excel date range (1968 - 2091)
+                                if (preg_match('/(tanggal|date|tgl|waktu|time|eta|etd)/i', $header)) {
+                                    $dateCount++;
+                                } else {
+                                    $numberCount++;
+                                }
+                            } else {
+                                $numberCount++;
+                            }
+                        } elseif ($type === 'Boolean') {
+                            $stringCount++; // Just map to string or let it fall back
+                        } else {
+                            // Fallback heuristic if type is Unknown
+                            if (is_numeric($val)) {
+                                $numberCount++;
+                            } elseif (strtotime((string) $val) !== false && preg_match('/\d{4}[-\/]\d{1,2}[-\/]\d{1,2}/', (string) $val)) {
+                                $dateCount++;
+                            } else {
+                                $stringCount++;
+                            }
+                        }
+                        
+                        $checkedRows++;
+                        if ($checkedRows >= 10) break;
+                    }
+                }
+                
+                if ($stringCount > 0) {
+                    $sampleType = 'string';
+                } elseif ($dateCount > 0) {
+                    $sampleType = 'datetime';
+                } elseif ($numberCount > 0) {
+                    $sampleType = 'decimal';
+                } else {
+                    $sampleType = 'string';
                 }
 
                 $properties[] = [
@@ -357,13 +403,33 @@ class SharePointProvider implements ConnectionProviderInterface
                 isQueryable: true,
                 properties: $properties
             );
-        } catch (Throwable $e) {
+        } catch (\Throwable $e) {
             return new MetadataNode(
                 name: $objectName,
                 type: 'file',
                 isQueryable: false,
                 properties: ['error' => substr($e->getMessage(), 0, 200)]
             );
+        }
+    }
+
+    public function listExcelSheets(array $credentials, string $objectName): array
+    {
+        try {
+            $client = new SharePointGraphClient($credentials);
+            $parsed = $this->parseObjectName($objectName, $credentials);
+
+            $driveId  = $parsed['drive_id'];
+            $itemId   = $parsed['item_id'];
+            $fileName = $parsed['file_name'];
+
+            return $client->listSheets($driveId, $itemId, $fileName);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('SharePoint listExcelSheets error', [
+                'error' => $e->getMessage(),
+                'object' => $objectName
+            ]);
+            throw new \RuntimeException("Failed to list sheets: " . $e->getMessage());
         }
     }
 
@@ -452,5 +518,16 @@ class SharePointProvider implements ConnectionProviderInterface
             'file_name' => $fileName,
             'sheet'     => $sheet,
         ];
+    }
+
+    /**
+     * Download the specified file to a temporary location.
+     */
+    public function downloadObject(array $credentials, string $objectName): string
+    {
+        $client = new SharePointGraphClient($credentials);
+        $parsed = $this->parseObjectName($objectName, $credentials);
+
+        return $client->downloadToTemp($parsed['drive_id'], $parsed['item_id'], $parsed['file_name']);
     }
 }

@@ -247,6 +247,12 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/api/connections/{key}/objects/{objectName}/columns', [SettingsController::class, 'getConnectionObjectColumns'])
             ->where('objectName', '.*') // Allow slashes for SharePoint
             ->name('api.connections.objects.columns');
+        Route::get('/api/connections/{key}/objects/{objectName}/sheets', [SettingsController::class, 'getConnectionObjectSheets'])
+            ->where('objectName', '.*') // Allow slashes for SharePoint
+            ->name('api.connections.objects.sheets');
+        Route::get('/api/connections/{key}/objects/{objectName}/download', [SettingsController::class, 'downloadConnectionObject'])
+            ->where('objectName', '.*') // Allow slashes for SharePoint
+            ->name('api.connections.objects.download');
         Route::post('/api/connections/sharepoint/sites', [SettingsController::class, 'fetchSharePointSites'])->name('api.connections.sharepoint.sites');
         Route::post('/api/connections/{key}/set-analytics-source', [SettingsController::class, 'setAnalyticsSource'])->name('api.connections.set-analytics');
     });
