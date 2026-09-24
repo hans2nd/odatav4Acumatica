@@ -21,14 +21,16 @@ use PhpOffice\PhpSpreadsheet\Reader\IReadFilter;
 class ChunkReadFilter implements IReadFilter
 {
     private $startRow = 0;
-    private $endRow   = 0;
+    private $endRow = 0;
 
-    public function __construct($startRow, $endRow) {
+    public function __construct($startRow, $endRow)
+    {
         $this->startRow = $startRow;
-        $this->endRow   = $endRow;
+        $this->endRow = $endRow;
     }
 
-    public function readCell(string $columnAddress, int $row, string $worksheetName = ''): bool {
+    public function readCell(string $columnAddress, int $row, string $worksheetName = ''): bool
+    {
         if ($row >= $this->startRow && $row <= $this->endRow) {
             return true;
         }
@@ -49,11 +51,11 @@ class SharePointGraphClient
 
     public function __construct(array $credentials)
     {
-        $this->tenantId     = $credentials['tenant_id'] ?? '';
-        $this->clientId     = $credentials['client_id'] ?? '';
+        $this->tenantId = $credentials['tenant_id'] ?? '';
+        $this->clientId = $credentials['client_id'] ?? '';
         $this->clientSecret = $credentials['client_secret'] ?? '';
-        $this->hostname     = $credentials['hostname'] ?? '';
-        $this->sitePath     = $credentials['site_path'] ?? '';
+        $this->hostname = $credentials['hostname'] ?? '';
+        $this->sitePath = $credentials['site_path'] ?? '';
     }
 
     /**
@@ -67,10 +69,10 @@ class SharePointGraphClient
             $tokenUrl = sprintf(self::TOKEN_URL, $this->tenantId);
 
             $response = Http::asForm()->post($tokenUrl, [
-                'grant_type'    => 'client_credentials',
-                'client_id'     => $this->clientId,
+                'grant_type' => 'client_credentials',
+                'client_id' => $this->clientId,
                 'client_secret' => $this->clientSecret,
-                'scope'         => 'https://graph.microsoft.com/.default',
+                'scope' => 'https://graph.microsoft.com/.default',
             ]);
 
             if (!$response->successful()) {
@@ -141,14 +143,14 @@ class SharePointGraphClient
         foreach ($items as $item) {
             $webUrl = $item['webUrl'] ?? '';
             $path = '';
-            
+
             if ($webUrl && str_contains($webUrl, $this->hostname)) {
                 $parsed = parse_url($webUrl);
                 if (isset($parsed['path'])) {
                     $path = $parsed['path'];
                 }
             }
-            
+
             $sites[] = [
                 'id' => $item['id'],
                 'name' => $item['name'] ?? '',
@@ -168,7 +170,7 @@ class SharePointGraphClient
      */
     public function listDrives(): array
     {
-        $token  = $this->getAccessToken();
+        $token = $this->getAccessToken();
         $siteId = $this->getSiteId();
 
         $response = Http::withToken($token)
@@ -182,8 +184,8 @@ class SharePointGraphClient
 
         return collect($response->json('value', []))
             ->map(fn($d) => [
-                'id'     => $d['id'],
-                'name'   => $d['name'],
+                'id' => $d['id'],
+                'name' => $d['name'],
                 'webUrl' => $d['webUrl'] ?? '',
             ])
             ->all();
@@ -198,7 +200,7 @@ class SharePointGraphClient
     public function listFiles(string $driveId): array
     {
         $token = $this->getAccessToken();
-        
+
         $url = self::GRAPH_BASE . "/drives/{$driveId}/root/delta";
         $allItems = [];
         $nextLink = $url;
@@ -223,7 +225,7 @@ class SharePointGraphClient
                 }
 
                 $name = $item['name'] ?? '';
-                
+
                 // Construct the path so the frontend tree-view can see it.
                 // The parentReference.path is like "/drive/root:/Folder1/Folder2"
                 $parentPath = '';
@@ -238,12 +240,12 @@ class SharePointGraphClient
                 $fullName = $parentPath . $name;
 
                 $allItems[] = [
-                    'id'           => $item['id'],
-                    'name'         => $fullName,
-                    'size'         => $item['size'] ?? 0,
+                    'id' => $item['id'],
+                    'name' => $fullName,
+                    'size' => $item['size'] ?? 0,
                     'lastModified' => $item['lastModifiedDateTime'] ?? '',
-                    'webUrl'       => $item['webUrl'] ?? '',
-                    'driveId'      => $driveId,
+                    'webUrl' => $item['webUrl'] ?? '',
+                    'driveId' => $driveId,
                 ];
             }
 
@@ -314,7 +316,7 @@ class SharePointGraphClient
         // Sanitize the filename to prevent directory traversal or missing directory errors
         // since $fileName can now contain the full folder path (e.g. "Folder/Sub/File.xlsx")
         $safeFileName = str_replace(['/', '\\'], '_', $fileName);
-        
+
         $tempPath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'sp_' . uniqid() . '_' . $safeFileName;
         file_put_contents($tempPath, $content);
 
@@ -333,13 +335,13 @@ class SharePointGraphClient
     public function readExcelFile(string $driveId, string $itemId, string $fileName, ?string $sheetName = null, bool $metadataOnly = false): array
     {
         $ext = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
-        
+
         // Fast path for XLSX files using Microsoft Graph Excel API
         // We now use this for ALL reads (not just metadata) to correctly evaluate dynamic array formulas like VSTACK
         if ($ext === 'xlsx') {
             try {
                 $token = $this->getAccessToken();
-                
+
                 if (empty($sheetName)) {
                     $wsResponse = Http::withToken($token)->acceptJson()->timeout(10)
                         ->get(self::GRAPH_BASE . "/drives/{$driveId}/items/{$itemId}/workbook/worksheets");
@@ -353,16 +355,16 @@ class SharePointGraphClient
 
                 if (!empty($sheetName)) {
                     $encodedSheet = rawurlencode(str_replace("'", "''", $sheetName));
-                    
+
                     // For metadata only, we just read the first 50 rows
                     if ($metadataOnly) {
                         $rangeUrl = self::GRAPH_BASE . "/drives/{$driveId}/items/{$itemId}/workbook/worksheets('{$encodedSheet}')/range(address='A1:ZZ50')";
                         $rangeResponse = Http::withToken($token)->acceptJson()->timeout(15)->get($rangeUrl);
-                        
+
                         if ($rangeResponse->successful()) {
                             $values = $rangeResponse->json('values', []);
                             $valueTypes = $rangeResponse->json('valueTypes', []);
-                            
+
                             return $this->processGraphRangePayload($values, $valueTypes, $metadataOnly);
                         }
                     } else {
@@ -370,17 +372,17 @@ class SharePointGraphClient
                         $addressUrl = self::GRAPH_BASE . "/drives/{$driveId}/items/{$itemId}/workbook/worksheets('{$encodedSheet}')/usedRange(valuesOnly=true)?\$select=addressLocal";
                         // Increase timeout to 60 seconds because Excel Online might need time to open and calculate large files with VSTACK
                         $addressResponse = Http::withToken($token)->acceptJson()->timeout(60)->get($addressUrl);
-                        
+
                         if ($addressResponse->successful()) {
                             $address = $addressResponse->json('addressLocal'); // e.g. "Sheet1!A1:XFD31102"
                             if ($address) {
                                 preg_match('/!([A-Z]+)(\d+):([A-Z]+)(\d+)/', $address, $matches);
                                 if (count($matches) === 5) {
                                     $startCol = $matches[1];
-                                    $startRow = (int)$matches[2];
+                                    $startRow = (int) $matches[2];
                                     $endCol = $matches[3];
-                                    $endRow = (int)$matches[4];
-                                    
+                                    $endRow = (int) $matches[4];
+
                                     // Limit endCol to ZZ to prevent excessive width requests
                                     // We will return a Generator inside the 'rows' key
                                     return [
@@ -467,10 +469,10 @@ class SharePointGraphClient
                     if ($node) {
                         $string = '';
                         if (isset($node->t)) {
-                            $string = (string)$node->t;
+                            $string = (string) $node->t;
                         } elseif (isset($node->r)) {
                             foreach ($node->r as $run) {
-                                $string .= (string)$run->t;
+                                $string .= (string) $run->t;
                             }
                         }
                         $sharedStrings[] = $string;
@@ -487,33 +489,33 @@ class SharePointGraphClient
         $targetSheetXml = 'xl/worksheets/sheet1.xml';
         $workbookXml = $zip->getFromName('xl/workbook.xml');
         $relsXml = $zip->getFromName('xl/_rels/workbook.xml.rels');
-        
+
         if ($workbookXml && $relsXml) {
             $wb = @simplexml_load_string($workbookXml);
             $rels = @simplexml_load_string($relsXml);
-            
+
             $rId = null;
             if ($wb && isset($wb->sheets->sheet)) {
                 if ($sheetName) {
                     foreach ($wb->sheets->sheet as $sheet) {
-                        if (strcasecmp((string)$sheet['name'], $sheetName) === 0) {
+                        if (strcasecmp((string) $sheet['name'], $sheetName) === 0) {
                             $attrs = $sheet->attributes('http://schemas.openxmlformats.org/officeDocument/2006/relationships');
-                            $rId = (string)$attrs['id'];
+                            $rId = (string) $attrs['id'];
                             break;
                         }
                     }
                 } else {
                     if (isset($wb->sheets->sheet[0])) {
                         $attrs = $wb->sheets->sheet[0]->attributes('http://schemas.openxmlformats.org/officeDocument/2006/relationships');
-                        $rId = (string)$attrs['id'];
+                        $rId = (string) $attrs['id'];
                     }
                 }
             }
-            
+
             if ($rId && $rels && isset($rels->Relationship)) {
                 foreach ($rels->Relationship as $rel) {
-                    if ((string)$rel['Id'] === $rId) {
-                        $targetSheetXml = 'xl/' . ltrim((string)$rel['Target'], '/');
+                    if ((string) $rel['Id'] === $rId) {
+                        $targetSheetXml = 'xl/' . ltrim((string) $rel['Target'], '/');
                         break;
                     }
                 }
@@ -522,9 +524,9 @@ class SharePointGraphClient
                 throw new \RuntimeException("Sheet [{$sheetName}] not found in the Excel file.");
             }
         }
-        
+
         $targetSheetXml = str_replace('xl/xl/', 'xl/', $targetSheetXml);
-        
+
         if ($zip->locateName($targetSheetXml) === false) {
             $zip->close();
             throw new \RuntimeException("Target sheet XML not found inside XLSX: $targetSheetXml");
@@ -534,28 +536,28 @@ class SharePointGraphClient
         // 3. Read first 100 rows to detect header
         $xml = new \XMLReader();
         $xml->open('zip://' . $path . '#' . $targetSheetXml);
-        
+
         $initialData = [];
         $headerRowIndex = 0;
         $maxColumns = 0;
-        
+
         while ($xml->read()) {
             if ($xml->nodeType == \XMLReader::ELEMENT && $xml->name == 'row') {
                 $row = [];
                 $rowNode = @simplexml_load_string($xml->readOuterXml());
                 if ($rowNode && isset($rowNode->c)) {
                     foreach ($rowNode->c as $c) {
-                        $r = (string)$c['r']; 
-                        $t = (string)$c['t']; 
-                        $v = (string)$c->v;
-                        
+                        $r = (string) $c['r'];
+                        $t = (string) $c['t'];
+                        $v = (string) $c->v;
+
                         if ($t === 's') {
-                            $idx = (int)$v;
+                            $idx = (int) $v;
                             $v = $sharedStrings[$idx] ?? $v;
                         } elseif ($t === 'inlineStr' && isset($c->is->t)) {
-                            $v = (string)$c->is->t;
+                            $v = (string) $c->is->t;
                         }
-                        
+
                         preg_match('/[A-Z]+/', $r, $matches);
                         $col = $matches[0] ?? '';
                         if ($col) {
@@ -563,23 +565,23 @@ class SharePointGraphClient
                         }
                     }
                 }
-                
+
                 if (!empty($row)) {
                     $initialData[] = $row;
-                    $nonEmptyCount = count(array_filter($row, fn($v) => $v !== null && trim((string)$v) !== ''));
+                    $nonEmptyCount = count(array_filter($row, fn($v) => $v !== null && trim((string) $v) !== ''));
                     if ($nonEmptyCount > $maxColumns) {
                         $maxColumns = $nonEmptyCount;
                         $headerRowIndex = count($initialData) - 1;
                     }
                 }
-                
+
                 // Read up to 100 rows to find header, or stop early if we hit maxRows
                 if (count($initialData) >= 100 || ($maxRows !== null && count($initialData) >= $maxRows)) {
                     break;
                 }
             }
         }
-        
+
         if (empty($initialData)) {
             $xml->close();
             $zip->close();
@@ -587,7 +589,7 @@ class SharePointGraphClient
         }
 
         $headerRow = $initialData[$headerRowIndex];
-        
+
         \Illuminate\Support\Facades\Log::info('Lightweight Excel Parse Debug', [
             'total_rows_scanned_for_headers' => count($initialData),
             'max_columns_detected' => $maxColumns,
@@ -595,19 +597,19 @@ class SharePointGraphClient
         ]);
 
         $headers = [];
-        $headerColMapping = []; 
+        $headerColMapping = [];
         $seenHeaders = [];
-        
+
         foreach ($headerRow as $colLetter => $v) {
-            if ($v !== null && trim((string)$v) !== '') {
-                $h = trim((string)$v);
+            if ($v !== null && trim((string) $v) !== '') {
+                $h = trim((string) $v);
                 $norm = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $h));
-                
+
                 if (isset($seenHeaders[$norm])) {
                     $h .= '_' . $colLetter;
                     $norm = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $h));
                 }
-                
+
                 $seenHeaders[$norm] = true;
                 $headers[] = $h;
                 $headerColMapping[$colLetter] = $h;
@@ -645,14 +647,14 @@ class SharePointGraphClient
                 $rowNode = @simplexml_load_string($xml->readOuterXml());
                 if ($rowNode && isset($rowNode->c)) {
                     foreach ($rowNode->c as $c) {
-                        $r = (string)$c['r']; 
-                        $t = (string)$c['t']; 
-                        $v = (string)$c->v;
+                        $r = (string) $c['r'];
+                        $t = (string) $c['t'];
+                        $v = (string) $c->v;
                         if ($t === 's') {
-                            $idx = (int)$v;
+                            $idx = (int) $v;
                             $v = $sharedStrings[$idx] ?? $v;
                         } elseif ($t === 'inlineStr' && isset($c->is->t)) {
-                            $v = (string)$c->is->t;
+                            $v = (string) $c->is->t;
                         }
                         preg_match('/[A-Z]+/', $r, $matches);
                         $col = $matches[0] ?? '';
@@ -661,7 +663,7 @@ class SharePointGraphClient
                         }
                     }
                 }
-                
+
                 if (!empty($row)) {
                     $mapped = $this->mapXlsxRow($row, $headerColMapping);
                     if ($mapped) {
@@ -686,13 +688,13 @@ class SharePointGraphClient
         foreach ($headerColMapping as $colLetter => $header) {
             $val = $row[$colLetter] ?? null;
             $mapped[$header] = $val;
-            if ($val !== null && trim((string)$val) !== '') {
+            if ($val !== null && trim((string) $val) !== '') {
                 $hasData = true;
             }
         }
         return $hasData ? $mapped : null;
     }
-    }
+
 
     /**
      * List sheet names in an Excel file.
@@ -778,11 +780,11 @@ class SharePointGraphClient
 
             if ($response->successful()) {
                 return [
-                    'success'   => true,
-                    'message'   => 'Connected to SharePoint site successfully',
+                    'success' => true,
+                    'message' => 'Connected to SharePoint site successfully',
                     'site_name' => $response->json('displayName'),
-                    'site_id'   => $response->json('id'),
-                    'web_url'   => $response->json('webUrl'),
+                    'site_id' => $response->json('id'),
+                    'web_url' => $response->json('webUrl'),
                     'latency_ms' => $latency,
                 ];
             }
@@ -791,18 +793,18 @@ class SharePointGraphClient
             $code = $response->json('error.code', 'unknown');
 
             return [
-                'success'    => false,
-                'message'    => "SharePoint API error ({$code}): {$error}",
-                'site_name'  => null,
+                'success' => false,
+                'message' => "SharePoint API error ({$code}): {$error}",
+                'site_name' => null,
                 'latency_ms' => $latency,
             ];
         } catch (Throwable $e) {
             $latency = (int) round((microtime(true) - $start) * 1000);
 
             return [
-                'success'    => false,
-                'message'    => $e->getMessage(),
-                'site_name'  => null,
+                'success' => false,
+                'message' => $e->getMessage(),
+                'site_name' => null,
                 'latency_ms' => $latency,
             ];
         }
