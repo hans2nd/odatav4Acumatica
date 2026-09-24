@@ -329,16 +329,25 @@ class SharePointProvider implements ConnectionProviderInterface
             $data = $client->readExcelFile($driveId, $itemId, $fileName, $sheet, true);
 
             $properties = [];
+            $headerStats = [];
             foreach ($data['headers'] as $header) {
-                $sampleType = null;
-                $stringCount = 0;
-                $numberCount = 0;
-                $dateCount = 0;
-                $checkedRows = 0;
-                
-                foreach ($data['rows'] as $row) {
+                $headerStats[$header] = [
+                    'stringCount' => 0,
+                    'numberCount' => 0,
+                    'dateCount' => 0,
+                    'checkedRows' => 0,
+                ];
+            }
+            
+            foreach ($data['rows'] as $row) {
+                $allChecked = true;
+                foreach ($data['headers'] as $header) {
+                    if ($headerStats[$header]['checkedRows'] >= 10) {
+                        continue;
+                    }
+                    $allChecked = false;
+                    
                     $cell = $row[$header] ?? ['value' => null, 'type' => 'Empty'];
-                    // Fallback to array wrap if the previous code format returned raw values instead of the new array format
                     if (!is_array($cell)) {
                         $cell = ['value' => $cell, 'type' => 'Unknown'];
                     }
@@ -347,44 +356,46 @@ class SharePointProvider implements ConnectionProviderInterface
                     $type = $cell['type'];
                     
                     if ($val !== null && $val !== '' && $type !== 'Empty') {
-                        // Use exact type from Microsoft Graph API if available
                         if ($type === 'String' || $type === 'Error') {
-                            $stringCount++;
+                            $headerStats[$header]['stringCount']++;
                         } elseif ($type === 'Double' || $type === 'Integer') {
-                            // Check if it's actually an Excel Date
                             if (is_numeric($val) && $val > 25000 && $val < 70000) {
-                                // If the column header suggests a date, or if it's within standard Excel date range (1968 - 2091)
                                 if (preg_match('/(tanggal|date|tgl|waktu|time|eta|etd)/i', $header)) {
-                                    $dateCount++;
+                                    $headerStats[$header]['dateCount']++;
                                 } else {
-                                    $numberCount++;
+                                    $headerStats[$header]['numberCount']++;
                                 }
                             } else {
-                                $numberCount++;
+                                $headerStats[$header]['numberCount']++;
                             }
                         } elseif ($type === 'Boolean') {
-                            $stringCount++; // Just map to string or let it fall back
+                            $headerStats[$header]['stringCount']++;
                         } else {
-                            // Fallback heuristic if type is Unknown
                             if (is_numeric($val)) {
-                                $numberCount++;
+                                $headerStats[$header]['numberCount']++;
                             } elseif (strtotime((string) $val) !== false && preg_match('/\d{4}[-\/]\d{1,2}[-\/]\d{1,2}/', (string) $val)) {
-                                $dateCount++;
+                                $headerStats[$header]['dateCount']++;
                             } else {
-                                $stringCount++;
+                                $headerStats[$header]['stringCount']++;
                             }
                         }
                         
-                        $checkedRows++;
-                        if ($checkedRows >= 10) break;
+                        $headerStats[$header]['checkedRows']++;
                     }
                 }
                 
-                if ($stringCount > 0) {
+                if ($allChecked) {
+                    break;
+                }
+            }
+
+            foreach ($data['headers'] as $header) {
+                $stats = $headerStats[$header];
+                if ($stats['stringCount'] > 0) {
                     $sampleType = 'string';
-                } elseif ($dateCount > 0) {
+                } elseif ($stats['dateCount'] > 0) {
                     $sampleType = 'datetime';
-                } elseif ($numberCount > 0) {
+                } elseif ($stats['numberCount'] > 0) {
                     $sampleType = 'decimal';
                 } else {
                     $sampleType = 'string';
@@ -497,18 +508,21 @@ class SharePointProvider implements ConnectionProviderInterface
         }
 
         // Find the file in the drive
-        // Find the file in the drive
-        $files = $client->listFiles($driveId);
-
         $itemId = null;
-        foreach ($files as $file) {
-            if (strcasecmp($file['name'], $fileName) === 0) {
-                $itemId = $file['id'];
-                break;
+        try {
+            $fileData = $client->getFileByPath($driveId, $fileName);
+            if ($fileData && isset($fileData['id'])) {
+                $itemId = $fileData['id'];
             }
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::warning("Direct lookup failed for {$fileName}: " . $e->getMessage());
         }
 
         if (!$itemId) {
+            \Illuminate\Support\Facades\Log::error("File not found in drive (Direct Lookup Failed)", [
+                'searched_file' => $fileName,
+                'drive' => $driveName,
+            ]);
             throw new \RuntimeException("File [{$fileName}] not found in drive [{$driveName}].");
         }
 

@@ -21,6 +21,7 @@
                     <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider min-w-[200px]">Progress</th>
                     <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider">Duration</th>
                     <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider text-right">Started At</th>
+                    <th class="py-3 px-5 text-label-sm text-surface-500 font-semibold uppercase tracking-wider text-right">Action</th>
                 </tr>
             </thead>
             <tbody class="text-body-md text-surface-700 divide-y divide-surface-100" id="sync-jobs-tbody">
@@ -73,10 +74,17 @@
                     <td class="py-4 px-5 text-surface-500 text-body-sm text-right whitespace-nowrap">
                         {{ $job['started_at'] ? \Carbon\Carbon::parse($job['started_at'])->format('M d, H:i:s') : '—' }}
                     </td>
+                    <td class="py-4 px-5 text-right whitespace-nowrap">
+                        <button 
+                            onclick="abortJob('{{ $job['job_id'] }}')" 
+                            class="abort-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 text-label-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed {{ in_array($job['status'], ['pending', 'running']) ? '' : 'hidden' }}">
+                            <span class="material-symbols-outlined text-[16px]">cancel</span> Abort
+                        </button>
+                    </td>
                 </tr>
                 @empty
                 <tr>
-                    <td colspan="6" class="py-12 px-5 text-center text-surface-400">
+                    <td colspan="7" class="py-12 px-5 text-center text-surface-400">
                         <span class="material-symbols-outlined text-4xl mb-3 block">history</span>
                         <p class="text-body-md">No synchronization history found.</p>
                     </td>
@@ -159,6 +167,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 errorContainer.innerHTML = `<div class="mt-2 text-body-sm text-red-600 bg-red-50 p-2.5 rounded-lg border border-red-100">${job.error_message}</div>`;
             }
         }
+        
+        // Hide Abort Button if not running/pending
+        const abortBtn = row.querySelector('.abort-btn');
+        if (abortBtn) {
+            if (job.status === 'running' || job.status === 'pending') {
+                abortBtn.classList.remove('hidden');
+            } else {
+                abortBtn.classList.add('hidden');
+            }
+        }
     }
 
     function getStatusBadgeHTML(status) {
@@ -172,6 +190,38 @@ document.addEventListener('DOMContentLoaded', () => {
             return `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface-100 text-surface-600 text-label-sm font-semibold capitalize"><div class="w-1.5 h-1.5 rounded-full bg-surface-400"></div> ${status}</span>`;
         }
     }
+
+    window.abortJob = async function(jobId) {
+        if (!confirm('Are you sure you want to abort this synchronization job?')) return;
+        
+        const row = document.getElementById(`job-row-${jobId}`);
+        const btn = row ? row.querySelector('.abort-btn') : null;
+        if (btn) btn.disabled = true;
+
+        try {
+            const res = await fetch(`/api/sync-jobs/${jobId}/abort`, {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+                }
+            });
+
+            const data = await res.json();
+            if (data.success) {
+                // Force an immediate poll to update the UI
+                pollActiveJobs();
+            } else {
+                alert(data.message || 'Failed to abort job.');
+                if (btn) btn.disabled = false;
+            }
+        } catch (e) {
+            console.error(e);
+            alert('An error occurred while aborting the job.');
+            if (btn) btn.disabled = false;
+        }
+    };
 
     // Start polling every 3 seconds
     pollingInterval = setInterval(pollActiveJobs, 3000);

@@ -95,12 +95,17 @@ class ConnectionManager
     /**
      * Discovers all available objects for a connection.
      */
-    public function discoverMetadata(string $connectionKey): MetadataTree
+    public function discoverMetadata(string $connectionKey, bool $forceRefresh = false): MetadataTree
     {
         $connection = $this->getConnectionModel($connectionKey);
         $provider = $this->factory->make($connection->type);
         
         $cacheKey = "connection_{$connectionKey}_metadata";
+        
+        if ($forceRefresh) {
+            \Illuminate\Support\Facades\Cache::forget($cacheKey);
+        }
+        
         return \Illuminate\Support\Facades\Cache::remember($cacheKey, now()->addHours(24), function () use ($provider, $connection) {
             return $provider->discoverMetadata($connection->credentials ?? []);
         });

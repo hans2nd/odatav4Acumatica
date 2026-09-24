@@ -302,7 +302,8 @@
         loading.classList.remove('hidden');
         
         try {
-            const res = await fetch(`/api/connections/${connKey}/objects`);
+            const url = force ? `/api/connections/${connKey}/objects?force=true` : `/api/connections/${connKey}/objects`;
+            const res = await fetch(url);
             const data = await res.json();
             if (res.ok && data.success && data.objects) {
                 data.objects.sort((a, b) => a.localeCompare(b));
@@ -1013,7 +1014,7 @@
             previewWrapper.appendChild(hintText);
             container.appendChild(previewWrapper);
             
-            const updateSpPreview = () => {
+            window.updateSpPreview = () => {
                 const hostnameInput = document.getElementById('dyn_hostname');
                 const sitePathInput = document.getElementById('dyn_site_path');
                 
@@ -1029,9 +1030,9 @@
             setTimeout(() => {
                 ['dyn_hostname', 'dyn_site_path'].forEach(id => {
                     const el = document.getElementById(id);
-                    if (el) el.addEventListener('input', updateSpPreview);
+                    if (el) el.addEventListener('input', window.updateSpPreview);
                 });
-                updateSpPreview();
+                window.updateSpPreview();
             }, 50);
         }
     }
@@ -1210,7 +1211,18 @@
             const method = mode === 'edit' ? 'PUT' : 'POST';
             const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' }, body: JSON.stringify(payload) });
             const data = await res.json();
-            if (res.ok && data.success) { showToast(data.message, 'success'); closeConnectionModal(); setTimeout(() => location.reload(), 800); }
+            if (res.ok && data.success) { 
+                // Clear cached source objects for this connection so Add Entity fetches fresh data
+                delete cachedSourceObjects[originalKey];
+                delete cachedSourceObjects[payload.key];
+                try {
+                    localStorage.setItem('cached_source_objects', JSON.stringify(cachedSourceObjects));
+                } catch(e) {}
+                
+                showToast(data.message, 'success'); 
+                closeConnectionModal(); 
+                setTimeout(() => location.reload(), 800); 
+            }
             else { showToast(data.message || 'Operation failed', 'error'); }
         } catch (e) { showToast('Error: ' + e.message, 'error'); }
         finally { btn.disabled = false; }

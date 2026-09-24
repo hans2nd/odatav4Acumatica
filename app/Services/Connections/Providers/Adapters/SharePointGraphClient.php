@@ -200,9 +200,20 @@ class SharePointGraphClient
     public function listFiles(string $driveId): array
     {
         $token = $this->getAccessToken();
-
-        $url = self::GRAPH_BASE . "/drives/{$driveId}/root/delta";
         $allItems = [];
+        
+        // Use real-time recursive traversal instead of delayed /search or buggy /delta
+        $this->fetchChildrenRecursively($token, $driveId, 'root', '', $allItems);
+        
+        return $allItems;
+    }
+
+    /**
+     * Recursively fetch children of a folder
+     */
+    private function fetchChildrenRecursively(string $token, string $driveId, string $itemId, string $currentPath, array &$allItems): void
+    {
+        $url = self::GRAPH_BASE . "/drives/{$driveId}/items/{$itemId}/children?\$top=200";
         $nextLink = $url;
 
         while ($nextLink) {
@@ -212,47 +223,73 @@ class SharePointGraphClient
                 ->get($nextLink);
 
             if (!$response->successful()) {
-                throw new RuntimeException('Failed to list files: ' . $response->body());
+                \Illuminate\Support\Facades\Log::warning("SharePoint recursively list failed: " . $response->body());
+                break;
             }
 
             $data = $response->json();
             $items = $data['value'] ?? [];
 
             foreach ($items as $item) {
-                // Skip folders and deleted items
-                if (isset($item['folder']) || isset($item['deleted'])) {
+                // Skip deleted items just in case
+                if (isset($item['deleted'])) {
                     continue;
                 }
 
                 $name = $item['name'] ?? '';
+                $fullName = $currentPath !== '' ? "{$currentPath}/{$name}" : $name;
 
-                // Construct the path so the frontend tree-view can see it.
-                // The parentReference.path is like "/drive/root:/Folder1/Folder2"
-                $parentPath = '';
-                if (isset($item['parentReference']['path'])) {
-                    $rawPath = $item['parentReference']['path'];
-                    $parts = explode(':', $rawPath, 2);
-                    if (count($parts) > 1 && $parts[1] !== '') {
-                        $parentPath = ltrim($parts[1], '/') . '/';
+                if (isset($item['folder'])) {
+                    // Recurse into subfolder
+                    $this->fetchChildrenRecursively($token, $driveId, $item['id'], $fullName, $allItems);
+                } else {
+                    // Only include Excel or CSV files to optimize memory and UI
+                    $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+                    if (in_array($ext, ['xlsx', 'xls', 'csv'])) {
+                        $allItems[] = [
+                            'id' => $item['id'],
+                            'name' => $fullName,
+                            'size' => $item['size'] ?? 0,
+                            'lastModified' => $item['lastModifiedDateTime'] ?? '',
+                            'webUrl' => $item['webUrl'] ?? '',
+                            'driveId' => $driveId,
+                        ];
                     }
                 }
-
-                $fullName = $parentPath . $name;
-
-                $allItems[] = [
-                    'id' => $item['id'],
-                    'name' => $fullName,
-                    'size' => $item['size'] ?? 0,
-                    'lastModified' => $item['lastModifiedDateTime'] ?? '',
-                    'webUrl' => $item['webUrl'] ?? '',
-                    'driveId' => $driveId,
-                ];
             }
 
             $nextLink = $data['@odata.nextLink'] ?? null;
         }
+    }
 
-        return $allItems;
+    /**
+     * Get a file by its path in the drive.
+     *
+     * @param string $driveId
+     * @param string $path
+     * @return array|null
+     */
+    public function getFileByPath(string $driveId, string $path): ?array
+    {
+        $token = $this->getAccessToken();
+        
+        // Encode each segment, but preserve slashes
+        $segments = explode('/', $path);
+        $encodedSegments = array_map('rawurlencode', $segments);
+        $encodedPath = implode('/', $encodedSegments);
+        
+        $url = self::GRAPH_BASE . "/drives/{$driveId}/root:/{$encodedPath}";
+        
+        $response = Http::withToken($token)
+            ->acceptJson()
+            ->timeout(15)
+            ->get($url);
+            
+        if ($response->successful()) {
+            return $response->json();
+        }
+        
+        return null;
     }
 
     /**
@@ -356,16 +393,63 @@ class SharePointGraphClient
                 if (!empty($sheetName)) {
                     $encodedSheet = rawurlencode(str_replace("'", "''", $sheetName));
 
-                    // For metadata only, we just read the first 50 rows
+                    // For metadata only, we just read the first 300 rows
                     if ($metadataOnly) {
-                        $rangeUrl = self::GRAPH_BASE . "/drives/{$driveId}/items/{$itemId}/workbook/worksheets('{$encodedSheet}')/range(address='A1:ZZ50')";
+                        $rangeUrl = self::GRAPH_BASE . "/drives/{$driveId}/items/{$itemId}/workbook/worksheets('{$encodedSheet}')/range(address='A1:ZZ300')";
                         $rangeResponse = Http::withToken($token)->acceptJson()->timeout(15)->get($rangeUrl);
 
                         if ($rangeResponse->successful()) {
                             $values = $rangeResponse->json('values', []);
-                            $valueTypes = $rangeResponse->json('valueTypes', []);
-
-                            return $this->processGraphRangePayload($values, $valueTypes, $metadataOnly);
+                            
+                            $maxColumns = 0;
+                            $headerRowIndex = 0;
+                            foreach ($values as $index => $row) {
+                                $nonEmptyCount = count(array_filter($row, fn($v) => $v !== null && trim((string)$v) !== ''));
+                                if ($nonEmptyCount > $maxColumns) {
+                                    $maxColumns = $nonEmptyCount;
+                                    $headerRowIndex = $index;
+                                }
+                            }
+                            
+                            if (empty($values) || $maxColumns === 0) {
+                                return ['headers' => [], 'rows' => []];
+                            }
+                            
+                            $headerRow = $values[$headerRowIndex];
+                            $headers = [];
+                            $headerColMapping = [];
+                            $seenHeaders = [];
+                            
+                            foreach ($headerRow as $colIndex => $v) {
+                                if ($v !== null && trim((string)$v) !== '') {
+                                    $h = trim((string)$v);
+                                    $norm = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $h));
+                                    if (isset($seenHeaders[$norm])) {
+                                        $h .= '_' . $colIndex;
+                                        $norm = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $h));
+                                    }
+                                    $seenHeaders[$norm] = true;
+                                    $headers[] = $h;
+                                    $headerColMapping[$colIndex] = $h;
+                                }
+                            }
+                            
+                            $rows = [];
+                            for ($i = $headerRowIndex + 1; $i < count($values); $i++) {
+                                $mapped = [];
+                                $hasData = false;
+                                foreach ($headerColMapping as $colIndex => $header) {
+                                    $val = $values[$i][$colIndex] ?? null;
+                                    $mapped[$header] = ['value' => $val, 'type' => 'Unknown'];
+                                    if ($val !== null && trim((string)$val) !== '') {
+                                        $hasData = true;
+                                    }
+                                }
+                                if ($hasData) {
+                                    $rows[] = $mapped;
+                                }
+                            }
+                            return ['headers' => $headers, 'rows' => $rows];
                         }
                     } else {
                         // For full sync, first get the usedRange address
@@ -407,7 +491,7 @@ class SharePointGraphClient
                 return $this->readCsvFile($tempPath);
             }
 
-            return $this->readXlsxFile($tempPath, $sheetName, $metadataOnly ? 30 : null);
+            return $this->readXlsxFile($tempPath, $sheetName, $metadataOnly ? 300 : null);
         } finally {
             if (file_exists($tempPath)) {
                 @unlink($tempPath);
@@ -544,18 +628,26 @@ class SharePointGraphClient
         while ($xml->read()) {
             if ($xml->nodeType == \XMLReader::ELEMENT && $xml->name == 'row') {
                 $row = [];
-                $rowNode = @simplexml_load_string($xml->readOuterXml());
-                if ($rowNode && isset($rowNode->c)) {
-                    foreach ($rowNode->c as $c) {
-                        $r = (string) $c['r'];
-                        $t = (string) $c['t'];
-                        $v = (string) $c->v;
+                
+                // Read cells within the row
+                while ($xml->read()) {
+                    if ($xml->nodeType == \XMLReader::ELEMENT && $xml->name == 'c') {
+                        $r = $xml->getAttribute('r');
+                        $t = $xml->getAttribute('t');
+                        $v = '';
+                        
+                        // Read value or inlineStr within the cell
+                        while ($xml->read()) {
+                            if ($xml->nodeType == \XMLReader::ELEMENT && ($xml->name == 'v' || $xml->name == 't')) {
+                                $v = $xml->readString();
+                            } elseif ($xml->nodeType == \XMLReader::END_ELEMENT && $xml->name == 'c') {
+                                break;
+                            }
+                        }
 
-                        if ($t === 's') {
+                        if ($t === 's' && $v !== '') {
                             $idx = (int) $v;
                             $v = $sharedStrings[$idx] ?? $v;
-                        } elseif ($t === 'inlineStr' && isset($c->is->t)) {
-                            $v = (string) $c->is->t;
                         }
 
                         preg_match('/[A-Z]+/', $r, $matches);
@@ -563,6 +655,8 @@ class SharePointGraphClient
                         if ($col) {
                             $row[$col] = $v;
                         }
+                    } elseif ($xml->nodeType == \XMLReader::END_ELEMENT && $xml->name == 'row') {
+                        break;
                     }
                 }
 
@@ -575,8 +669,8 @@ class SharePointGraphClient
                     }
                 }
 
-                // Read up to 100 rows to find header, or stop early if we hit maxRows
-                if (count($initialData) >= 100 || ($maxRows !== null && count($initialData) >= $maxRows)) {
+                // Read up to 300 rows to find header, or stop early if we hit maxRows
+                if (count($initialData) >= 300 || ($maxRows !== null && count($initialData) >= $maxRows)) {
                     break;
                 }
             }
@@ -644,23 +738,35 @@ class SharePointGraphClient
         while ($xml->read()) {
             if ($xml->nodeType == \XMLReader::ELEMENT && $xml->name == 'row') {
                 $row = [];
-                $rowNode = @simplexml_load_string($xml->readOuterXml());
-                if ($rowNode && isset($rowNode->c)) {
-                    foreach ($rowNode->c as $c) {
-                        $r = (string) $c['r'];
-                        $t = (string) $c['t'];
-                        $v = (string) $c->v;
-                        if ($t === 's') {
+                
+                // Read cells within the row
+                while ($xml->read()) {
+                    if ($xml->nodeType == \XMLReader::ELEMENT && $xml->name == 'c') {
+                        $r = $xml->getAttribute('r');
+                        $t = $xml->getAttribute('t');
+                        $v = '';
+                        
+                        // Read value or inlineStr within the cell
+                        while ($xml->read()) {
+                            if ($xml->nodeType == \XMLReader::ELEMENT && ($xml->name == 'v' || $xml->name == 't')) {
+                                $v = $xml->readString();
+                            } elseif ($xml->nodeType == \XMLReader::END_ELEMENT && $xml->name == 'c') {
+                                break;
+                            }
+                        }
+
+                        if ($t === 's' && $v !== '') {
                             $idx = (int) $v;
                             $v = $sharedStrings[$idx] ?? $v;
-                        } elseif ($t === 'inlineStr' && isset($c->is->t)) {
-                            $v = (string) $c->is->t;
                         }
+                        
                         preg_match('/[A-Z]+/', $r, $matches);
                         $col = $matches[0] ?? '';
                         if ($col) {
                             $row[$col] = $v;
                         }
+                    } elseif ($xml->nodeType == \XMLReader::END_ELEMENT && $xml->name == 'row') {
+                        break;
                     }
                 }
 

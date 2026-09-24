@@ -90,6 +90,11 @@ class MetadataRepository implements MetadataRepositoryInterface
                 $metadataNode = $this->connectionManager->discoverStructure($sourceConnName, $odataEntity, $forceRefresh);
                 $providerNetworkMs = round((microtime(true) - $tProvNetStart) * 1000);
                 
+                if (!$metadataNode->isQueryable) {
+                    $errorMsg = $metadataNode->properties['error'] ?? "Unknown error during discovery for {$odataEntity}";
+                    throw new \Exception($errorMsg);
+                }
+                
                 $tProvProcStart = microtime(true);
                 $fields = [];
                 $fieldNames = [];

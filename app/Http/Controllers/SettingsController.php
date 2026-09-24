@@ -282,7 +282,8 @@ class SettingsController extends Controller
     public function getConnectionObjects(string $key): JsonResponse
     {
         try {
-            $tree = $this->connectionManager->discoverMetadata($key);
+            $forceRefresh = request()->query('force') === 'true';
+            $tree = $this->connectionManager->discoverMetadata($key, $forceRefresh);
             
             $objects = [];
             foreach ($tree->nodes as $node) {
