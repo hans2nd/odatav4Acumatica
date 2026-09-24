@@ -167,24 +167,30 @@ class ReportBuilderController extends Controller
         try {
             $tree = $this->connectionManager->discoverMetadata($connKey);
             $tables = [];
-            $systemTables = [
-                'migrations', 'users', 'password_reset_tokens', 'personal_access_tokens',
-                'failed_jobs', 'jobs', 'api_endpoints', 'connections', 
-                'sync_jobs', 'sync_logs', 'sync_metadata_definitions', 
-                'sync_metadata_fields', 'sync_metadata_history', 
-                'sync_metadata_refresh_history', 'permissions', 'roles', 
-                'model_has_permissions', 'model_has_roles', 'role_has_permissions',
-                'cache', 'cache_locks', 'sessions'
-            ];
+            
+            // Collect all configured tables for this connection from Entity Configuration
+            $entities = app(\App\Services\EntityConfigService::class)->getAll();
+            $configuredTables = [];
+            foreach ($entities as $entity) {
+                if (($entity['destination_connection'] ?? 'database_default') === $connKey && !empty($entity['table'])) {
+                    $configuredTables[] = strtolower($entity['table']);
+                }
+                if (($entity['source_connection'] ?? 'acumatica_default') === $connKey && !empty($entity['odata_entity'])) {
+                    $configuredTables[] = strtolower($entity['odata_entity']);
+                }
+            }
             
             $user = auth()->user();
             foreach ($tree->nodes as $node) {
-                if (!in_array(strtolower($node->name), $systemTables)) {
-                    if ($user && !$user->isSuperAdmin() && !$user->hasPermission("connection.{$connKey}.table.{$node->name}.access")) {
-                        continue;
-                    }
-                    $tables[] = $node->name;
+                // Only include tables that are present in the Entity Configuration
+                if (!in_array(strtolower($node->name), $configuredTables)) {
+                    continue;
                 }
+                
+                if ($user && !$user->isSuperAdmin() && !$user->hasPermission("connection.{$connKey}.table.{$node->name}.access")) {
+                    continue;
+                }
+                $tables[] = $node->name;
             }
             sort($tables);
 

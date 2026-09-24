@@ -167,7 +167,7 @@
     function toggleWatermarkFields() {
         const mode = document.getElementById('form-sync-mode').value;
         const container = document.getElementById('watermark-container');
-        if (mode === 'incremental') {
+        if (mode === 'incremental' || mode === 'backdate') {
             container.classList.remove('hidden');
         } else {
             container.classList.add('hidden');

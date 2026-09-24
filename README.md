@@ -15,6 +15,12 @@ A powerful synchronization engine built on Laravel to bridge Acumatica ERP (ODat
 
 ## Changelog
 
+### v1.5.2 - September 24, 2026 (Append Only Sync & UI Enhancements)
+- **Feature: Append Only (Backdate Sync)**: Introduced a new synchronization mode that performs pure `INSERT` operations (Append Only) instead of full truncations or upserts. This is useful for building historical transaction logs or slowly changing dimensions (SCD). This mode is fully integrated into the Master Data, Transactions, and Auto-Schedule modules.
+- **Feature: Entity Form Auto-Suggestion**: The 'Add/Edit Entity' form now automatically suggests standardized names for `Entity Key`, `Target SQL Table`, and `Display Description` based on the selected Source Connection and Source Object.
+- **Enhancement: Report Builder Table Filtering**: The Report Builder "Search or select table" dropdown has been optimized. When selecting a Database Connection, it now filters the schema and exclusively displays tables that are configured in the Entity Configuration (synced tables), hiding irrelevant database tables.
+- **Bugfix: SQL Server Datatype Mapping**: Fixed an issue in `MetadataRepository` where SQL Server `INT` data types were incorrectly suggested as `Number (Decimal)` when refreshing metadata. They are now correctly mapped to `Integer`.
+
 ### v1.5.1 - September 24, 2026 (SharePoint Sync Optimization & Job Management)
 - **Performance: Native XMLReader for Excel**: Replaced `SimpleXML` with `Native XMLReader C-level Stream` in the _ZIP Parser_ for `SharePointGraphClient`. This eliminates the overhead of creating a DOM Object per row, allowing massive files (e.g., 20,000+ rows) to be synced in seconds without severely impacting RAM or CPU usage.
 - **Performance: SharePoint Graph Search API**: Replaced the recursive per-folder file traversal and Delta API iteration with the **Microsoft Graph Search API** (`/search(q=...)`) for discovering Excel/CSV source objects. This reduces hundreds of sequential API calls down to 1-2 paginated queries across all document libraries, making the Source Object reload near-instant. Falls back to per-drive Delta API if the search index is unavailable.

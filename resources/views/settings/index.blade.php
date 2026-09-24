@@ -325,6 +325,7 @@
                     <x-ui.custom-select id="form-sync-mode" name="sync_mode" :required="true" onchange="toggleWatermarkFields()">
                         <option value="full">Full Sync</option>
                         <option value="incremental">Incremental Sync</option>
+                        <option value="backdate">Append Only (Backdate Sync)</option>
                     </x-ui.custom-select>
                 </x-ui.form-group>
                 <x-ui.form-group label="Batch Size" :required="true" for="form-batch-size">

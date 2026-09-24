@@ -109,11 +109,12 @@ class MetadataRepository implements MetadataRepositoryInterface
                         $semanticType = 'dimension';
                         
                         $propTypeLower = strtolower((string)$propType);
-                        if (preg_match('/int|decimal|numeric|float|double|real|money/i', $propTypeLower)) {
-                            if (!preg_match('/tinyint\(1\)/i', $propTypeLower)) {
-                                $dataType = 'number';
-                                $semanticType = 'metric';
-                            }
+                        if (preg_match('/int/i', $propTypeLower) && !preg_match('/tinyint\(1\)/i', $propTypeLower)) {
+                            $dataType = 'integer';
+                            $semanticType = 'metric';
+                        } elseif (preg_match('/decimal|numeric|float|double|real|money/i', $propTypeLower)) {
+                            $dataType = 'number';
+                            $semanticType = 'metric';
                         } 
                         if (preg_match('/date|time/i', $propTypeLower)) {
                             $dataType = 'datetime';

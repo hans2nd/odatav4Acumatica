@@ -130,12 +130,19 @@ class SyncService
 
             // --- BEGIN INCREMENTAL LOGIC ---
             $filter = '';
-            $isIncremental = ($entity['sync_mode'] ?? 'full') === 'incremental';
+            $syncMode = $entity['sync_mode'] ?? 'full';
+            
             if ($syncModeOverride === 'full') {
-                $isIncremental = false;
+                $syncMode = 'full';
             } elseif ($syncModeOverride === 'incremental') {
-                $isIncremental = true;
+                $syncMode = 'incremental';
+            } elseif ($syncModeOverride === 'backdate') {
+                $syncMode = 'backdate';
             }
+            
+            $isIncremental = in_array($syncMode, ['incremental', 'backdate']);
+            $isAppendOnly = $syncMode === 'backdate';
+            
             $watermark = null;
 
             if ($isIncremental && $this->schemaManager->tableExists($destConnection, $tableName)) {
@@ -264,7 +271,7 @@ class SyncService
                 \Illuminate\Support\Facades\Schema::connection($destConnection)->dropIfExists($stagingTableName);
             }
 
-            $processChunkCallback = function ($recordsChunk) use (&$fetchedCount, &$insertedCount, &$hasData, &$totalRecordsCount, $tableName, $isIncremental, $customFilters, $syncJobId, $destConnection, $log, $schedule, $syncStartTime, $entityKey, $workerId, $isFullSync, $stagingTableName, $writeTableName, $entity) {
+            $processChunkCallback = function ($recordsChunk) use (&$fetchedCount, &$insertedCount, &$hasData, &$totalRecordsCount, $tableName, $isIncremental, $isAppendOnly, $customFilters, $syncJobId, $destConnection, $log, $schedule, $syncStartTime, $entityKey, $workerId, $isFullSync, $stagingTableName, $writeTableName, $entity) {
                 // Heartbeat to extend the distributed lock
                 $this->syncStateService->heartbeatSynchronizationLock($schedule->id, $workerId);
 
@@ -348,18 +355,21 @@ class SyncService
                 $hasPrimaryKey = !empty($primaryKeys);
 
                 $useUpsert = false;
-                if ($hasPrimaryKey && $isIncremental) {
+                if ($hasPrimaryKey && $isIncremental && !$isAppendOnly) {
                     $useUpsert = true;
-                } elseif (!$hasPrimaryKey && $isIncremental && !empty($customFilters)) {
+                } elseif (!$hasPrimaryKey && $isIncremental && !empty($customFilters) && !$isAppendOnly) {
                     // Custom filter sync with NO primary key -> use replaceTableData to replace the scope
                     $useUpsert = false;
-                } elseif (!$hasPrimaryKey && $isIncremental && empty($customFilters)) {
+                } elseif (!$hasPrimaryKey && $isIncremental && empty($customFilters) && !$isAppendOnly) {
                     // True incremental sync (LastModifiedDateTime) but NO primary key -> IMPOSSIBLE to safely apply delta
                     Log::error("Sync [{$entityKey}]: Cannot perform incremental sync without a primary key (id, NoteID, or configured primary_keys).");
                     throw new \Exception("Cannot perform incremental sync without a primary key. Please configure 'primary_keys' for this entity in Settings, or run a Full Sync.");
                 }
 
-                if ($useUpsert) {
+                if ($isAppendOnly) {
+                    Log::info("STEP ?: Using appendTableData because sync_mode is backdate (Append Only)");
+                    $inserted = $this->appendTableData($destConnection, $writeTableName, $cleanData, $syncJobId, $insertedCount, $totalRecordsCount);
+                } elseif ($useUpsert) {
                     Log::info("STEP ?: Using upsertTableData because primary key exists and isIncremental = true");
                     $inserted = $this->upsertTableData($destConnection, $tableName, $cleanData, $customFilters, $syncJobId, $isFirstChunk, $insertedCount, $totalRecordsCount, $primaryKeys);
                 } else {
@@ -372,7 +382,7 @@ class SyncService
                 $insertedCount += $inserted;
 
                 $actualCount = $this->schemaManager->getRowCount($destConnection, $writeTableName);
-                Log::info("Sync [{$entityKey}]: Database verification after upsert. Actual row count in DB ({$writeTableName}): {$actualCount}");
+                Log::info("Sync [{$entityKey}]: Database verification after operation. Actual row count in DB ({$writeTableName}): {$actualCount}");
 
                 $this->syncStateService->updateStatistics($schedule->id, $chunkSize, $inserted, 0, 0);
 
@@ -778,6 +788,42 @@ class SyncService
             $batchStrategy = clone $this->batchStrategyFactory->make($destConnection);
             $chunkSize = $batchStrategy->calculateChunkSize($columnCount);
             $chunks = array_chunk($cleanData, $chunkSize);
+            
+            foreach ($chunks as $chunk) {
+                $inserted += $batchStrategy->executeInsert($destConnection, $tableName, $chunk);
+
+                if ($syncJobId) {
+                    $now = microtime(true);
+                    if (($now - $lastProgressUpdate) >= 5.0) {
+                        \App\Models\SyncJob::where('id', $syncJobId)->update([
+                            'processed_rows' => $baseInserted + $inserted,
+                            'total_rows' => $totalRecordsCount,
+                            'progress' => $totalRecordsCount > 0 ? min(99, (int) round((($baseInserted + $inserted) / $totalRecordsCount) * 100)) : 0,
+                        ]);
+                        $lastProgressUpdate = $now;
+                    }
+                }
+            }
+        }, 5);
+        return $inserted;
+    }
+
+    private function appendTableData(?string $destConnection, string $tableName, array $cleanData, ?string $syncJobId = null, int $baseInserted = 0, ?int $totalRecordsCount = null): int
+    {
+        $inserted = 0;
+        $syncStartTime = microtime(true);
+        $lastProgressUpdate = $syncStartTime;
+
+        DB::connection($destConnection)->transaction(function () use ($destConnection, $tableName, $cleanData, &$inserted, $syncJobId, $baseInserted, $totalRecordsCount, $syncStartTime, &$lastProgressUpdate) {
+            
+            // NO DELETION Logic here! Just pure insert/append.
+            
+            $columnCount = max(count($cleanData[0] ?? []), 1);
+
+            $batchStrategy = clone $this->batchStrategyFactory->make($destConnection);
+            $chunkSize = $batchStrategy->calculateChunkSize($columnCount);
+            $chunks = array_chunk($cleanData, $chunkSize);
+
 
             foreach ($chunks as $chunk) {
                 if (isset($chunk[0]['tstamp'])) {

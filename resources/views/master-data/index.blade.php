@@ -132,6 +132,7 @@
                             <option value="default">Default (Follow Settings)</option>
                             <option value="incremental">Force Incremental Sync (Upsert only)</option>
                             <option value="full">Force Full Sync (Replace all data)</option>
+                            <option value="backdate">Force Append Only (Backdate Sync)</option>
                         </select>
                     </div>
 
@@ -646,7 +647,7 @@
             const mode = document.getElementById('syncModeOverride').value;
             const container = document.getElementById('syncWatermarkOverrideContainer');
             if (container) {
-                if (mode === 'incremental') {
+                if (mode === 'incremental' || mode === 'backdate') {
                     container.classList.remove('hidden');
                 } else {
                     container.classList.add('hidden');
