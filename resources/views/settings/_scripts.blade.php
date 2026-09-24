@@ -366,8 +366,68 @@
         }
     }
 
+    function autoSuggestEntityFields(objectName) {
+        const mode = document.getElementById('form-mode')?.value;
+        if (mode !== 'create') return;
+
+        const keyEl = document.getElementById('form-key');
+        const tableEl = document.getElementById('form-table');
+        const descEl = document.getElementById('form-desc');
+        const connEl = document.getElementById('form-source-conn');
+
+        if (!keyEl || !tableEl || !descEl || !connEl) return;
+
+        // Extract base name: remove file extensions and directory paths
+        let baseName = objectName.replace(/\.[^/.]+$/, "").split('/').pop();
+
+        // 1. Entity Key: PascalCase, alphanumeric only
+        let pascalCase = baseName
+            .replace(/[^a-zA-Z0-9]/g, ' ')
+            .split(' ')
+            .filter(word => word.length > 0)
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+            .join('');
+        
+        // 2. Display Description: Title Case, spaced
+        let titleCase = baseName
+            .replace(/([a-z])([A-Z])/g, '$1 $2') // Add space between camelCase
+            .replace(/[^a-zA-Z0-9]/g, ' ')
+            .split(' ')
+            .filter(word => word.length > 0)
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+            .join(' ');
+
+        // 3. Target SQL Table: snake_case
+        let snakeCase = baseName
+            .replace(/([a-z])([A-Z])/g, '$1_$2')
+            .replace(/[^a-zA-Z0-9]/g, '_')
+            .replace(/_+/g, '_')
+            .toLowerCase()
+            .replace(/^_|_$/g, '');
+        
+        // Add prefix based on connection name (e.g. "Acumatica ERP" -> "acu_")
+        let prefix = 'tbl_';
+        if (connEl.options && connEl.selectedIndex >= 0) {
+            const connText = connEl.options[connEl.selectedIndex].text.replace(/\([^)]+\)/g, '').trim();
+            if (connText.length >= 3) {
+                prefix = connText.substring(0, 3).toLowerCase() + '_';
+            }
+        }
+        
+        let targetTable = prefix + snakeCase;
+
+        // Auto-fill only if fields are empty
+        if (!keyEl.value) keyEl.value = pascalCase;
+        if (!descEl.value) descEl.value = titleCase;
+        if (!tableEl.value) tableEl.value = targetTable;
+    }
+
     async function updateWatermarkOptions(objectName, autoSet = true) {
         if (!objectName) return;
+        
+        // Trigger auto-suggest logic when an object is selected
+        autoSuggestEntityFields(objectName);
+        
         const connEl = document.getElementById('form-source-conn');
         const connKey = connEl.value;
         if (!connKey) return;

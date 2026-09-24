@@ -192,7 +192,8 @@ class SharePointGraphClient
     }
 
     /**
-     * List all files in a specific drive using the Delta API to find them anywhere.
+     * List files in a specific drive using the Delta API.
+     * Used as a fallback when site-level search returns no results.
      *
      * @param string $driveId
      * @return array<int, array{id: string, name: string, size: int, lastModified: string, webUrl: string, driveId: string}>
@@ -202,28 +203,18 @@ class SharePointGraphClient
         $token = $this->getAccessToken();
         $allItems = [];
         
-        // Use real-time recursive traversal instead of delayed /search or buggy /delta
-        $this->fetchChildrenRecursively($token, $driveId, 'root', '', $allItems);
-        
-        return $allItems;
-    }
-
-    /**
-     * Recursively fetch children of a folder
-     */
-    private function fetchChildrenRecursively(string $token, string $driveId, string $itemId, string $currentPath, array &$allItems): void
-    {
-        $url = self::GRAPH_BASE . "/drives/{$driveId}/items/{$itemId}/children?\$top=200";
+        // Use Delta API for flat traversal (fallback path)
+        $url = self::GRAPH_BASE . "/drives/{$driveId}/root/delta?\$select=id,name,file,folder,deleted,size,lastModifiedDateTime,parentReference,webUrl&\$top=500";
         $nextLink = $url;
 
         while ($nextLink) {
             $response = Http::withToken($token)
                 ->acceptJson()
-                ->timeout(30)
+                ->timeout(60)
                 ->get($nextLink);
 
             if (!$response->successful()) {
-                \Illuminate\Support\Facades\Log::warning("SharePoint recursively list failed: " . $response->body());
+                Log::warning("SharePoint delta list failed: " . $response->body());
                 break;
             }
 
@@ -231,35 +222,43 @@ class SharePointGraphClient
             $items = $data['value'] ?? [];
 
             foreach ($items as $item) {
-                // Skip deleted items just in case
-                if (isset($item['deleted'])) {
+                if (isset($item['deleted']) || isset($item['folder']) || !isset($item['file'])) {
                     continue;
                 }
 
                 $name = $item['name'] ?? '';
-                $fullName = $currentPath !== '' ? "{$currentPath}/{$name}" : $name;
+                $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+                
+                if (!in_array($ext, ['xlsx', 'xls', 'csv'])) {
+                    continue;
+                }
 
-                if (isset($item['folder'])) {
-                    // Recurse into subfolder
-                    $this->fetchChildrenRecursively($token, $driveId, $item['id'], $fullName, $allItems);
-                } else {
-                    // Only include Excel or CSV files to optimize memory and UI
-                    $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
-                    if (in_array($ext, ['xlsx', 'xls', 'csv'])) {
-                        $allItems[] = [
-                            'id' => $item['id'],
-                            'name' => $fullName,
-                            'size' => $item['size'] ?? 0,
-                            'lastModified' => $item['lastModifiedDateTime'] ?? '',
-                            'webUrl' => $item['webUrl'] ?? '',
-                            'driveId' => $driveId,
-                        ];
+                $parentPath = '';
+                if (isset($item['parentReference']['path'])) {
+                    $rawPath = $item['parentReference']['path'];
+                    $pos = strpos($rawPath, 'root:');
+                    if ($pos !== false) {
+                        $parentPath = substr($rawPath, $pos + 5);
+                        $parentPath = ltrim($parentPath, '/');
                     }
                 }
+                $parentPath = urldecode($parentPath);
+                $fullName = $parentPath !== '' ? "{$parentPath}/{$name}" : $name;
+
+                $allItems[] = [
+                    'id' => $item['id'],
+                    'name' => $fullName,
+                    'size' => $item['size'] ?? 0,
+                    'lastModified' => $item['lastModifiedDateTime'] ?? '',
+                    'webUrl' => $item['webUrl'] ?? '',
+                    'driveId' => $driveId,
+                ];
             }
 
             $nextLink = $data['@odata.nextLink'] ?? null;
         }
+
+        return $allItems;
     }
 
     /**
@@ -293,12 +292,26 @@ class SharePointGraphClient
     }
 
     /**
-     * List all files across all drives in the site.
+     * List all Excel/CSV files across all drives using site-level search.
+     * Uses Microsoft Graph Search API for a single fast query instead of
+     * iterating drives individually.
      *
      * @return array<int, array{id: string, name: string, size: int, lastModified: string, webUrl: string, driveId: string, driveName: string}>
      */
     public function listAllFiles(): array
     {
+        $token = $this->getAccessToken();
+        $siteId = $this->getSiteId();
+        
+        // Try site-level search first — single API call for all Excel/CSV files
+        $allFiles = $this->searchFilesOnSite($token, $siteId);
+        
+        if (!empty($allFiles)) {
+            return $allFiles;
+        }
+
+        // Fallback: iterate drives with Delta API (for sites where search isn't indexed yet)
+        Log::info('SharePoint search returned empty, falling back to drive-level Delta API');
         $drives = $this->listDrives();
         $allFiles = [];
 
@@ -310,7 +323,164 @@ class SharePointGraphClient
                     $allFiles[] = $file;
                 }
             } catch (Throwable $e) {
-                // Non-fatal, skip drive if delta fails or isn't supported
+                Log::warning("SharePoint drive fallback failed for drive {$drive['name']}: " . $e->getMessage());
+            }
+        }
+
+        return $allFiles;
+    }
+
+    /**
+     * Search for Excel/CSV files across the entire site using Microsoft Graph Search API.
+     * This is significantly faster than iterating drives because it returns results
+     * in a single paginated query without needing to traverse folder hierarchies.
+     */
+    private function searchFilesOnSite(string $token, string $siteId): array
+    {
+        $allFiles = [];
+        
+        // Build drive name lookup for labeling
+        $driveNameMap = [];
+        try {
+            $drives = $this->listDrives();
+            foreach ($drives as $d) {
+                $driveNameMap[$d['id']] = $d['name'];
+            }
+        } catch (Throwable $e) {
+            // Non-fatal
+        }
+
+        // Use the search endpoint on the site — searches across all document libraries
+        $url = self::GRAPH_BASE . "/sites/{$siteId}/drive/root/search(q='.xlsx OR .xls OR .csv')?\$select=id,name,file,size,lastModifiedDateTime,parentReference,webUrl&\$top=200";
+        $nextLink = $url;
+        
+        while ($nextLink) {
+            $response = Http::withToken($token)
+                ->acceptJson()
+                ->timeout(30)
+                ->get($nextLink);
+                
+            if (!$response->successful()) {
+                Log::warning("SharePoint search API failed: " . $response->body());
+                // Also try searching across all drives individually
+                break;
+            }
+            
+            $data = $response->json();
+            $items = $data['value'] ?? [];
+            
+            foreach ($items as $item) {
+                if (!isset($item['file'])) {
+                    continue;
+                }
+                
+                $name = $item['name'] ?? '';
+                $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+                
+                if (!in_array($ext, ['xlsx', 'xls', 'csv'])) {
+                    continue;
+                }
+                
+                // Extract drive ID from parentReference
+                $driveId = $item['parentReference']['driveId'] ?? '';
+                
+                // Build full path from parentReference
+                $parentPath = '';
+                if (isset($item['parentReference']['path'])) {
+                    $rawPath = $item['parentReference']['path'];
+                    $pos = strpos($rawPath, 'root:');
+                    if ($pos !== false) {
+                        $parentPath = substr($rawPath, $pos + 5);
+                        $parentPath = ltrim($parentPath, '/');
+                    }
+                }
+                $parentPath = urldecode($parentPath);
+                $fullName = $parentPath !== '' ? "{$parentPath}/{$name}" : $name;
+                
+                $allFiles[] = [
+                    'id' => $item['id'],
+                    'name' => $fullName,
+                    'size' => $item['size'] ?? 0,
+                    'lastModified' => $item['lastModifiedDateTime'] ?? '',
+                    'webUrl' => $item['webUrl'] ?? '',
+                    'driveId' => $driveId,
+                    'driveName' => $driveNameMap[$driveId] ?? '',
+                ];
+            }
+            
+            $nextLink = $data['@odata.nextLink'] ?? null;
+        }
+
+        // If default drive search worked but there are multiple drives, search them too
+        if (count($driveNameMap) > 1) {
+            foreach ($driveNameMap as $driveId => $driveName) {
+                $driveSearchUrl = self::GRAPH_BASE . "/drives/{$driveId}/root/search(q='.xlsx OR .xls OR .csv')?\$select=id,name,file,size,lastModifiedDateTime,parentReference,webUrl&\$top=200";
+                $driveNextLink = $driveSearchUrl;
+                
+                while ($driveNextLink) {
+                    $response = Http::withToken($token)
+                        ->acceptJson()
+                        ->timeout(30)
+                        ->get($driveNextLink);
+                        
+                    if (!$response->successful()) {
+                        break;
+                    }
+                    
+                    $data = $response->json();
+                    $items = $data['value'] ?? [];
+                    
+                    foreach ($items as $item) {
+                        if (!isset($item['file'])) {
+                            continue;
+                        }
+                        
+                        $name = $item['name'] ?? '';
+                        $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+                        
+                        if (!in_array($ext, ['xlsx', 'xls', 'csv'])) {
+                            continue;
+                        }
+                        
+                        $itemDriveId = $item['parentReference']['driveId'] ?? $driveId;
+                        
+                        $parentPath = '';
+                        if (isset($item['parentReference']['path'])) {
+                            $rawPath = $item['parentReference']['path'];
+                            $pos = strpos($rawPath, 'root:');
+                            if ($pos !== false) {
+                                $parentPath = substr($rawPath, $pos + 5);
+                                $parentPath = ltrim($parentPath, '/');
+                            }
+                        }
+                        $parentPath = urldecode($parentPath);
+                        $fullName = $parentPath !== '' ? "{$parentPath}/{$name}" : $name;
+                        
+                        // Avoid duplicates (file already found from site-level search)
+                        $itemId = $item['id'];
+                        $exists = false;
+                        foreach ($allFiles as $existing) {
+                            if ($existing['id'] === $itemId) {
+                                $exists = true;
+                                break;
+                            }
+                        }
+                        
+                        if (!$exists) {
+                            $allFiles[] = [
+                                'id' => $itemId,
+                                'name' => $fullName,
+                                'size' => $item['size'] ?? 0,
+                                'lastModified' => $item['lastModifiedDateTime'] ?? '',
+                                'webUrl' => $item['webUrl'] ?? '',
+                                'driveId' => $itemDriveId,
+                                'driveName' => $driveNameMap[$itemDriveId] ?? $driveName,
+                            ];
+                        }
+                    }
+                    
+                    $driveNextLink = $data['@odata.nextLink'] ?? null;
+                }
             }
         }
 
