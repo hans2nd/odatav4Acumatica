@@ -8,8 +8,39 @@ use Illuminate\Support\Facades\Cache;
 class MenuService
 {
     /**
+     * Invalidate menu cache globally across all users.
+     */
+    public static function clearMenuCache(): void
+    {
+        try {
+            $ver = (int) Cache::get('menus_version', 1);
+            Cache::put('menus_version', $ver + 1, 86400 * 30);
+        } catch (\Throwable $e) {
+            Cache::forget('menus_version');
+        }
+        Cache::forget('sidebar_menus');
+    }
+
+    /**
+     * Invalidate permission and menu cache for a specific user (or all if null).
+     */
+    public static function clearUserCache(?int $userId = null): void
+    {
+        if ($userId) {
+            try {
+                $ver = (int) Cache::get("user_perm_ver_{$userId}", 1);
+                Cache::put("user_perm_ver_{$userId}", $ver + 1, 86400 * 30);
+            } catch (\Throwable $e) {
+                Cache::forget("user_perm_ver_{$userId}");
+            }
+        } else {
+            self::clearMenuCache();
+        }
+    }
+
+    /**
      * Get dynamic menus for the authenticated user based on their permissions.
-     * Now fully database-driven from the `menus` table.
+     * Uses versioned caching to avoid database queries on every page load.
      */
     public function getUserMenus($user)
     {
@@ -17,6 +48,20 @@ class MenuService
             return [];
         }
 
+        $menuVersion = Cache::get('menus_version', 1);
+        $userPermVersion = Cache::get("user_perm_ver_{$user->id}", 1);
+        $cacheKey = "user_menus_{$user->id}_v{$menuVersion}_{$userPermVersion}";
+
+        return Cache::remember($cacheKey, 3600, function () use ($user) {
+            return $this->buildUserMenus($user);
+        });
+    }
+
+    /**
+     * Build menu tree from database for the specified user.
+     */
+    protected function buildUserMenus($user): array
+    {
         // Get all active & visible menus ordered by sort_order
         $allMenus = Menu::where('is_active', true)
             ->where('is_visible', true)

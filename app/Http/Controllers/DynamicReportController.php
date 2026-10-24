@@ -74,13 +74,36 @@ class DynamicReportController extends Controller
         if ($request->input('export') === 'csv' || $request->input('export') === 'xlsx') {
             $format = $request->input('export');
             $fileName = Str::slug($menu->title) . '_' . date('Ymd_His') . '.' . $format;
-            $writer = \Spatie\SimpleExcel\SimpleExcelWriter::streamDownload($fileName);
-            
-            // For XLSX, Spatie uses Spout which writes to temp disk then streams, preventing memory issues.
-            foreach ($query->cursor() as $row) {
-                $writer->addRow((array) $row);
+
+            $reportCache = app(\App\Services\ReportCacheService::class);
+            $cacheKey = $reportCache->generateCacheKey('dynamic_report', $conn->key, (string) $menuId, $request->except(['export']), $format);
+            $cached = $reportCache->getCachedReport($cacheKey, $format);
+
+            if ($cached) {
+                return response()->download($cached['path'], $fileName, [
+                    'Content-Type' => $format === 'csv' ? 'text/csv' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                ]);
             }
-            return $writer->toBrowser();
+
+            $cachePath = $reportCache->getCachePath($cacheKey, $format);
+            $writer = \Spatie\SimpleExcel\SimpleExcelWriter::create($cachePath);
+            
+            $headerAdded = false;
+            foreach ($query->cursor() as $row) {
+                $rowArray = (array) $row;
+                if (!$headerAdded) {
+                    $writer->addHeader(array_keys($rowArray));
+                    $headerAdded = true;
+                }
+                $writer->addRow($rowArray);
+            }
+            $writer->close();
+
+            $reportCache->storeCachedReport($cacheKey, $cachePath, $fileName, $format);
+
+            return response()->download($cachePath, $fileName, [
+                'Content-Type' => $format === 'csv' ? 'text/csv' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ]);
         }
         
         try {

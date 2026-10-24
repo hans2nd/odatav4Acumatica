@@ -15,6 +15,30 @@ A powerful synchronization engine built on Laravel to bridge Acumatica ERP (ODat
 
 ## Changelog
 
+### v1.6.0 - October 24, 2026 (Enterprise Performance, Security Hardening, Streaming Architecture & RBAC Optimization)
+- **Security Audit & Public Cleanup**:
+  - Eliminated high-risk exposed debugging scripts and sensitive connection dumps from the `public/` directory (`test_ai.php`, `benchmark.php`, `migrate.php`, `dump_connections.php`, `get_connections.php`, `verify*.php`, `connections_dump.json`).
+  - Added safe CLI Artisan command `php artisan ai:test-schema {connection_id?}` (`AiTestSchemaCommand`) to safely inspect AI schema discovery without exposing public HTTP endpoints.
+  - Hardened `.gitignore` to prevent accidental commits of public dump, benchmark, verification, and temporary test scripts.
+- **Sync Engine & Scheduler Low-Memory Footprint**:
+  - Added `DB::disableQueryLog()` across default, source, and destination database connections in `SyncEntityJob` and `SyncService`, preventing memory leaks from accumulating millions of query logs during massive synchronization cycles.
+  - Enforced strict batch chunk bounds between 100 and 1,000 rows in `MySqlBatchStrategy` and `SqlServerBatchStrategy` to prevent PDO parameter overflow.
+  - Refactored relational DB source extraction in `SyncService` to use streaming generator cursors (`$query->cursor()`) with explicit garbage clearance (`unset()`), maintaining flat RAM usage regardless of table size.
+  - Optimized `routes/console.php` to query only active schedules (`where('is_active', true)`) and added a 120-minute mutex TTL (`withoutOverlapping(120)`) to prevent hung cron locks.
+- **Report Builder & Excel Export Streaming**:
+  - Introduced `ReportCacheService` providing deterministic SHA-256 caching of report payloads in `storage/app/reports/cache/`.
+  - Refactored Excel exports across `ReportBuilderController`, `QueryBuilderController`, `QueryRepositoryController`, `DynamicReportController`, and `ReportController` to stream rows directly to disk via `SimpleExcelWriter` using cursor iteration instead of buffering full datasets into RAM.
+  - Implemented disk-cached downloads with cache preservation (`is_cached`), allowing multiple users to download identical reports directly from disk with zero database queries.
+- **ChatEDP AI Data Analytics Performance & Query Guardrails**:
+  - Implemented versioned AI schema caching in `SchemaCacheService` with a 3,600s TTL (`Cache::remember("ai_schema_{$connectionId}_v{$version}_{$domainKey}", ...)`), eliminating repetitive multi-table joins on every chat message.
+  - Hooked automated cache invalidation in `AiSettingsController` (`update`, `metadataUpdate`, `refreshSchema`) to ensure metadata and semantics changes propagate immediately.
+  - Cached ChatEDP suggested questions (`Cache::remember("ai_suggested_questions_{$connectionId}", 3600, ...)`) with dynamic array shuffling to preserve question variety on page reloads without querying the database.
+  - Hardened analytics query row limits to a strict ceiling of 1,000 rows in both `ChatEDPController` and `QueryRepositoryService::executeForAnalytics()`.
+- **Granular RBAC, Dynamic Menu & Authorization Caching**:
+  - Implemented versioned per-user menu caching in `MenuService` (`Cache::remember("user_menus_{$user->id}_v{$menuVer}_{$userPermVer}", 3600, ...)`), eliminating redundant `menus` table scans and recursive permission evaluations on every page load.
+  - Added persistent versioned caching for `isSuperAdmin()` and `loadEffectivePermissions()` in `User.php`, reducing `CheckPermission` middleware overhead to zero database queries on authenticated requests.
+  - Wired real-time cache invalidation in `MenuManagementController` (on menu create, update, delete, reorder, toggle, and publish) and `UserManagementController` (on user update, role permission update, role delete, and table access update).
+
 ### v1.5.2 - September 24, 2026 (Append Only Sync & UI Enhancements)
 - **Feature: Append Only (Backdate Sync)**: Introduced a new synchronization mode that performs pure `INSERT` operations (Append Only) instead of full truncations or upserts. This is useful for building historical transaction logs or slowly changing dimensions (SCD). This mode is fully integrated into the Master Data, Transactions, and Auto-Schedule modules.
 - **Feature: Entity Form Auto-Suggestion**: The 'Add/Edit Entity' form now automatically suggests standardized names for `Entity Key`, `Target SQL Table`, and `Display Description` based on the selected Source Connection and Source Object.

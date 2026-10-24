@@ -54,6 +54,8 @@ class AiSettingsController extends Controller
             \Illuminate\Support\Facades\Log::warning('Failed to sync analytics source flag: ' . $e->getMessage());
         }
 
+        app(\App\Services\AI\SchemaCacheService::class)->clearCache((int)$validated['analytics_connection_id']);
+
         return redirect()->back()->with('success', 'AI configuration saved successfully.');
     }
 
@@ -496,6 +498,8 @@ class AiSettingsController extends Controller
             \Illuminate\Support\Facades\DB::table('sync_metadata_definitions')->where('id', $id)->update([
                 'semantic_profile' => json_encode($semanticProfile),
             ]);
+
+            app(\App\Services\AI\SchemaCacheService::class)->clearCache((int)$connectionId);
         }
 
         return back()->with('success', 'Table configuration saved.');
@@ -713,6 +717,8 @@ class AiSettingsController extends Controller
                 ->join('sync_metadata_definitions', 'sync_metadata_fields.definition_id', '=', 'sync_metadata_definitions.id')
                 ->where('sync_metadata_definitions.connection_id', $connectionId)
                 ->count();
+
+            app(\App\Services\AI\SchemaCacheService::class)->clearCache((int)$connectionId);
 
             return back()->with('success', "Schema refreshed successfully. Discovered {$tablesCount} tables and {$columnsCount} columns.");
         } catch (\Exception $e) {

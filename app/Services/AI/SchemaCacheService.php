@@ -8,6 +8,7 @@ use App\DTO\Metadata\MetadataField;
 use App\Services\Metadata\DatabaseMetadataStorage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Cache;
 
 class SchemaCacheService
 {
@@ -198,124 +199,145 @@ class SchemaCacheService
             }
         } finally {
             DB::purge($dbName);
+            $this->clearCache($connection->id);
         }
+    }
+
+    /**
+     * Invalidate the schema cache and suggested questions for a specific connection.
+     */
+    public function clearCache(int $connectionId): void
+    {
+        try {
+            $currentVer = (int) Cache::get("ai_schema_ver_{$connectionId}", 1);
+            Cache::put("ai_schema_ver_{$connectionId}", $currentVer + 1, 86400 * 30);
+        } catch (\Throwable $e) {
+            Cache::forget("ai_schema_ver_{$connectionId}");
+        }
+        Cache::forget("ai_suggested_questions_{$connectionId}");
     }
 
     public function getCache(int $connectionId, ?string $domainContext = null)
     {
-        // Retrieve only ChatEDP-enabled metadata definitions for this connection
-        $query = DB::table('sync_metadata_definitions')
-            ->where('connection_id', $connectionId)
-            ->where('chatedp_enabled', true);
-            
-        if ($domainContext) {
-            $query->where(function ($q) use ($domainContext) {
-                $q->whereNull('business_domains')
-                  ->orWhere('business_domains', '[]')
-                  ->orWhere('business_domains', 'null')
-                  ->orWhereJsonContains('business_domains', $domainContext);
-            });
-        }
-        
-        $definitions = $query->get();
-            
-        $tables = [];
-        foreach ($definitions as $def) {
-            $profile = null;
-            if ($def->semantic_profile) {
-                $profile = json_decode($def->semantic_profile, true);
+        $version = Cache::get("ai_schema_ver_{$connectionId}", 1);
+        $domainKey = $domainContext ? md5($domainContext) : 'all';
+        $cacheKey = "ai_schema_{$connectionId}_v{$version}_{$domainKey}";
+
+        return Cache::remember($cacheKey, 3600, function () use ($connectionId, $domainContext) {
+            // Retrieve only ChatEDP-enabled metadata definitions for this connection
+            $query = DB::table('sync_metadata_definitions')
+                ->where('connection_id', $connectionId)
+                ->where('chatedp_enabled', true);
+                
+            if ($domainContext) {
+                $query->where(function ($q) use ($domainContext) {
+                    $q->whereNull('business_domains')
+                      ->orWhere('business_domains', '[]')
+                      ->orWhere('business_domains', 'null')
+                      ->orWhereJsonContains('business_domains', $domainContext);
+                });
             }
             
-            if (!$profile) {
-                $profile = [
-                    'logical_name' => $def->logical_name ?? $def->entity_key,
-                    'description' => $def->description,
-                    'aliases' => $def->aliases ? json_decode($def->aliases, true) : [],
-                    'data_role' => $def->data_role ?? 'other',
-                    'metrics' => [],
-                    'dimensions' => [],
-                    'semantic_dates' => [],
-                    'date_fields' => [],
-                    'filterable_fields' => [],
-                    'transaction_grain' => null,
-                    'capabilities' => [],
-                    'hierarchies' => [],
-                    'question_patterns' => []
-                ];
-            }
-            
-            $profile['physical_name'] = $def->entity_key;
-            
-            // Fallback: Dynamically load if metrics/dimensions are empty
-            if (empty($profile['metrics'])) {
-                $metricDefs = \App\Models\AiSemanticDefinition::where('connection_id', $connectionId)
-                    ->where('source_table', $def->entity_key)
-                    ->where('type', 'metric')
-                    ->get();
-                foreach ($metricDefs as $m) {
-                    $meta = is_string($m->metadata) ? json_decode($m->metadata, true) : ($m->metadata ?? []);
-                    $profile['metrics'][] = [
-                        'name' => $m->name,
-                        'source_column' => $m->source_column,
-                        'aggregation' => $meta['aggregation'] ?? 'SUM',
-                        'aliases' => $meta['aliases'] ?? [],
-                        'is_default' => $meta['is_default'] ?? false
+            $definitions = $query->get();
+                
+            $tables = [];
+            foreach ($definitions as $def) {
+                $profile = null;
+                if ($def->semantic_profile) {
+                    $profile = json_decode($def->semantic_profile, true);
+                }
+                
+                if (!$profile) {
+                    $profile = [
+                        'logical_name' => $def->logical_name ?? $def->entity_key,
+                        'description' => $def->description,
+                        'aliases' => $def->aliases ? json_decode($def->aliases, true) : [],
+                        'data_role' => $def->data_role ?? 'other',
+                        'metrics' => [],
+                        'dimensions' => [],
+                        'semantic_dates' => [],
+                        'date_fields' => [],
+                        'filterable_fields' => [],
+                        'transaction_grain' => null,
+                        'capabilities' => [],
+                        'hierarchies' => [],
+                        'question_patterns' => []
                     ];
                 }
-            }
-
-            $needsDimensions = empty($profile['dimensions']);
-            $needsDateFields = empty($profile['date_fields']);
-            $needsFilterableFields = empty($profile['filterable_fields']);
-
-            if ($needsDimensions || $needsDateFields || $needsFilterableFields) {
-                $fields = DB::table('sync_metadata_fields')
-                    ->where('definition_id', $def->id)
-                    ->get();
-                    
-                foreach ($fields as $f) {
-                    // Populate dimensions
-                    if ($needsDimensions && in_array($f->semantic_type ?? null, ['dimension', 'categorical', 'status', 'identifier', 'boolean', 'date', 'datetime'])) {
-                        $aliasesArray = !empty($f->aliases) ? array_map('trim', explode(',', $f->aliases)) : [];
-                        $profile['dimensions'][] = [
-                            'name' => count($aliasesArray) > 0 ? $aliasesArray[0] : $f->field_name,
-                            'source_column' => $f->field_name,
-                            'aliases' => $aliasesArray
-                        ];
-                    }
-                    // Populate date fields
-                    if ($needsDateFields && (in_array($f->semantic_type ?? null, ['date', 'datetime']) || str_contains(strtolower($f->data_type ?? ''), 'date'))) {
-                        $profile['date_fields'][] = $f->field_name;
-                    }
-                    // Populate filterable fields
-                    if ($needsFilterableFields && in_array($f->semantic_type ?? null, ['dimension', 'categorical', 'status', 'identifier', 'boolean'])) {
-                        $profile['filterable_fields'][] = $f->field_name;
-                    }
-                }
-            }
-            
-            // If still empty from metadata_fields, try SyncEntityField (legacy fallback)
-            if (empty($profile['dimensions'])) {
-                $syncEntity = \App\Models\SyncEntity::where('destination_table', $def->entity_key)->first();
-                if ($syncEntity) {
-                    $dimensionDefs = \App\Models\SyncEntityField::where('sync_entity_id', $syncEntity->id)
-                        ->where('is_enabled', true)
-                        ->whereNotNull('destination_field')
-                        ->whereIn('semantic_type', ['dimension', 'categorical', 'status', 'identifier', 'boolean', 'date', 'datetime'])
+                
+                $profile['physical_name'] = $def->entity_key;
+                
+                // Fallback: Dynamically load if metrics/dimensions are empty
+                if (empty($profile['metrics'])) {
+                    $metricDefs = \App\Models\AiSemanticDefinition::where('connection_id', $connectionId)
+                        ->where('source_table', $def->entity_key)
+                        ->where('type', 'metric')
                         ->get();
-                    foreach ($dimensionDefs as $d) {
-                        $profile['dimensions'][] = [
-                            'name' => $d->label ?? $d->destination_field,
-                            'source_column' => $d->destination_field,
-                            'aliases' => is_array($d->aliases) ? $d->aliases : []
+                    foreach ($metricDefs as $m) {
+                        $meta = is_string($m->metadata) ? json_decode($m->metadata, true) : ($m->metadata ?? []);
+                        $profile['metrics'][] = [
+                            'name' => $m->name,
+                            'source_column' => $m->source_column,
+                            'aggregation' => $meta['aggregation'] ?? 'SUM',
+                            'aliases' => $meta['aliases'] ?? [],
+                            'is_default' => $meta['is_default'] ?? false
                         ];
                     }
                 }
+
+                $needsDimensions = empty($profile['dimensions']);
+                $needsDateFields = empty($profile['date_fields']);
+                $needsFilterableFields = empty($profile['filterable_fields']);
+
+                if ($needsDimensions || $needsDateFields || $needsFilterableFields) {
+                    $fields = DB::table('sync_metadata_fields')
+                        ->where('definition_id', $def->id)
+                        ->get();
+                        
+                    foreach ($fields as $f) {
+                        // Populate dimensions
+                        if ($needsDimensions && in_array($f->semantic_type ?? null, ['dimension', 'categorical', 'status', 'identifier', 'boolean', 'date', 'datetime'])) {
+                            $aliasesArray = !empty($f->aliases) ? array_map('trim', explode(',', $f->aliases)) : [];
+                            $profile['dimensions'][] = [
+                                'name' => count($aliasesArray) > 0 ? $aliasesArray[0] : $f->field_name,
+                                'source_column' => $f->field_name,
+                                'aliases' => $aliasesArray
+                            ];
+                        }
+                        // Populate date fields
+                        if ($needsDateFields && (in_array($f->semantic_type ?? null, ['date', 'datetime']) || str_contains(strtolower($f->data_type ?? ''), 'date'))) {
+                            $profile['date_fields'][] = $f->field_name;
+                        }
+                        // Populate filterable fields
+                        if ($needsFilterableFields && in_array($f->semantic_type ?? null, ['dimension', 'categorical', 'status', 'identifier', 'boolean'])) {
+                            $profile['filterable_fields'][] = $f->field_name;
+                        }
+                    }
+                }
+                
+                // If still empty from metadata_fields, try SyncEntityField (legacy fallback)
+                if (empty($profile['dimensions'])) {
+                    $syncEntity = \App\Models\SyncEntity::where('destination_table', $def->entity_key)->first();
+                    if ($syncEntity) {
+                        $dimensionDefs = \App\Models\SyncEntityField::where('sync_entity_id', $syncEntity->id)
+                            ->where('is_enabled', true)
+                            ->whereNotNull('destination_field')
+                            ->whereIn('semantic_type', ['dimension', 'categorical', 'status', 'identifier', 'boolean', 'date', 'datetime'])
+                            ->get();
+                        foreach ($dimensionDefs as $d) {
+                            $profile['dimensions'][] = [
+                                'name' => $d->label ?? $d->destination_field,
+                                'source_column' => $d->destination_field,
+                                'aliases' => is_array($d->aliases) ? $d->aliases : []
+                            ];
+                        }
+                    }
+                }
+
+                $tables[] = $profile;
             }
 
-            $tables[] = $profile;
-        }
-
-        return (object)['tables' => $tables];
+            return (object)['tables' => $tables];
+        });
     }
 }

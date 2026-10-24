@@ -7,6 +7,8 @@
 /public/storage
 /storage/*.key
 /storage/pail
+/storage/app/reports/cache/*
+/storage/app/exports/*
 /scratch
 /vendor
 .env
@@ -25,3 +27,10 @@ yarn-error.log
 /.vscode
 /.zed
 /tests
+
+# Security: prevent public debug / dump files
+/public/*.json
+/public/dump_*.php
+/public/test_*.php
+/public/verify*.php
+/public/benchmark*.php

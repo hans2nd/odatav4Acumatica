@@ -97,6 +97,25 @@ class ChatEDPController extends Controller
 
     protected function getSuggestedQuestions(int $connectionId): array
     {
+        $allCandidates = Cache::remember("ai_suggested_questions_{$connectionId}", 3600, function () use ($connectionId) {
+            return $this->buildSuggestedQuestions($connectionId);
+        });
+
+        if (empty($allCandidates)) {
+            return [];
+        }
+
+        $selected = $allCandidates;
+        if (count($selected) > 5) {
+            shuffle($selected);
+            $selected = array_slice($selected, 0, 5);
+        }
+
+        return $selected;
+    }
+
+    protected function buildSuggestedQuestions(int $connectionId): array
+    {
         $suggestedQuestions = [];
         // Get enabled tables only
         $enabledTables = \Illuminate\Support\Facades\DB::table('sync_metadata_definitions')
@@ -154,17 +173,10 @@ class ChatEDPController extends Controller
             foreach ($suggestedQuestions as $sq) {
                 $unique[$sq['prompt']] = $sq;
             }
-            $suggestedQuestions = array_values($unique);
-            
-            if (count($suggestedQuestions) > 5) {
-                shuffle($suggestedQuestions);
-                $suggestedQuestions = array_slice($suggestedQuestions, 0, 5);
-            }
-            return $suggestedQuestions;
+            return array_values($unique);
         }
 
         // 2. Fallback to generic suggestions
-
         $definitions = \App\Models\AiSemanticDefinition::where('connection_id', $connectionId)
             ->whereIn('source_table', $enabledTables)
             ->get();
@@ -759,7 +771,8 @@ class ChatEDPController extends Controller
                 } else {
                     // Always safely compile parameterized SQL for the current plan's specific bindings
                     [$sql, $bindings] = $this->compiler->compile($validatedPlan, $connection);
-                    $executionResult = $this->executor->executeForAnalytics($sql, $bindings, $validatedPlan->limit ?? 500);
+                    $analyticsLimit = min(max(1, (int)($validatedPlan->limit ?? 500)), 1000);
+                    $executionResult = $this->executor->executeForAnalytics($sql, $bindings, $analyticsLimit);
                     $results = $executionResult['data'];
                 }
             } catch (\App\Exceptions\AI\SemanticAmbiguityException $e) {

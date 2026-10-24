@@ -135,7 +135,7 @@ class MenuManagementController extends Controller
             $this->generateRouteAndFiles($menu->route_name, $menu->title, $menu->query_repository_id, false, $menu->id);
         }
 
-        Cache::forget('sidebar_menus');
+        \App\Services\MenuService::clearMenuCache();
 
         return response()->json([
             'success' => true,
@@ -234,8 +234,7 @@ class MenuManagementController extends Controller
             $this->generateRouteAndFiles($menu->route_name, $menu->title, $menu->query_repository_id, true, $menu->id);
         }
 
-
-        Cache::forget('sidebar_menus');
+        \App\Services\MenuService::clearMenuCache();
 
         return response()->json([
             'success' => true,
@@ -297,7 +296,7 @@ class MenuManagementController extends Controller
             $this->deleteRouteAndFiles($routeName);
         }
 
-        Cache::forget('sidebar_menus');
+        \App\Services\MenuService::clearMenuCache();
 
         return response()->json([
             'success' => true,
@@ -325,7 +324,7 @@ class MenuManagementController extends Controller
             ]);
         }
 
-        Cache::forget('sidebar_menus');
+        \App\Services\MenuService::clearMenuCache();
 
         return response()->json([
             'success' => true,
@@ -608,6 +607,8 @@ class MenuManagementController extends Controller
             $role->permissions()->detach([$permission->id]);
         }
 
+        \App\Services\MenuService::clearMenuCache();
+
         return response()->json(['success' => true, 'message' => 'Permission updated.']);
     }
 
@@ -616,7 +617,7 @@ class MenuManagementController extends Controller
      */
     public function publish(): JsonResponse
     {
-        Cache::forget('sidebar_menus');
+        \App\Services\MenuService::clearMenuCache();
 
         return response()->json([
             'success' => true,

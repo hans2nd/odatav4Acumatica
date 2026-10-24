@@ -34,6 +34,45 @@ class ReportController extends Controller
             
             // Default sorting
             $query->orderBy('OrderDate', 'desc');
+
+            if (in_array($request->input('export'), ['csv', 'xlsx'])) {
+                $format = $request->input('export');
+                $fileName = 'sales_order_' . date('Ymd_His') . '.' . $format;
+
+                $reportCache = app(\App\Services\ReportCacheService::class);
+                $cacheKey = $reportCache->generateCacheKey('sales_order', 'default', $tableName, [
+                    'date_from'   => $dateFrom,
+                    'date_to'     => $dateTo,
+                    'customer_id' => $customerId,
+                ], $format);
+
+                $cached = $reportCache->getCachedReport($cacheKey, $format);
+                if ($cached) {
+                    return response()->download($cached['path'], $fileName, [
+                        'Content-Type' => $format === 'csv' ? 'text/csv' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    ]);
+                }
+
+                $cachePath = $reportCache->getCachePath($cacheKey, $format);
+                $writer = \Spatie\SimpleExcel\SimpleExcelWriter::create($cachePath);
+
+                $headerAdded = false;
+                foreach ($query->cursor() as $row) {
+                    $rowArray = (array) $row;
+                    if (!$headerAdded) {
+                        $writer->addHeader(array_keys($rowArray));
+                        $headerAdded = true;
+                    }
+                    $writer->addRow($rowArray);
+                }
+                $writer->close();
+
+                $reportCache->storeCachedReport($cacheKey, $cachePath, $fileName, $format);
+
+                return response()->download($cachePath, $fileName, [
+                    'Content-Type' => $format === 'csv' ? 'text/csv' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                ]);
+            }
         }
 
         $records = $query ? $query->paginate(50)->withQueryString() : [];

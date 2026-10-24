@@ -318,6 +318,33 @@ class ReportBuilderController extends Controller
             $baseFilename = $table . '_' . now()->format('Ymd_His');
             $downloadName = $baseFilename . ($format === 'xlsx' ? '.xlsx' : '.csv');
 
+            // Check Report Cache for identical shared export parameters
+            $reportCache = app(\App\Services\ReportCacheService::class);
+            $cacheKey = $reportCache->generateCacheKey('report_builder', $connKey, $table, [
+                'columns' => $validColumns,
+                'filters' => $filters,
+                'locale'  => $locale,
+                'timezone'=> $timezone,
+            ], $format);
+
+            $cachedReport = $reportCache->getCachedReport($cacheKey, $format);
+            if ($cachedReport) {
+                $token = Str::random(32);
+                \Illuminate\Support\Facades\Cache::put("report_download_{$token}", [
+                    'path'      => $cachedReport['path'],
+                    'filename'  => $downloadName,
+                    'is_cached' => true,
+                ], now()->addHour());
+
+                return response()->json([
+                    'success'   => true,
+                    'token'     => $token,
+                    'filename'  => $downloadName,
+                    'size'      => $this->formatBytes($cachedReport['size']),
+                    'cached'    => true,
+                ]);
+            }
+
             $countSql = $query->clone()->selectRaw('count(*) as aggregate')->toSql();
             $countBindings = $query->getBindings();
             $countResult = app(\App\Services\QueryRepositoryService::class)->executeDynamic($connKey, $countSql, $countBindings);
@@ -335,11 +362,7 @@ class ReportBuilderController extends Controller
                 \Illuminate\Support\Facades\Cache::put("report_dl_{$downloadId}", ['total' => $totalRows, 'current' => 0], 300);
             }
 
-            $exportDir = storage_path('app/exports');
-            if (!is_dir($exportDir)) {
-                mkdir($exportDir, 0755, true);
-            }
-            $filePath = $exportDir . '/' . $downloadName;
+            $filePath = $reportCache->getCachePath($cacheKey, $format);
 
             $writer = \Spatie\SimpleExcel\SimpleExcelWriter::create($filePath);
 
@@ -395,10 +418,10 @@ class ReportBuilderController extends Controller
                     elseif (is_string($val) && preg_match('/^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$/i', trim($val))) {
                         $hasTime = preg_match('/[ T]\d{2}:\d{2}/', trim($val));
                         if ($format === 'xlsx') {
-                             try {
+                            try {
                                  // Return formatted string instead of DateTime object to prevent Excel from showing raw serial numbers (e.g., 45600)
                                  $val = \Carbon\Carbon::parse(trim($val))->timezone($timezone)->format($hasTime ? 'Y-m-d H:i:s' : 'Y-m-d');
-                             } catch (\Throwable $e) {}
+                            } catch (\Throwable $e) {}
                         } else {
                             try {
                                 $carbon = \Carbon\Carbon::parse(trim($val))->timezone($timezone)->locale($locale);
@@ -422,14 +445,18 @@ class ReportBuilderController extends Controller
 
             $writer->close();
 
+            // Store in Report Cache for subsequent downloads
+            $reportCache->storeCachedReport($cacheKey, $filePath, $downloadName, $format);
+
             if ($downloadId) {
                 \Illuminate\Support\Facades\Cache::forget("report_dl_{$downloadId}");
             }
 
             $token = Str::random(32);
             \Illuminate\Support\Facades\Cache::put("report_download_{$token}", [
-                'path'     => $filePath,
-                'filename' => $downloadName,
+                'path'      => $filePath,
+                'filename'  => $downloadName,
+                'is_cached' => true,
             ], now()->addHour());
 
             return response()->json([
@@ -455,7 +482,11 @@ class ReportBuilderController extends Controller
             abort(404, 'Download link has expired or file not found.');
         }
 
-        return response()->download($info['path'], $info['filename'])->deleteFileAfterSend(true);
+        $response = response()->download($info['path'], $info['filename']);
+        if (empty($info['is_cached'])) {
+            $response->deleteFileAfterSend(true);
+        }
+        return $response;
     }
 
     // ─── Private Helpers ─────────────────────────────────────────────────

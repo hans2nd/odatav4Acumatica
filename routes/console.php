@@ -12,7 +12,7 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 try {
-    $schedules = DB::table('sync_schedules')->get();
+    $schedules = DB::table('sync_schedules')->where('is_active', true)->get();
 
     foreach ($schedules as $schedule) {
         $filters = json_decode($schedule->custom_filters, true) ?? [];
@@ -20,10 +20,9 @@ try {
         Schedule::job(new SyncEntityJob($schedule->entity_key, $filters, 'schedule'))
             ->cron($schedule->cron_expression)
             ->when(function () use ($schedule) {
-                $current = DB::table('sync_schedules')->where('id', $schedule->id)->first();
-                return $current && $current->is_active;
+                return (bool) DB::table('sync_schedules')->where('id', $schedule->id)->value('is_active');
             })
-            ->withoutOverlapping()
+            ->withoutOverlapping(120)
             ->name("sync_{$schedule->entity_key}");
     }
 } catch (\Exception $e) {

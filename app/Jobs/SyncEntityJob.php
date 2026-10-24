@@ -60,6 +60,9 @@ class SyncEntityJob implements ShouldQueue, ShouldBeUnique
 
     public function handle(SyncService $syncService): void
     {
+        // Disable query log to prevent memory leaks during long-running batch jobs
+        \Illuminate\Support\Facades\DB::disableQueryLog();
+
         $jobRecord = null;
         if ($this->syncJobId) {
             $jobRecord = SyncJob::find($this->syncJobId);

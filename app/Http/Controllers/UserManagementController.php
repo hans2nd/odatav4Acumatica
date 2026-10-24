@@ -136,6 +136,7 @@ class UserManagementController extends Controller
             $user->roles()->sync($validated['role_ids']);
             app(\App\Services\RbacAuditService::class)->auditUserRoleChange($user, $beforeRoleIds, $validated['role_ids']);
             $user->clearAuthorizationCache();
+            \App\Services\MenuService::clearUserCache($user->id);
         });
 
         return response()->json([
@@ -178,11 +179,13 @@ class UserManagementController extends Controller
                 $user->roles()->detach();
                 $user->delete();
                 app(\App\Services\RbacAuditService::class)->auditUserDeleted($user);
+                \App\Services\MenuService::clearUserCache($user->id);
             });
         } else {
             $user->roles()->detach();
             $user->delete();
             app(\App\Services\RbacAuditService::class)->auditUserDeleted($user);
+            \App\Services\MenuService::clearUserCache($user->id);
         }
 
         return response()->json([
@@ -253,6 +256,7 @@ class UserManagementController extends Controller
         $beforePermissionIds = $role->permissions()->pluck('permissions.id')->toArray();
         $role->permissions()->sync($validated['permission_ids']);
         app(\App\Services\RbacAuditService::class)->auditPermissionChange($role, $beforePermissionIds, $validated['permission_ids']);
+        \App\Services\MenuService::clearMenuCache();
 
         return response()->json([
             'success' => true,
@@ -304,6 +308,7 @@ class UserManagementController extends Controller
         $role->permissions()->detach();
         $role->delete();
         app(\App\Services\RbacAuditService::class)->auditRoleDeleted($role);
+        \App\Services\MenuService::clearMenuCache();
 
         return response()->json([
             'success' => true,
@@ -339,11 +344,13 @@ class UserManagementController extends Controller
                 }
                 $user->update(['is_active' => $newState]);
                 $user->clearAuthorizationCache();
+                \App\Services\MenuService::clearUserCache($user->id);
                 app(\App\Services\RbacAuditService::class)->auditUserStatusChange($user, $beforeStatus, $newState);
             });
         } else {
             $user->update(['is_active' => $newState]);
             $user->clearAuthorizationCache();
+            \App\Services\MenuService::clearUserCache($user->id);
             app(\App\Services\RbacAuditService::class)->auditUserStatusChange($user, $beforeStatus, $newState);
         }
 
@@ -656,6 +663,7 @@ class UserManagementController extends Controller
         $finalPermIds = array_merge($filteredPermIds, $permissionIdsToSync);
 
         $role->permissions()->sync($finalPermIds);
+        \App\Services\MenuService::clearMenuCache();
 
         return response()->json([
             'success' => true,

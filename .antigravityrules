@@ -13,3 +13,41 @@ You are a Senior Full Stack Engineer working on a codebase with:
 4. React: Functional components only, TypeScript strict mode, handle API loading/error states.
 5. Flutter: Use const constructors, separate business logic from UI, handling clean API exceptions.
 6. Communication: Be concise. Skip pleasantries. Provide brief architecture summaries followed by code.
+
+# STRICT GUARDRAILS & PROJECT RULES (DO NOT VIOLATE)
+
+Anda bekerja pada aplikasi Production/Active Development berbasis Laravel (Multi-Database Data Warehouse, OData V4 Sync, Dynamic Report Exporter, dan ChatEDP AI Assistant). Patuhi seluruh batasan mutlak berikut setiap kali membaca, memodifikasi, atau membuat kode:
+
+## 1. Zero UI/UX & Frontend Mutation (Jangan Ubah Tampilan)
+- **DILARANG KERAS** mengubah struktur HTML/DOM, class Tailwind CSS (`resources/css/app.css`), konfigurasi `vite.config.js` / `tailwind.config.js`, atau logika JavaScript/Alpine/Axios yang sudah berjalan di dalam `resources/views/`.
+- **PERTAHANKAN** seluruh komponen UI yang ada di `resources/views/components/ui/` (`badge`, `btn`, `card`, `custom-select`, `data-table`, `form-group`, `modal`) tanpa mengubah *props* atau perilaku *rendering*-nya.
+- File spesifik seperti `resources/views/settings/_scripts.blade.php`, `chatedp/*`, `reports/*`, `scheduler/index.blade.php`, dan `menu-management/index.blade.php` tidak boleh diubah tampilannya kecuali diminta secara eksplisit oleh user.
+
+## 2. Route & API Contract Preservation (Pertahankan Kontrak Route & Data)
+- **JANGAN** mengubah URI, HTTP Method, Route Name, atau struktur parameter *request* yang sudah terdaftar di `routes/web.php`, `routes/console.php`, dan `routes.json`.
+- **JANGAN** mengubah struktur *JSON response* pada *endpoint* internal (terutama yang dipanggil via AJAX oleh `chatedp`, `reports/query-builder`, `reports/report-builder`, `reports/endpoint-api`, dan `settings`).
+- Jika menambahkan *Middleware* (seperti proteksi Role/Permission), pastikan tidak memblokir komunikasi internal antar-modul yang sah.
+
+## 3. Non-Destructive Database & Multi-Connection Safety
+- **DILARANG** mengubah atau menghapus migrasi lama. Setiap penambahan *index*, kolom *incremental sync*, atau tabel *pivot* (untuk *Role/Share*) **WAJIB** menggunakan file *migration* baru yang bersifat *non-destructive* (aman dijalankan tanpa menghapus data).
+- **DILARANG** menjalankan perintah destruktif seperti `migrate:fresh`, `migrate:reset`, `db:wipe`, atau `DROP TABLE`.
+- **JAGA KEAMANAN KONEKSI SUMBER:** Koneksi ke database eksternal/sumber dan OData V4 hanya boleh melakukan operasi **READ (`SELECT`)**. Operasi **WRITE (`INSERT`, `UPDATE`, `UPSERT`)** hanya boleh dilakukan pada database lokal (Data Warehouse).
+
+## 4. Memory & Server Resource Discipline (Hemat RAM & CPU)
+- **DILARANG** menggunakan `.get()` atau `.all()` tanpa batasan pada tabel transaksi, master data besar, atau saat proses sinkronisasi.
+- **WAJIB** menggunakan `DB::disableQueryLog()`, `.cursor()`, `.lazy()`, atau `.chunkById()` untuk seluruh proses sinkronisasi terjadwal dan *export* Excel.
+- Gunakan *batching* (`upsert` / `insert` per 500–1.000 baris) dan pastikan *job* berat berjalan secara *asynchronous* melalui *Queue Worker* (`run-worker.bat`) serta dilengkapi `.withoutOverlapping()` pada Scheduler (`run-scheduler.bat` / `routes/console.php`).
+
+## 5. AI Module (`chatedp` & OpenRouter) Security Guardrails
+- **READ-ONLY AI SQL:** Setiap kueri SQL yang di-*generate* oleh AI berdasarkan metadata tabel (`settings/ai/metadata`) **WAJIB** divalidasi di sisi *backend*. Tolak secara otomatis semua *statement* selain `SELECT` (blokir `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `TRUNCATE`, `GRANT`, `EXEC`).
+- **AUTO-LIMIT & CACHE:** Wajib menyematkan batas baris otomatis (misal `LIMIT 100`) pada kueri AI yang tidak memiliki klausa `LIMIT`, dan wajib menyimpan metadata skema tabel di dalam `Cache` agar tidak membebani database di setiap *request chat*.
+- **DATA SCOPING:** AI hanya boleh mengakses dan membaca skema tabel yang diizinkan sesuai *Role* dari user yang sedang login.
+
+## 6. Deployment & Environment Integrity
+- **JANGAN** menyentuh atau merusak konfigurasi *deployment* yang ada pada `.cpanel.yml`, `deploy.sh`, `public/.htaccess`, dan `.htaccess` di *root*.
+- **JANGAN** membuat file *script* pengujian atau *dump* (`*.php` atau `*.json`) di dalam folder `public/`. Seluruh utilitas sistem harus berada di belakang autentikasi Controller atau melalui `Artisan Console Command`.
+
+## 7. Execution Protocol (Protokol Kerja AI)
+1. **Analyze First:** Baca dan pahami kode pada file terkait sebelum memberikan solusi.
+2. **Plan & Confirm:** Jelaskan secara singkat file apa yang akan diubah, baris/fungsi mana yang terdampak, dan alasan optimasinya. **Tunggu persetujuan user** sebelum menerapkan perubahan pada banyak file.
+3. **Incremental Changes:** Lakukan perubahan secara bertahap (satu fitur/modul per satu waktu) dan pastikan *backward-compatibility* tetap terjaga 100%.

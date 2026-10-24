@@ -91,6 +91,16 @@ class SyncService
         $destConnection = $this->connectionService->resolveConnectionName($destConnKey);
         Log::info("Sync [{$entityKey}]: Resolved destination connection to '{$destConnection}'");
 
+        // Disable query log to prevent memory leaks during long-running batch synchronization
+        DB::disableQueryLog();
+        if ($destConnection) {
+            try {
+                DB::connection($destConnection)->disableQueryLog();
+            } catch (\Throwable $e) {
+                // Ignore connection-specific logging errors
+            }
+        }
+
         $workerId = $workerId ?? uniqid("worker_{$entityKey}_");
 
         // Create a log record
@@ -444,8 +454,15 @@ class SyncService
                 $this->odataService->resetPersistentHttp();
             } else if (in_array($sourceConnection['type'], \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes())) {
                 // Relational DB Source
-                // Using Laravel's DB chunking
+                // Using cursor streaming / chunking for low memory footprint
                 $resolvedSourceConn = $this->connectionService->resolveConnectionName($sourceConnKey);
+                if ($resolvedSourceConn) {
+                    try {
+                        DB::connection($resolvedSourceConn)->disableQueryLog();
+                    } catch (\Throwable $e) {
+                        // Ignore connection-specific logging errors
+                    }
+                }
                 $query = DB::connection($resolvedSourceConn)->table($odataEntity);
 
                 // Apply custom filters for DB sources
@@ -494,35 +511,56 @@ class SyncService
                 $totalRecordsCount = $query->count();
                 $progressCallback(0, $totalRecordsCount);
 
-                $chunkSize = $entity['batch_size'] ?? 5000;
+                $chunkSize = min(1000, max(100, (int) ($entity['batch_size'] ?? 1000)));
 
-                $entityConfig = $this->entityConfigService->get($entityKey);
-                $primaryKeys = $entityConfig['primary_keys'] ?? null;
-                $chunkColumn = 'id';
-                if (!empty($primaryKeys) && is_array($primaryKeys) && count($primaryKeys) > 0) {
-                    $chunkColumn = $primaryKeys[0];
-                }
-
-                // Use chunkById with the correct primary key to prevent extremely slow OFFSET pagination
+                // Prefer streaming with cursor() for low memory footprint, with fallback to chunkById/chunk
                 try {
-                    $query->chunkById($chunkSize, function ($records) use ($processChunkCallback, &$fetchedCount, $progressCallback, $totalRecordsCount) {
-                        $arr = $records->map(fn($record) => (array) $record)->toArray();
-                        $processChunkCallback($arr);
+                    $batch = [];
+                    foreach ($query->cursor() as $record) {
+                        $batch[] = (array) $record;
+                        if (count($batch) >= $chunkSize) {
+                            $processChunkCallback($batch);
+                            $progressCallback($fetchedCount, $totalRecordsCount);
+                            $batch = [];
+                        }
+                    }
+                    if (!empty($batch)) {
+                        $processChunkCallback($batch);
                         $progressCallback($fetchedCount, $totalRecordsCount);
-                    }, $chunkColumn);
-                } catch (\Exception $e) {
-                    // Fallback if no 'id' column. chunk() requires an orderBy clause
-                    $firstRow = DB::connection($resolvedSourceConn)->table($odataEntity)->first();
-                    $firstCol = $firstRow ? array_key_first((array) $firstRow) : null;
-                    if ($firstCol) {
-                        $query->orderBy($firstCol);
+                        $batch = [];
+                    }
+                } catch (\Throwable $cursorException) {
+                    Log::warning("Sync [{$entityKey}]: Cursor stream failed, falling back to chunkById: " . $cursorException->getMessage());
+
+                    $entityConfig = $this->entityConfigService->get($entityKey);
+                    $primaryKeys = $entityConfig['primary_keys'] ?? null;
+                    $chunkColumn = 'id';
+                    if (!empty($primaryKeys) && is_array($primaryKeys) && count($primaryKeys) > 0) {
+                        $chunkColumn = $primaryKeys[0];
                     }
 
-                    $query->chunk($chunkSize, function ($records) use ($processChunkCallback, &$fetchedCount, $progressCallback, $totalRecordsCount) {
-                        $arr = $records->map(fn($record) => (array) $record)->toArray();
-                        $processChunkCallback($arr);
-                        $progressCallback($fetchedCount, $totalRecordsCount);
-                    });
+                    try {
+                        $query->chunkById($chunkSize, function ($records) use ($processChunkCallback, &$fetchedCount, $progressCallback, $totalRecordsCount) {
+                            $arr = $records->map(fn($record) => (array) $record)->toArray();
+                            $processChunkCallback($arr);
+                            $progressCallback($fetchedCount, $totalRecordsCount);
+                            unset($arr, $records);
+                        }, $chunkColumn);
+                    } catch (\Exception $e) {
+                        // Fallback if no chunkColumn exists
+                        $firstRow = DB::connection($resolvedSourceConn)->table($odataEntity)->first();
+                        $firstCol = $firstRow ? array_key_first((array) $firstRow) : null;
+                        if ($firstCol) {
+                            $query->orderBy($firstCol);
+                        }
+
+                        $query->chunk($chunkSize, function ($records) use ($processChunkCallback, &$fetchedCount, $progressCallback, $totalRecordsCount) {
+                            $arr = $records->map(fn($record) => (array) $record)->toArray();
+                            $processChunkCallback($arr);
+                            $progressCallback($fetchedCount, $totalRecordsCount);
+                            unset($arr, $records);
+                        });
+                    }
                 }
             } else if ($sourceType === 'sharepoint') {
                 $provider = app(\App\Services\Connections\Providers\SharePointProvider::class);

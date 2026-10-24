@@ -420,32 +420,56 @@ class QueryBuilderController extends Controller
 
             $sql = $this->normalizeSqlForDriver($sql, $driver);
 
+            // Check Report Cache for identical shared export parameters
+            $reportCache = app(\App\Services\ReportCacheService::class);
+            $cacheKey = $reportCache->generateCacheKey('query_builder', $connKey, $sql, [], $format);
+
+            $cachedReport = $reportCache->getCachedReport($cacheKey, $format);
+            $baseFilename = 'query_export_' . now()->format('Ymd_His');
+            $downloadName = $baseFilename . ($format === 'xlsx' ? '.xlsx' : '.csv');
+
+            if ($cachedReport) {
+                $token = Str::random(32);
+                Cache::put("query_download_{$token}", [
+                    'path'      => $cachedReport['path'],
+                    'filename'  => $downloadName,
+                    'is_cached' => true,
+                ], now()->addHour());
+
+                return response()->json([
+                    'success'   => true,
+                    'token'     => $token,
+                    'filename'  => $downloadName,
+                    'size'      => $this->formatBytes($cachedReport['size']),
+                    'cached'    => true,
+                ]);
+            }
+
+            $filePath = $reportCache->getCachePath($cacheKey, $format);
+            $writer = \Spatie\SimpleExcel\SimpleExcelWriter::create($filePath);
+
             $qrService = app(\App\Services\QueryRepositoryService::class);
-            $qrResult = $qrService->executeDynamic($connKey, $sql, []);
-            $rows = array_map(fn($r) => (array) $r, $qrResult['data']);
-            $columns = !empty($rows) ? array_keys($rows[0]) : [];
+            $cursor = $qrService->executeStream($connKey, $sql, []);
+
+            $headerAdded = false;
+            foreach ($cursor as $row) {
+                $rowArray = (array) $row;
+                if (!$headerAdded) {
+                    $writer->addHeader(array_keys($rowArray));
+                    $headerAdded = true;
+                }
+                $writer->addRow($rowArray);
+            }
+            $writer->close();
+
+            // Store in Report Cache for subsequent shared downloads
+            $reportCache->storeCachedReport($cacheKey, $filePath, $downloadName, $format);
 
             $token = Str::random(32);
-            $exportDir = storage_path('app/exports');
-            if (!is_dir($exportDir)) {
-                mkdir($exportDir, 0755, true);
-            }
-
-            $baseFilename = 'query_export_' . now()->format('Ymd_His');
-
-            if ($format === 'xlsx') {
-                $filePath = $exportDir . '/' . $baseFilename . '.xlsx';
-                $this->generateExcel($rows, $columns, $filePath);
-                $downloadName = $baseFilename . '.xlsx';
-            } else {
-                $filePath = $exportDir . '/' . $baseFilename . '.csv';
-                $this->generateCsv($rows, $columns, $filePath);
-                $downloadName = $baseFilename . '.csv';
-            }
-
             Cache::put("query_download_{$token}", [
-                'path'     => $filePath,
-                'filename' => $downloadName,
+                'path'      => $filePath,
+                'filename'  => $downloadName,
+                'is_cached' => true,
             ], now()->addHour());
 
             return response()->json([
@@ -471,7 +495,11 @@ class QueryBuilderController extends Controller
             abort(404, 'Download link has expired or file not found.');
         }
 
-        return response()->download($info['path'], $info['filename'])->deleteFileAfterSend(true);
+        $response = response()->download($info['path'], $info['filename']);
+        if (empty($info['is_cached'])) {
+            $response->deleteFileAfterSend(true);
+        }
+        return $response;
     }
 
     // --- Private Helpers ---

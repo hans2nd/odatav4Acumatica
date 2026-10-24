@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 
 class User extends Authenticatable
 {
@@ -70,12 +71,19 @@ class User extends Authenticatable
     protected $cachedPermissionsList = null;
 
     /**
-     * Clear request-level authorization caches.
+     * Clear request-level and persistent authorization caches.
      */
     public function clearAuthorizationCache(): void
     {
         $this->cachedIsSuperAdmin = null;
         $this->cachedPermissionsList = null;
+
+        try {
+            $ver = (int) Cache::get("user_perm_ver_{$this->id}", 1);
+            Cache::put("user_perm_ver_{$this->id}", $ver + 1, 86400 * 30);
+        } catch (\Throwable $e) {
+            Cache::forget("user_perm_ver_{$this->id}");
+        }
     }
 
     /**
@@ -100,10 +108,15 @@ class User extends Authenticatable
             return $this->cachedIsSuperAdmin;
         }
 
-        $this->cachedIsSuperAdmin = $this->roles()
-            ->where('roles.is_active', true)
-            ->where('roles.is_superadmin', true)
-            ->exists();
+        $userPermVer = Cache::get("user_perm_ver_{$this->id}", 1);
+        $cacheKey = "user_is_superadmin_{$this->id}_v{$userPermVer}";
+
+        $this->cachedIsSuperAdmin = Cache::remember($cacheKey, 3600, function () {
+            return $this->roles()
+                ->where('roles.is_active', true)
+                ->where('roles.is_superadmin', true)
+                ->exists();
+        });
 
         return $this->cachedIsSuperAdmin;
     }
@@ -114,14 +127,19 @@ class User extends Authenticatable
     protected function loadEffectivePermissions(): void
     {
         if ($this->cachedPermissionsList !== null) {
-            return; // Already loaded
+            return; // Already loaded in request memory
         }
 
-        $roleIds = $this->roles()->where('roles.is_active', true)->pluck('roles.id');
+        $userPermVer = Cache::get("user_perm_ver_{$this->id}", 1);
+        $cacheKey = "user_perms_{$this->id}_v{$userPermVer}";
 
-        $this->cachedPermissionsList = \App\Models\Permission::whereHas('roles', function ($q) use ($roleIds) {
-            $q->whereIn('roles.id', $roleIds);
-        })->pluck('permission_key')->unique()->values()->toArray();
+        $this->cachedPermissionsList = Cache::remember($cacheKey, 3600, function () {
+            $roleIds = $this->roles()->where('roles.is_active', true)->pluck('roles.id');
+
+            return \App\Models\Permission::whereHas('roles', function ($q) use ($roleIds) {
+                $q->whereIn('roles.id', $roleIds);
+            })->pluck('permission_key')->unique()->values()->toArray();
+        });
     }
 
     /**

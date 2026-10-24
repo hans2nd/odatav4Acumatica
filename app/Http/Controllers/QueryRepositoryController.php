@@ -199,40 +199,84 @@ class QueryRepositoryController extends Controller
         try {
             $connection = Connection::findOrFail($request->database_connection_id);
             $bindings = $request->input('bindings', []);
+            $sql = $request->sql_text;
+            $format = $request->input('format');
 
-            $result = $this->queryService->executePreview($connection, $request->sql_text, $bindings);
-
-            $rows = $result['data'];
-            $columns = array_column($result['columns'], 'name');
-
-            $token = Str::random(32);
-            $exportDir = storage_path('app/exports');
-            if (!is_dir($exportDir)) {
-                mkdir($exportDir, 0755, true);
-            }
+            $reportCache = app(\App\Services\ReportCacheService::class);
+            $cacheKey = $reportCache->generateCacheKey('query_repository', $connection->key, $sql, $bindings, $format);
 
             $baseFilename = 'query_export_' . now()->format('Ymd_His');
+            $downloadName = $baseFilename . ($format === 'xlsx' ? '.xlsx' : '.csv');
 
-            if ($request->input('format') === 'xlsx') {
-                $filePath = $exportDir . '/' . $baseFilename . '.xlsx';
-                $this->generateExcel($rows, $columns, $filePath);
-                $downloadName = $baseFilename . '.xlsx';
-            } else {
-                $filePath = $exportDir . '/' . $baseFilename . '.csv';
-                $this->generateCsv($rows, $columns, $filePath);
-                $downloadName = $baseFilename . '.csv';
+            $cachedReport = $reportCache->getCachedReport($cacheKey, $format);
+            if ($cachedReport) {
+                $token = Str::random(32);
+                Cache::put("query_download_{$token}", [
+                    'path'      => $cachedReport['path'],
+                    'filename'  => $downloadName,
+                    'is_cached' => true,
+                ], now()->addHour());
+
+                return response()->json([
+                    'success'   => true,
+                    'token'     => $token,
+                    'filename'  => $downloadName,
+                    'size'      => $this->formatBytes($cachedReport['size']),
+                    'cached'    => true,
+                ]);
             }
 
+            // Convert {{param}} to ? and extract pdo bindings
+            $parsedSql = $sql;
+            $pdoBindings = [];
+            if (preg_match_all('/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/', $sql, $matches) > 0) {
+                foreach ($matches[1] as $param) {
+                    $rawVal = $bindings[$param] ?? null;
+                    if ($rawVal === '' || $rawVal === null) {
+                        if (str_contains(strtolower($param), 'date')) {
+                            $rawVal = date('Y-m-d');
+                        } else {
+                            $rawVal = '%';
+                        }
+                    }
+                    $pdoBindings[] = $rawVal;
+                }
+                $parsedSql = preg_replace('/\{\{\s*[a-zA-Z0-9_]+\s*\}\}/', '?', $sql);
+            } else {
+                $pdoBindings = $bindings;
+            }
+
+            $filePath = $reportCache->getCachePath($cacheKey, $format);
+            $writer = \Spatie\SimpleExcel\SimpleExcelWriter::create($filePath);
+
+            $cursor = $this->queryService->executeStream($connection->key, $parsedSql, $pdoBindings);
+
+            $headerAdded = false;
+            foreach ($cursor as $row) {
+                $rowArray = (array) $row;
+                if (!$headerAdded) {
+                    $writer->addHeader(array_keys($rowArray));
+                    $headerAdded = true;
+                }
+                $writer->addRow($rowArray);
+            }
+            $writer->close();
+
+            // Store in Report Cache for subsequent shared downloads
+            $reportCache->storeCachedReport($cacheKey, $filePath, $downloadName, $format);
+
+            $token = Str::random(32);
             Cache::put("query_download_{$token}", [
-                'path' => $filePath,
-                'filename' => $downloadName,
+                'path'      => $filePath,
+                'filename'  => $downloadName,
+                'is_cached' => true,
             ], now()->addHour());
 
             return response()->json([
-                'success' => true,
-                'token' => $token,
+                'success'  => true,
+                'token'    => $token,
                 'filename' => $downloadName,
-                'size' => $this->formatBytes(filesize($filePath)),
+                'size'     => $this->formatBytes(filesize($filePath)),
             ]);
         } catch (\Throwable $e) {
             Log::error('Query Repository export failed', ['error' => $e->getMessage()]);
@@ -248,7 +292,11 @@ class QueryRepositoryController extends Controller
             abort(404, 'Download link has expired or file not found.');
         }
 
-        return response()->download($info['path'], $info['filename'])->deleteFileAfterSend(true);
+        $response = response()->download($info['path'], $info['filename']);
+        if (empty($info['is_cached'])) {
+            $response->deleteFileAfterSend(true);
+        }
+        return $response;
     }
 
     public function getColumns($id)

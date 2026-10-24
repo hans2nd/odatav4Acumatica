@@ -10,7 +10,9 @@ class MySqlBatchStrategy implements BatchStrategyInterface
     public function calculateChunkSize(int $columnCount): int
     {
         $maxParams = 60000;
-        return max(intdiv($maxParams, max($columnCount, 1)), 1);
+        $calculated = intdiv($maxParams, max($columnCount, 1));
+        // Cap chunk size between 100 and 1000 rows to ensure low memory footprint and prevent packet overflow
+        return max(100, min(1000, $calculated));
     }
 
     public function executeUpsert(string $connectionName, string $tableName, array $chunk, array|string $uniqueKey, array $columnsToUpdate): int

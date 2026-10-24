@@ -10,7 +10,8 @@ class SqlServerBatchStrategy implements BatchStrategyInterface
     public function calculateChunkSize(int $columnCount): int
     {
         $maxParams = 2000;
-        return max(intdiv($maxParams, max($columnCount, 1)), 1);
+        $calculated = intdiv($maxParams, max($columnCount, 1));
+        return max(1, min(1000, $calculated));
     }
 
     public function executeUpsert(string $connectionName, string $tableName, array $chunk, array|string $uniqueKey, array $columnsToUpdate): int

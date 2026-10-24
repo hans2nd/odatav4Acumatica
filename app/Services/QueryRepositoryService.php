@@ -206,6 +206,7 @@ class QueryRepositoryService
      */
     public function executeForAnalytics(string $sql, array $bindings = [], int $limit = 500): array
     {
+        $limit = max(1, min($limit, 1000));
         $this->validateSql($sql);
 
         // Administrator resolves the AI connection server-side

@@ -1,2 +1,0 @@
-<?php
-// Deleted for security reasons
