@@ -184,7 +184,7 @@ class SyncStateRepository implements SyncStateRepositoryInterface
     /**
      * Atomically acquire a distributed lock in the database.
      */
-    public function acquireLock(int $scheduleId, string $owner, int $ttlMinutes = 5): bool
+    public function acquireLock(int $scheduleId, string $owner, int $ttlMinutes = 30): bool
     {
         $now = Carbon::now();
         $expiresAt = $now->copy()->addMinutes($ttlMinutes);
@@ -207,7 +207,7 @@ class SyncStateRepository implements SyncStateRepositoryInterface
     /**
      * Heartbeat to extend the distributed lock TTL.
      */
-    public function heartbeatLock(int $scheduleId, string $owner, int $ttlMinutes = 5): bool
+    public function heartbeatLock(int $scheduleId, string $owner, int $ttlMinutes = 30): bool
     {
         $now = Carbon::now();
         $expiresAt = $now->copy()->addMinutes($ttlMinutes);

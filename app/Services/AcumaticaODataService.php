@@ -35,7 +35,7 @@ class AcumaticaODataService
         $this->odataAuth = config('acumatica.odata_auth', 'basic');
         $this->includeTenantInODataUrl = (bool) config('acumatica.odata_include_tenant', false);
         $this->pageSize = config('acumatica.page_size', 500);
-        $this->timeout = config('acumatica.timeout', 300);
+        $this->timeout = config('acumatica.timeout', 600);
     }
 
     /**

@@ -129,28 +129,32 @@ class SystemUtilityController extends Controller
     public function runWebCron(Request $request)
     {
         try {
-            // Allow long-running operations without PHP web execution timeout
-            @set_time_limit(0);
-            @ini_set('max_execution_time', '0');
+            // Keep execution fast so web response returns in < 1 second and never hits 504 Gateway Timeout
+            @set_time_limit(30);
 
             // 1. Process Native Schedules
             Artisan::call('schedule:run');
             $scheduleOutput = Artisan::output();
 
-            // 2. Process Queue for max 50 seconds to avoid HTTP timeout
-            Artisan::call('queue:work', [
-                '--stop-when-empty' => true,
-                '--max-time' => 50,
-                '--memory' => 1024
-            ]);
-            
-            $queueOutput = Artisan::output();
+            // 2. Dispatch background queue worker asynchronously (non-blocking)
+            // NEVER run queue:work synchronously inside an HTTP request because
+            // large sync jobs take 10-30 minutes and will be killed by Nginx/LiteSpeed 504 Gateway Timeout.
+            $workerDispatched = false;
+            try {
+                app(\App\Services\QueueWorkerService::class)->startBackgroundWorker();
+                $workerDispatched = true;
+            } catch (\Throwable $e) {
+                // If hosting disabled exec/popen in web PHP, cPanel Cron Job takes over.
+            }
 
             return response()->json([
                 'success' => true,
                 'message' => 'Web Cron executed successfully',
                 'schedule_output' => $scheduleOutput ?: 'No schedules due.',
-                'queue_output' => $queueOutput ?: 'No jobs processed.'
+                'worker_dispatched' => $workerDispatched,
+                'note' => $workerDispatched 
+                    ? 'Queue worker spawned in background process.' 
+                    : 'Queue worker is handled by cPanel Cron Job.'
             ]);
         } catch (\Exception $e) {
             return response()->json([

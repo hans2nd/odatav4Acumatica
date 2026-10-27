@@ -58,7 +58,19 @@ class QueueWorkerService
                 }
             } else {
                 // Detached process in Linux/Unix
-                exec("{$command} > /dev/null 2>&1 &");
+                if (function_exists('exec')) {
+                    @exec("nohup {$command} > /dev/null 2>&1 &");
+                } elseif (function_exists('proc_open')) {
+                    $descriptors = [
+                        0 => ['pipe', 'r'],
+                        1 => ['file', '/dev/null', 'w'],
+                        2 => ['file', '/dev/null', 'w']
+                    ];
+                    $proc = @proc_open("nohup {$command} &", $descriptors, $pipes);
+                    if (is_resource($proc)) {
+                        @proc_close($proc);
+                    }
+                }
             }
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::warning("QueueWorkerService: Failed to spawn background worker. The server might have disabled exec/popen. Please run the worker manually using Supervisor.", ['error' => $e->getMessage()]);

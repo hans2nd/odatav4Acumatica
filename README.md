@@ -168,6 +168,11 @@ A powerful synchronization engine built on Laravel to bridge Acumatica ERP (ODat
 - **UI/UX: Dynamic Connection Validation**: The application now strictly validates connections before initiating syncs and warns users via `SweetAlert` if a connection is broken, rather than silently falling back to a default configuration.
 - **UI/UX: Fixed Toggle Displays**: Added Eloquent Accessors to seamlessly translate Cron expressions back into human-readable Dropdowns for frequency and interval settings on the UI.
 
+### v1.6.2 (Web Cron 504 Gateway Timeout & Background Worker Fix)
+- **Resolved 504 Gateway Timeout on `/sys-cron`**: Fixed an issue where `SystemUtilityController::runWebCron()` ran `Artisan::call('queue:work')` synchronously inside the HTTP web request. Because large synchronization jobs take 10+ minutes, Nginx Reverse Proxy terminated the connection after its 360-second (6-minute) `proxy_read_timeout` with `504 Gateway Timeout`.
+- **Asynchronous Worker Dispatch**: Refactored `runWebCron()` to dispatch background workers non-blockingly via `QueueWorkerService::startBackgroundWorker()`, allowing the HTTP request to return in `< 1s` while queue execution continues detached in the background or via cPanel CLI Cron.
+- **Extended Distributed Lock TTL**: Increased database distributed lock and heartbeat TTL from 5 minutes to 30 minutes in `SyncStateRepository.php` to prevent lock expiration during heavy data transfers.
+
 ---
 
 ## Production / Hosting Deployment Guide (cPanel, LiteSpeed & Dedicated Hosting)
