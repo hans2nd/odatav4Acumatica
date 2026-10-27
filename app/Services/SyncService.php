@@ -101,6 +101,10 @@ class SyncService
             }
         }
 
+        // Remove execution time limit so large entities are not killed mid-execution
+        @set_time_limit(0);
+        @ini_set('max_execution_time', '0');
+
         $workerId = $workerId ?? uniqid("worker_{$entityKey}_");
 
         // Create a log record
@@ -284,6 +288,9 @@ class SyncService
             $processChunkCallback = function ($recordsChunk) use (&$fetchedCount, &$insertedCount, &$hasData, &$totalRecordsCount, $tableName, $isIncremental, $isAppendOnly, $customFilters, $syncJobId, $destConnection, $log, $schedule, $syncStartTime, $entityKey, $workerId, $isFullSync, $stagingTableName, $writeTableName, $entity) {
                 // Heartbeat to extend the distributed lock
                 $this->syncStateService->heartbeatSynchronizationLock($schedule->id, $workerId);
+
+                // Extend PHP execution timer on each active batch so ongoing syncs never get killed by timeout
+                @set_time_limit(600);
 
                 // Check Execution Control Signals (Pause, Stop, Cancel)
                 $this->checkForControlSignals($log);

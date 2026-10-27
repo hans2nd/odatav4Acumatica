@@ -58,8 +58,33 @@ class SyncEntityJob implements ShouldQueue, ShouldBeUnique
         return $this->entityKey;
     }
 
+    /**
+     * Dynamic timeout based on entity type:
+     * - Master data: 600s (10 minutes)
+     * - Transaction data: 3600s (60 minutes)
+     * - Default: 1800s (30 minutes)
+     */
+    public function timeout(): int
+    {
+        try {
+            $config = app(\App\Services\EntityConfigService::class)->get($this->entityKey);
+            if ($config && isset($config['timeout'])) {
+                return (int) $config['timeout'];
+            }
+            if ($config && ($config['type'] ?? '') === 'transaction') {
+                return 3600;
+            }
+        } catch (\Throwable) {}
+
+        return 1800;
+    }
+
     public function handle(SyncService $syncService): void
     {
+        // Remove execution time limit so large entities are not killed mid-execution
+        @set_time_limit(0);
+        @ini_set('max_execution_time', '0');
+
         // Disable query log to prevent memory leaks during long-running batch jobs
         \Illuminate\Support\Facades\DB::disableQueryLog();
 

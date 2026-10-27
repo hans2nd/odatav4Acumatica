@@ -15,6 +15,21 @@ A powerful synchronization engine built on Laravel to bridge Acumatica ERP (ODat
 
 ## Changelog
 
+### v1.6.1 - October 27, 2026 (Sync Engine Timeout Hardening, Stuck Job Recovery & Hosting Compatibility)
+- **Stuck Job & Lock Recovery Engine**:
+  - Implemented `POST /sync/{entity}/reset-stuck` (`SyncController::resetStuckJob`) to safely abort hanging `SyncJob`s (`pending`/`running`), signal cancellation to active `SyncLog`s, release distributed locks on `sync_states`, and purge Laravel `laravel_unique_job` cache locks.
+  - Implemented `GET /sync/{entity}/status` (`SyncController::entitySyncStatus`) to return real-time lock ownership, lease expiration, active job metrics, and latest execution logs.
+  - Upgraded Single-Entity Synchronization Modals on both `transactions/show.blade.php` and `master-data/show.blade.php` with:
+    - Real-time progress bar, stage indicator, processed rows counter, and elapsed time display.
+    - Automatic stuck job / lock detection banner with **Reset & Buka Kunci (Force Unlock)** and **Pantau Status (Monitor)** actions.
+    - Graceful handling of HTTP 423 / 429 (`already_running`) responses, displaying direct unlock actions instead of dead-end errors.
+    - Client-side Watchdog Timer alerting the user if no rows are processed for > 45 seconds due to silent background worker termination.
+- **Dynamic Execution Timeout & Hosting Hardening (Laragon / Jagoan Hosting / LiteSpeed)**:
+  - **LiteSpeed & Web Server Timeout Bypass**: Added `RewriteRule .* - [E=noconntimeout:1]` and `[E=noabort:1]` in `public/.htaccess` to prevent LiteSpeed Web Server and CloudLinux from killing PHP sync/cron processes at 120 seconds.
+  - **QueueWorkerService CLI PHP Resolution**: Upgraded `QueueWorkerService::startBackgroundWorker()` to dynamically resolve the CLI PHP binary path (`PHP_BINARY` / `php.exe`), escaping arguments with `escapeshellarg()` to ensure background workers spawn cleanly on Windows/Laragon and Linux even when `php` is not registered in system PATH.
+  - **Dynamic Queue Job Timeout**: Implemented dynamic `timeout()` method on `SyncEntityJob` (600s for master data, 3600s for transaction data, or entity-specific configurations).
+  - **PHP Execution Time Limits**: Added `@set_time_limit(0)` and `@ini_set('max_execution_time', '0')` in `SyncEntityJob::handle` and `SystemUtilityController::runWebCron`. Added per-batch timer extensions (`@set_time_limit(600)`) in `SyncService::sync` on every chunk processed, guaranteeing active sync pipelines never hit execution time limits.
+
 ### v1.6.0 - October 24, 2026 (Enterprise Performance, Security Hardening, Streaming Architecture & RBAC Optimization)
 - **Security Audit & Public Cleanup**:
   - Eliminated high-risk exposed debugging scripts and sensitive connection dumps from the `public/` directory (`test_ai.php`, `benchmark.php`, `migrate.php`, `dump_connections.php`, `get_connections.php`, `verify*.php`, `connections_dump.json`).
@@ -152,3 +167,34 @@ A powerful synchronization engine built on Laravel to bridge Acumatica ERP (ODat
 - **UI/UX: System Utilities**: Added a new "System Utilities" tab for quick deployment commands (`migrate`, `optimize`, `storage:link`), including clear copy-paste instructions for VPS Cronjob setup.
 - **UI/UX: Dynamic Connection Validation**: The application now strictly validates connections before initiating syncs and warns users via `SweetAlert` if a connection is broken, rather than silently falling back to a default configuration.
 - **UI/UX: Fixed Toggle Displays**: Added Eloquent Accessors to seamlessly translate Cron expressions back into human-readable Dropdowns for frequency and interval settings on the UI.
+
+---
+
+## Production / Hosting Deployment Guide (cPanel, LiteSpeed & Dedicated Hosting)
+
+When deploying to production hosting environments such as **Jagoan Hosting**, **cPanel**, or servers utilizing **LiteSpeed Web Server / CloudLinux**:
+
+### 1. Web Server Timeout Protection (`.htaccess`)
+LiteSpeed Web Server automatically kills long-running HTTP scripts after 120 seconds unless explicitly exempted. The `public/.htaccess` file includes directives to prevent connection aborts and timeout drops during web-triggered synchronization:
+```apache
+RewriteEngine On
+
+# Prevent LiteSpeed / CloudLinux Web Server timeout & abort for long-running sync/cron
+RewriteRule .* - [E=noconntimeout:1]
+RewriteRule .* - [E=noabort:1]
+```
+
+### 2. Recommended: Native cPanel Cron Jobs
+Because system execution functions like `exec()` or `popen()` are often disabled in shared/cloud hosting environments for security (`disable_functions`), background queue workers cannot always be spawned automatically from web requests. Setting up native cPanel Cron Jobs is strongly recommended:
+
+1. In cPanel, navigate to **Cron Jobs** (Tugas Cron).
+2. Add a new cron job scheduled to run **Every Minute** (`* * * * *`):
+   ```bash
+   /usr/local/bin/php /home/USERNAME/public_html/artisan schedule:run >> /dev/null 2>&1
+   ```
+3. To process synchronization queues asynchronously without web server execution limits:
+   ```bash
+   /usr/local/bin/php /home/USERNAME/public_html/artisan queue:work --stop-when-empty --memory=1024 --timeout=3600 >> /dev/null 2>&1
+   ```
+*(Replace `/usr/local/bin/php` with your hosting's PHP CLI path and `/home/USERNAME/public_html` with your project root path).*
+

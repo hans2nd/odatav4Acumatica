@@ -73,6 +73,8 @@ Route::middleware(['auth'])->group(function () {
     Route::middleware(['permission:sync_engine.manage'])->group(function () {
         Route::post('/sync/all', [SyncController::class, 'syncAll'])->name('sync.all');
         Route::post('/sync/control/{id}', [SyncController::class, 'control'])->name('sync.control');
+        Route::get('/sync/{entity}/status', [SyncController::class, 'entitySyncStatus'])->name('sync.entity-status');
+        Route::post('/sync/{entity}/reset-stuck', [SyncController::class, 'resetStuckJob'])->name('sync.reset-stuck');
         Route::post('/sync/{entity}', [SyncController::class, 'syncEntity'])->name('sync.entity');
 
         // Scheduler (Manage)

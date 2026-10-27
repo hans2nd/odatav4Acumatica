@@ -17,7 +17,7 @@
             </p>
         </div>
     </div>
-    <button onclick="syncEntity('{{ $entityKey }}', this)"
+    <button onclick="openShowSyncModal()"
             class="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-brand-600 text-white text-label-md hover:bg-brand-700 transition-all duration-200 active:scale-[0.97] shadow-sm">
         <span class="material-symbols-outlined text-[16px]">sync</span> Sync Now
     </button>
@@ -86,4 +86,461 @@
         @endif
     </div>
 @endif
+
+{{-- Sync Filter Modal --}}
+<div id="showSyncModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/40 backdrop-blur-sm transition-all duration-200 opacity-0">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col transform transition-all duration-200 scale-95 border border-surface-200/60 max-h-[90vh]">
+        <div class="px-6 py-4 border-b border-surface-100 flex justify-between items-center bg-surface-50/50">
+            <div>
+                <h2 class="text-h2 text-surface-800">Sync <span class="text-brand-600">{{ $config['description'] }}</span></h2>
+                <p class="text-body-sm text-surface-500 mt-0.5">Konfigurasi filter atau pantau & reset status proses sinkronisasi.</p>
+            </div>
+            <button onclick="closeShowSyncModal()" class="text-surface-400 hover:text-surface-700 p-1.5 rounded-xl hover:bg-surface-100 transition-all duration-200">
+                <span class="material-symbols-outlined text-[20px]">close</span>
+            </button>
+        </div>
+        
+        <div class="p-6 overflow-y-auto space-y-4 flex-1">
+            {{-- Stuck Job / Active Lock Detection Banner --}}
+            <div id="showSyncStuckBanner" class="hidden p-4 rounded-xl bg-amber-50/90 border border-amber-200 text-amber-900 transition-all animate-fade-up">
+                <div class="flex items-start gap-3">
+                    <span class="material-symbols-outlined text-amber-600 text-2xl mt-0.5">warning</span>
+                    <div class="flex-1">
+                        <h4 class="text-label-md font-semibold text-amber-900" id="stuckBannerTitle">Sinkronisasi Sedang Berjalan atau Terkunci</h4>
+                        <p class="text-body-sm text-amber-700 mt-0.5" id="stuckBannerDesc">
+                            Terdapat antrean proses sinkronisasi yang belum selesai atau lock distributed masih aktif. Jika proses sebelumnya terhenti atau timeout (misal batas waktu eksekusi web 2 menit), Anda dapat mereset kunci proses ini.
+                        </p>
+                        <div class="flex items-center gap-2 mt-3 flex-wrap">
+                            <button type="button" onclick="resetShowSyncStuck()" id="btnResetStuck" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-label-sm font-medium transition shadow-sm">
+                                <span class="material-symbols-outlined text-[16px]">lock_reset</span> Reset & Buka Kunci (Force Unlock)
+                            </button>
+                            <button type="button" onclick="monitorActiveJob()" id="btnMonitorJob" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-lg text-label-sm font-medium transition border border-amber-300">
+                                <span class="material-symbols-outlined text-[16px]">visibility</span> Pantau Status
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {{-- Progress Box --}}
+            <div id="showSyncProgressContainer" class="hidden p-4 rounded-xl bg-surface-50 border border-surface-200/80 transition-all space-y-3">
+                <div class="flex justify-between items-center">
+                    <div class="flex items-center gap-2">
+                        <span id="showSyncProgressIcon" class="material-symbols-outlined text-brand-600 text-[18px] spin">sync</span>
+                        <span id="showSyncProgressLabel" class="text-label-sm text-surface-800 font-semibold">Menginisialisasi proses...</span>
+                    </div>
+                    <span id="showSyncProgressPercent" class="text-label-md text-brand-700 font-bold font-mono">0%</span>
+                </div>
+
+                {{-- Progress Bar --}}
+                <div class="w-full bg-surface-200 rounded-full h-2.5 overflow-hidden">
+                    <div id="showSyncProgressBar" class="bg-gradient-to-r from-brand-600 to-brand-400 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+
+                <div class="flex justify-between items-center text-label-sm text-surface-500 pt-1">
+                    <span id="showSyncStatDetails">0 / 0 baris diproses</span>
+                    <span id="showSyncElapsedTime" class="font-mono text-surface-400">0s</span>
+                </div>
+
+                {{-- Watchdog Warning --}}
+                <div id="showSyncWatchdogAlert" class="hidden p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-body-sm flex items-center justify-between gap-3 animate-fade-up">
+                    <div class="flex items-center gap-2">
+                        <span class="material-symbols-outlined text-red-500 text-[18px]">timer_off</span>
+                        <span>Tidak ada respons pembaruan data selama >45 detik. Pekerja kemungkinan mati/timeout.</span>
+                    </div>
+                    <button type="button" onclick="resetShowSyncStuck()" class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-label-sm whitespace-nowrap shadow-sm">
+                        Reset Job Sekarang
+                    </button>
+                </div>
+            </div>
+
+            {{-- Filter Section --}}
+            <div id="showFilterSection" class="space-y-4">
+                <div class="flex justify-between items-end">
+                    <div>
+                        <label class="text-label-lg text-surface-700 font-semibold">Custom Filters (Optional)</label>
+                        <p class="text-label-sm text-surface-400">Filter data spesifik yang ingin disinkronkan dari Acumatica.</p>
+                    </div>
+                    <button type="button" onclick="addShowFilterRow()" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-100 text-surface-700 text-label-sm hover:bg-surface-200 transition-all duration-200">
+                        <span class="material-symbols-outlined text-[14px]">add</span> Add Filter
+                    </button>
+                </div>
+                
+                <div id="showSyncLoading" class="hidden flex items-center justify-center py-4 bg-surface-50 rounded-xl border border-surface-100">
+                    <span class="material-symbols-outlined text-[20px] text-brand-500 spin mr-2">sync</span>
+                    <p class="text-label-sm text-surface-500">Mengambil daftar field dari server...</p>
+                </div>
+                
+                <div id="showFiltersContainer" class="space-y-2"></div>
+                
+                <div id="showEmptyFiltersMsg" class="py-5 text-center border-2 border-dashed border-surface-200 rounded-xl bg-surface-50/50">
+                    <span class="material-symbols-outlined text-surface-300 text-2xl mb-1 block">filter_alt_off</span>
+                    <p class="text-body-sm text-surface-400">Tidak ada filter. Seluruh data entitas akan disinkronkan.</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="px-6 py-4 border-t border-surface-100 flex justify-between items-center bg-surface-50/50">
+            <button type="button" onclick="resetShowSyncStuck()" id="btnBottomResetStuck" class="hidden inline-flex items-center gap-1.5 px-3 py-2 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-xl text-label-md transition-all duration-200 font-medium">
+                <span class="material-symbols-outlined text-[18px]">lock_reset</span> Reset Job Macet
+            </button>
+            <div class="flex items-center gap-3 ml-auto">
+                <button type="button" onclick="closeShowSyncModal()" class="px-4 py-2 rounded-xl text-surface-600 text-label-md hover:bg-surface-100 transition-all duration-200">
+                    Tutup
+                </button>
+                <button type="button" id="btnShowStartSync" onclick="executeShowSync()" class="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-brand-600 text-white text-label-md hover:bg-brand-700 transition-all duration-200 shadow-sm disabled:opacity-50">
+                    <span class="material-symbols-outlined text-[16px]">sync</span> Start Sync
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@endsection
+
+@section('scripts')
+<script>
+    const showEntityKey = @json($entityKey);
+    let showAvailableFields = [];
+    let currentPolledJobId = null;
+    let pollWatchdogTimer = null;
+    let lastProgressTime = 0;
+    let lastProcessedCount = -1;
+    let elapsedSeconds = 0;
+    let elapsedTimer = null;
+    
+    function openShowSyncModal() {
+        const modal = document.getElementById('showSyncModal');
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        setTimeout(() => {
+            modal.classList.remove('opacity-0');
+            modal.querySelector('.transform').classList.remove('scale-95');
+            modal.querySelector('.transform').classList.add('scale-100');
+        }, 10);
+        loadShowEntityFields();
+        checkEntitySyncStatus();
+    }
+    
+    function closeShowSyncModal() {
+        const modal = document.getElementById('showSyncModal');
+        modal.classList.add('opacity-0');
+        modal.querySelector('.transform').classList.add('scale-95');
+        modal.querySelector('.transform').classList.remove('scale-100');
+        setTimeout(() => {
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            document.getElementById('showFiltersContainer').innerHTML = '';
+            checkShowEmptyFilters();
+            clearInterval(pollWatchdogTimer);
+            clearInterval(elapsedTimer);
+        }, 200);
+    }
+    
+    async function checkEntitySyncStatus() {
+        try {
+            const res = await fetch(`/sync/${showEntityKey}/status`, {
+                headers: { 'Accept': 'application/json' }
+            });
+            const data = await res.json();
+            
+            const banner = document.getElementById('showSyncStuckBanner');
+            const btnBottomReset = document.getElementById('btnBottomResetStuck');
+            
+            if (data.success && data.is_running) {
+                banner.classList.remove('hidden');
+                btnBottomReset.classList.remove('hidden');
+                
+                if (data.active_job) {
+                    currentPolledJobId = data.active_job.id;
+                    document.getElementById('stuckBannerTitle').innerText = 'Sinkronisasi Sedang Berjalan / Mengantre';
+                    document.getElementById('stuckBannerDesc').innerHTML = `
+                        Job ID <strong>#${data.active_job.id}</strong> berstatus <strong>${data.active_job.status}</strong> (${data.active_job.progress}% - ${data.active_job.processed_rows || 0} baris).
+                        <br>Jika pekerja background terhenti akibat timeout (misal batas waktu eksekusi web 2 menit), klik tombol di bawah untuk membuka kunci.
+                    `;
+                } else if (data.is_locked) {
+                    document.getElementById('stuckBannerTitle').innerText = 'Lock Sinkronisasi Aktif';
+                    document.getElementById('stuckBannerDesc').innerText = `Proses dikunci oleh worker [${data.lock_owner || 'unknown'}]. Anda dapat mereset kunci ini jika worker sebelumnya mati.`;
+                }
+            } else {
+                banner.classList.add('hidden');
+                btnBottomReset.classList.add('hidden');
+            }
+        } catch (e) {
+            console.error('Failed to check sync status:', e);
+        }
+    }
+
+    async function loadShowEntityFields() {
+        const loadingEl = document.getElementById('showSyncLoading');
+        loadingEl.classList.remove('hidden');
+        
+        document.getElementById('showFiltersContainer').innerHTML = '';
+        checkShowEmptyFilters();
+        
+        try {
+            const res = await fetch(`/api/entities/${showEntityKey}/fields`);
+            const data = await res.json();
+            if (data.success && data.fields) {
+                showAvailableFields = data.fields;
+            } else {
+                showAvailableFields = [];
+                showToast(data.message || 'Failed to load fields.', 'warning');
+            }
+        } catch (e) {
+            console.error(e);
+            showAvailableFields = [];
+            showToast('Error loading fields for filtering.', 'error');
+        } finally {
+            loadingEl.classList.add('hidden');
+        }
+    }
+    
+    function addShowFilterRow() {
+        const container = document.getElementById('showFiltersContainer');
+        const row = document.createElement('div');
+        row.className = 'flex items-center gap-2 show-filter-row animate-fade-up';
+        
+        let optionsHtml = '<option value="">-- Select Field --</option>';
+        showAvailableFields.forEach(f => { optionsHtml += `<option value="${f}">${f}</option>`; });
+        
+        row.innerHTML = `
+            <select class="filter-field flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2">
+                ${optionsHtml}
+            </select>
+            <select class="filter-operator w-36 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2">
+                <option value="eq">Equals (=)</option>
+                <option value="ne">Not Eq (!=)</option>
+                <option value="contains">Contains</option>
+                <option value="startswith">Starts With</option>
+                <option value="endswith">Ends With</option>
+                <option value="gt">Greater (>)</option>
+                <option value="lt">Less (<)</option>
+                <option value="ge">Greater Eq (>=)</option>
+                <option value="le">Less Eq (<=)</option>
+            </select>
+            <input type="text" class="filter-value flex-1 rounded-xl border-surface-200 bg-surface-50 text-surface-800 text-body-sm focus:border-brand-500 focus:ring focus:ring-brand-500/20 py-2" placeholder="Value...">
+            <button onclick="removeShowFilterRow(this)" class="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all duration-200" title="Remove filter">
+                <span class="material-symbols-outlined text-[16px]">delete</span>
+            </button>
+        `;
+        
+        container.appendChild(row);
+        checkShowEmptyFilters();
+    }
+    
+    function removeShowFilterRow(btn) { btn.closest('.show-filter-row').remove(); checkShowEmptyFilters(); }
+    
+    function checkShowEmptyFilters() {
+        const container = document.getElementById('showFiltersContainer');
+        const emptyMsg = document.getElementById('showEmptyFiltersMsg');
+        emptyMsg.classList.toggle('hidden', container.children.length > 0);
+    }
+
+    function monitorActiveJob() {
+        if (!currentPolledJobId) {
+            showToast('Tidak ada Job ID aktif untuk dipantau.', 'warning');
+            return;
+        }
+        startProgressTracking(currentPolledJobId);
+    }
+
+    function startProgressTracking(jobId) {
+        currentPolledJobId = jobId;
+        const progressContainer = document.getElementById('showSyncProgressContainer');
+        const progressBar = document.getElementById('showSyncProgressBar');
+        const progressPercent = document.getElementById('showSyncProgressPercent');
+        const progressLabel = document.getElementById('showSyncProgressLabel');
+        const progressIcon = document.getElementById('showSyncProgressIcon');
+        const statDetails = document.getElementById('showSyncStatDetails');
+        const elapsedEl = document.getElementById('showSyncElapsedTime');
+        const watchdogAlert = document.getElementById('showSyncWatchdogAlert');
+        const btnStart = document.getElementById('btnShowStartSync');
+
+        progressContainer.classList.remove('hidden');
+        watchdogAlert.classList.add('hidden');
+        btnStart.disabled = true;
+        btnStart.innerHTML = '<span class="material-symbols-outlined text-[14px] spin">sync</span> Syncing...';
+
+        lastProgressTime = Date.now();
+        lastProcessedCount = -1;
+        elapsedSeconds = 0;
+        clearInterval(elapsedTimer);
+        elapsedTimer = setInterval(() => {
+            elapsedSeconds++;
+            const mins = Math.floor(elapsedSeconds / 60);
+            const secs = elapsedSeconds % 60;
+            elapsedEl.innerText = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+        }, 1000);
+
+        clearInterval(pollWatchdogTimer);
+        pollWatchdogTimer = setInterval(() => {
+            if (Date.now() - lastProgressTime > 45000) {
+                watchdogAlert.classList.remove('hidden');
+            }
+        }, 5000);
+
+        window.pollSyncJob(jobId, showEntityKey, {
+            onProgress: (job) => {
+                const pRows = job.processed_rows || 0;
+                const tRows = job.total_rows || 0;
+
+                if (pRows !== lastProcessedCount) {
+                    lastProcessedCount = pRows;
+                    lastProgressTime = Date.now();
+                    watchdogAlert.classList.add('hidden');
+                }
+
+                progressBar.style.width = `${job.progress}%`;
+                progressPercent.innerText = `${job.progress}%`;
+                progressLabel.innerText = job.status === 'pending' ? 'Dalam Antrean...' : 'Sedang Sinkronisasi...';
+                statDetails.innerText = `${pRows.toLocaleString()} / ${tRows.toLocaleString()} baris diproses`;
+            },
+            onSuccess: (job) => {
+                clearInterval(pollWatchdogTimer);
+                clearInterval(elapsedTimer);
+                progressBar.style.width = '100%';
+                progressPercent.innerText = '100%';
+                progressLabel.innerText = 'Selesai!';
+                progressIcon.className = 'material-symbols-outlined text-emerald-600 text-[18px]';
+                progressIcon.innerText = 'check_circle';
+                statDetails.innerText = `${(job.processed_rows || 0).toLocaleString()} baris berhasil disinkronkan`;
+                watchdogAlert.classList.add('hidden');
+
+                setTimeout(() => {
+                    closeShowSyncModal();
+                    location.reload();
+                }, 1500);
+            },
+            onError: (job) => {
+                clearInterval(pollWatchdogTimer);
+                clearInterval(elapsedTimer);
+                progressLabel.innerText = 'Gagal atau Dihentikan';
+                progressIcon.className = 'material-symbols-outlined text-red-600 text-[18px]';
+                progressIcon.innerText = 'error';
+                btnStart.disabled = false;
+                btnStart.innerHTML = '<span class="material-symbols-outlined text-[16px]">sync</span> Start Sync';
+                document.getElementById('btnBottomResetStuck').classList.remove('hidden');
+            }
+        });
+    }
+
+    async function resetShowSyncStuck() {
+        const confirmed = typeof Swal !== 'undefined' ? await Swal.fire({
+            title: 'Reset & Buka Kunci?',
+            text: 'Tindakan ini akan menghentikan status job yang menggantung dan melepaskan lock distributed untuk entitas ini sehingga proses baru dapat dimulai.',
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: 'Ya, Reset Sekarang',
+            cancelButtonText: 'Batal',
+            confirmButtonColor: '#dc2626'
+        }).then(r => r.isConfirmed) : confirm('Reset kunci dan antrean sinkronisasi untuk entitas ini?');
+
+        if (!confirmed) return;
+
+        clearInterval(pollWatchdogTimer);
+        clearInterval(elapsedTimer);
+
+        const btnReset = document.getElementById('btnResetStuck');
+        if (btnReset) btnReset.disabled = true;
+
+        try {
+            const res = await fetch(`/sync/${showEntityKey}/reset-stuck`, {
+                method: 'POST',
+                headers: {
+                    'X-CSRF-TOKEN': csrfToken,
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                }
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                showToast(data.message || 'Sinkronisasi berhasil di-reset!', 'success');
+                document.getElementById('showSyncStuckBanner').classList.add('hidden');
+                document.getElementById('showSyncWatchdogAlert').classList.add('hidden');
+                document.getElementById('btnBottomResetStuck').classList.add('hidden');
+                document.getElementById('showSyncProgressContainer').classList.add('hidden');
+                
+                const btnStart = document.getElementById('btnShowStartSync');
+                btnStart.disabled = false;
+                btnStart.innerHTML = '<span class="material-symbols-outlined text-[16px]">sync</span> Start Sync';
+            } else {
+                showToast(data.message || 'Gagal mereset status.', 'error');
+            }
+        } catch (e) {
+            showToast('Terjadi kesalahan saat mereset: ' + e.message, 'error');
+        } finally {
+            if (btnReset) btnReset.disabled = false;
+        }
+    }
+    
+    async function executeShowSync() {
+        const rows = document.querySelectorAll('.show-filter-row');
+        const custom_filters = [];
+        let hasError = false;
+        rows.forEach(row => {
+            const field = row.querySelector('.filter-field').value;
+            const op = row.querySelector('.filter-operator').value;
+            const val = row.querySelector('.filter-value').value;
+            if (field && val) { custom_filters.push({ field, operator: op, value: val }); }
+            else if (field || val) { hasError = true; }
+        });
+        
+        if (hasError) { showToast('Harap lengkapi semua baris filter atau hapus baris yang kosong.', 'warning'); return; }
+        
+        const btnEl = document.getElementById('btnShowStartSync');
+        btnEl.disabled = true;
+        const originalText = btnEl.innerHTML;
+        btnEl.innerHTML = '<span class="material-symbols-outlined text-[14px] spin">sync</span> Dispatched...';
+        
+        try {
+            const res = await fetch(`/sync/${showEntityKey}`, {
+                method: 'POST',
+                headers: { 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json', 'Content-Type': 'application/json' },
+                body: JSON.stringify({ custom_filters })
+            });
+            const data = await res.json();
+            
+            if (data.status === 'already_running' || res.status === 423 || res.status === 429) {
+                btnEl.disabled = false;
+                btnEl.innerHTML = originalText;
+                
+                const banner = document.getElementById('showSyncStuckBanner');
+                banner.classList.remove('hidden');
+                document.getElementById('btnBottomResetStuck').classList.remove('hidden');
+                
+                if (data.job_id) {
+                    currentPolledJobId = data.job_id;
+                    document.getElementById('stuckBannerDesc').innerHTML = `
+                        ${data.message || 'Sinkronisasi sedang berjalan atau antrean sebelumnya masih aktif.'}
+                        <br>Job ID: <strong>#${data.job_id}</strong>. Jika proses berhenti merespons, klik <strong>Reset & Buka Kunci</strong>.
+                    `;
+                } else {
+                    document.getElementById('stuckBannerDesc').innerText = data.message || 'Sinkronisasi terkunci. Anda dapat mereset kunci ini.';
+                }
+                
+                showToast(data.message || 'Proses sedang berjalan atau terkunci.', 'warning');
+                return;
+            }
+
+            if (data.success && data.job_id) {
+                showToast(`${showEntityKey}: Sinkronisasi telah masuk antrean.`, 'info');
+                
+                // Instantly kickstart the queue worker via Web Cron (max 50s)
+                fetch('/sys-cron?token=deploy123').catch(() => {});
+                
+                startProgressTracking(data.job_id);
+            } else {
+                showToast(`${showEntityKey}: ${data.error || data.message}`, 'error');
+                btnEl.disabled = false;
+                btnEl.innerHTML = originalText;
+            }
+        } catch (e) {
+            showToast(`${showEntityKey}: ${e.message}`, 'error');
+            btnEl.disabled = false;
+            btnEl.innerHTML = originalText;
+        }
+    }
+</script>
 @endsection

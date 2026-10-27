@@ -14,6 +14,25 @@ class QueueWorkerService
     }
 
     /**
+     * Resolve the CLI PHP binary path.
+     * Prevents failure on Windows/Laragon when 'php' is not in system PATH.
+     */
+    protected function getPhpBinary(): string
+    {
+        $binary = defined('PHP_BINARY') && PHP_BINARY ? PHP_BINARY : 'php';
+        
+        // If web server is running under php-cgi.exe, look for php.exe in the same directory
+        if (str_ends_with(strtolower($binary), 'php-cgi.exe')) {
+            $cli = dirname($binary) . DIRECTORY_SEPARATOR . 'php.exe';
+            if (file_exists($cli)) {
+                return $cli;
+            }
+        }
+        
+        return $binary;
+    }
+
+    /**
      * Spawns a background queue worker that processes jobs until the queue is empty.
      * This avoids needing to run a persistent Supervisor/Daemon manually.
      */
@@ -24,7 +43,9 @@ class QueueWorkerService
         }
 
         $basePath = base_path();
-        $command = "php {$basePath}" . DIRECTORY_SEPARATOR . "artisan queue:work --stop-when-empty --timeout=1800 --memory=1024";
+        $php = escapeshellarg($this->getPhpBinary());
+        $artisan = escapeshellarg($basePath . DIRECTORY_SEPARATOR . 'artisan');
+        $command = "{$php} {$artisan} queue:work --stop-when-empty --timeout=3600 --memory=1024";
 
         try {
             if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {

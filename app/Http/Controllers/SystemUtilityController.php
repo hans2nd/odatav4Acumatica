@@ -129,6 +129,10 @@ class SystemUtilityController extends Controller
     public function runWebCron(Request $request)
     {
         try {
+            // Allow long-running operations without PHP web execution timeout
+            @set_time_limit(0);
+            @ini_set('max_execution_time', '0');
+
             // 1. Process Native Schedules
             Artisan::call('schedule:run');
             $scheduleOutput = Artisan::output();

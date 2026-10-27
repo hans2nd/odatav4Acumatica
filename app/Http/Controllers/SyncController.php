@@ -281,6 +281,163 @@ class SyncController extends Controller
         }
     }
 
+    /**
+     * Get the current synchronization and lock status for a specific entity.
+     */
+    public function entitySyncStatus(Request $request, string $entity): JsonResponse
+    {
+        try {
+            $config = $this->entityConfigService->get($entity);
+            if (!$config) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Unknown entity: {$entity}",
+                ], 404);
+            }
+
+            $activeJob = \App\Models\SyncJob::where('entity', $entity)
+                ->whereIn('status', [\App\Models\SyncJob::STATUS_PENDING, \App\Models\SyncJob::STATUS_RUNNING])
+                ->orderByDesc('created_at')
+                ->first();
+
+            $schedule = \App\Models\SyncSchedule::where('entity_key', $entity)->first();
+            $isLocked = false;
+            $lockOwner = null;
+            $lockExpiresAt = null;
+
+            if ($schedule) {
+                $syncState = \App\Models\SyncState::where('sync_schedule_id', $schedule->id)->first();
+                if ($syncState && $syncState->lock_owner !== null && (
+                    $syncState->lock_expires_at === null || \Carbon\Carbon::parse($syncState->lock_expires_at)->isFuture()
+                )) {
+                    $isLocked = true;
+                    $lockOwner = $syncState->lock_owner;
+                    $lockExpiresAt = $syncState->lock_expires_at;
+                }
+            }
+
+            $latestLog = SyncLog::where('entity_key', $entity)
+                ->orderByDesc('id')
+                ->first();
+
+            return response()->json([
+                'success' => true,
+                'entity' => $entity,
+                'is_running' => $activeJob !== null || $isLocked,
+                'is_locked' => $isLocked,
+                'lock_owner' => $lockOwner,
+                'lock_expires_at' => $lockExpiresAt,
+                'active_job' => $activeJob ? [
+                    'id' => $activeJob->id,
+                    'status' => $activeJob->status,
+                    'progress' => $activeJob->progress,
+                    'processed_rows' => $activeJob->processed_rows,
+                    'total_rows' => $activeJob->total_rows,
+                    'created_at' => $activeJob->created_at?->toIso8601String(),
+                    'updated_at' => $activeJob->updated_at?->toIso8601String(),
+                ] : null,
+                'latest_log' => $latestLog ? [
+                    'id' => $latestLog->id,
+                    'status' => $latestLog->status,
+                    'current_stage' => $latestLog->current_stage,
+                    'records_processed' => $latestLog->records_processed,
+                    'total_records' => $latestLog->total_records,
+                    'updated_at' => $latestLog->updated_at?->toIso8601String(),
+                ] : null,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get entity sync status: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Force reset/unlock stuck sync jobs and locks for an entity.
+     */
+    public function resetStuckJob(Request $request, string $entity): JsonResponse
+    {
+        try {
+            if (!$request->user()->hasPermission("{$entity}.sync") && !$request->user()->hasPermission('sync_engine.manage')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "You do not have permission to reset sync for {$entity}.",
+                ], 403);
+            }
+
+            // 1. Mark active SyncJobs for this entity as failed
+            $activeJobs = \App\Models\SyncJob::where('entity', $entity)
+                ->whereIn('status', [\App\Models\SyncJob::STATUS_PENDING, \App\Models\SyncJob::STATUS_RUNNING])
+                ->get();
+
+            $jobsReset = 0;
+            foreach ($activeJobs as $job) {
+                $job->update([
+                    'status' => \App\Models\SyncJob::STATUS_FAILED,
+                    'error_message' => 'Reset / aborted by user due to stuck process or timeout',
+                    'finished_at' => now(),
+                ]);
+                $jobsReset++;
+            }
+
+            // 2. Mark active SyncLog records as failed and signal cancel cache
+            $activeLogs = SyncLog::where('entity_key', $entity)
+                ->whereIn('status', ['running', 'pending', 'in_progress'])
+                ->get();
+
+            $logsReset = 0;
+            foreach ($activeLogs as $log) {
+                \Illuminate\Support\Facades\Cache::put('sync_control_log_' . $log->id, 'cancel', 3600);
+                $log->update([
+                    'status' => 'failed',
+                    'current_stage' => 'Terminated (Stuck Reset)',
+                    'error_message' => 'Process was aborted or reset due to timeout or stuck worker.',
+                    'completed_at' => now(),
+                ]);
+                $logsReset++;
+            }
+
+            // 3. Clear distributed lock on SyncState
+            $schedule = \App\Models\SyncSchedule::where('entity_key', $entity)->first();
+            $lockReleased = false;
+            if ($schedule) {
+                $updated = \App\Models\SyncState::where('sync_schedule_id', $schedule->id)->update([
+                    'lock_owner' => null,
+                    'lock_acquired_at' => null,
+                    'heartbeat_at' => null,
+                    'lock_expires_at' => null,
+                    'status' => 'Idle',
+                ]);
+                if ($updated > 0) {
+                    $lockReleased = true;
+                }
+            }
+
+            // 4. Clear Laravel unique job cache locks
+            \Illuminate\Support\Facades\Cache::forget('laravel_unique_job:' . \App\Jobs\SyncEntityJob::class . ':' . $entity);
+            \Illuminate\Support\Facades\Cache::forget('laravel_unique_job:' . \App\Jobs\SyncEntityJob::class . $entity);
+            \Illuminate\Support\Facades\Cache::forget('laravel_unique_job:App\Jobs\SyncEntityJob:' . $entity);
+            \Illuminate\Support\Facades\Cache::forget('laravel_unique_job:App\Jobs\SyncEntityJob' . $entity);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Kunci dan antrean sinkronisasi untuk {$entity} telah berhasil di-reset. Anda dapat memulai sinkronisasi kembali.",
+                'details' => [
+                    'jobs_reset' => $jobsReset,
+                    'logs_reset' => $logsReset,
+                    'lock_released' => $lockReleased,
+                ]
+            ]);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error("Failed to reset stuck sync for {$entity}: " . $e->getMessage(), ['exception' => $e]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mereset status sinkronisasi: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
 
     /**
      * Get recent sync logs as JSON.
