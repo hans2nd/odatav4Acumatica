@@ -110,10 +110,15 @@
                 </div>
             </div>
             <div class="bg-white rounded-xl border border-surface-200 p-4 shadow-sm flex flex-col">
-                <span class="text-label-sm text-surface-500 font-medium">Running / Paused</span>
+                <div class="flex items-center justify-between">
+                    <span class="text-label-sm text-surface-500 font-medium">Active Workers & Queue</span>
+                    <span id="kpi-queued" class="text-label-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded border border-indigo-200 font-semibold">0 queued</span>
+                </div>
                 <div class="flex items-end justify-between mt-1">
                     <span class="text-h3 text-amber-600" id="kpi-running">0</span>
-                    <div class="w-2 h-2 rounded-full bg-amber-500 animate-pulse-dot"></div>
+                    <div class="flex items-center gap-1.5 text-label-xs text-amber-700 font-medium">
+                        <div class="w-2 h-2 rounded-full bg-amber-500 animate-pulse-dot"></div> Running
+                    </div>
                 </div>
             </div>
             <div class="bg-white rounded-xl border border-surface-200 p-4 shadow-sm flex flex-col">
@@ -452,8 +457,10 @@
             
             // Update KPIs
             document.getElementById('kpi-total').textContent = new Intl.NumberFormat().format(data.kpis.total_executions);
-            document.getElementById('kpi-today-total').textContent = new Intl.NumberFormat().format(data.kpis.today_executions) + ' today';
             document.getElementById('kpi-running').textContent = new Intl.NumberFormat().format(data.kpis.running);
+            if (document.getElementById('kpi-queued')) {
+                document.getElementById('kpi-queued').textContent = new Intl.NumberFormat().format(data.kpis.queued || 0) + ' queued';
+            }
             document.getElementById('kpi-failed').textContent = new Intl.NumberFormat().format(data.kpis.failed);
             document.getElementById('kpi-today-failed').textContent = new Intl.NumberFormat().format(data.kpis.today_failed) + ' today';
             document.getElementById('kpi-peak-speed').innerHTML = new Intl.NumberFormat().format(data.kpis.peak_rows_sec) + ' <span class="text-body-xs font-normal text-surface-500">rows/s</span>';

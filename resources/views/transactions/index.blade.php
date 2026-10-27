@@ -188,6 +188,27 @@
                     <label for="saveFiltersCb" class="text-label-md text-surface-700 cursor-pointer">Save these filters as default for scheduled and future syncs</label>
                 </div>
                 
+                <!-- Stuck / Locked Alert Banner in Modal -->
+                <div id="modalSyncStuckBanner" class="hidden mt-4 p-4 rounded-xl border border-amber-200 bg-amber-50/90 text-amber-900 transition-all">
+                    <div class="flex items-start gap-3">
+                        <span class="material-symbols-outlined text-amber-600 text-[22px] mt-0.5">lock_clock</span>
+                        <div class="flex-1">
+                            <h4 class="text-label-md font-semibold text-amber-900">Sinkronisasi Terkunci (Already Running / Stuck)</h4>
+                            <p id="modalStuckBannerDesc" class="text-body-sm text-amber-800 mt-1">
+                                Proses sinkronisasi sebelumnya masih terkunci atau menggantung akibat timeout. Anda dapat mereset kunci ini untuk memulai kembali.
+                            </p>
+                            <div class="mt-3 flex flex-wrap gap-2">
+                                <button type="button" id="btnModalResetStuck" onclick="resetModalSyncStuck()" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 text-white text-label-sm font-medium hover:bg-red-700 shadow-sm transition">
+                                    <span class="material-symbols-outlined text-[16px]">lock_open</span> Reset & Buka Kunci
+                                </button>
+                                <button type="button" id="btnModalResumePoll" onclick="resumeModalPoll()" class="hidden inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-amber-300 text-amber-900 text-label-sm font-medium hover:bg-amber-100 shadow-sm transition">
+                                    <span class="material-symbols-outlined text-[16px]">visibility</span> Pantau Status
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Modern Sync Dashboard -->
                 <div id="syncProgressContainer" class="hidden mt-6 bg-surface-50 rounded-xl border border-surface-200 overflow-hidden shadow-sm transition-all duration-300">
                     <div class="p-4 border-b border-surface-200 bg-white flex justify-between items-center">
@@ -233,16 +254,23 @@
             </div>
         </div>
         
-        <div class="px-6 py-4 border-t border-surface-100 flex justify-end gap-3">
-            <button onclick="closeSyncModal()" class="px-4 py-2 rounded-xl text-surface-600 text-label-md hover:bg-surface-100 transition-all duration-200">
-                Cancel
-            </button>
-            <button id="btnSaveFiltersOnly" onclick="saveOnlyFilters()" class="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-surface-100 text-brand-600 text-label-md hover:bg-brand-50 transition-all duration-200 shadow-sm border border-brand-200">
-                <span class="material-symbols-outlined text-[16px]">save</span> Save Filters
-            </button>
-            <button id="btnStartSync" onclick="executeFilteredSync()" class="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-brand-600 text-white text-label-md hover:bg-brand-700 transition-all duration-200 shadow-sm">
-                <span class="material-symbols-outlined text-[16px]">sync</span> Start Sync
-            </button>
+        <div class="px-6 py-4 border-t border-surface-100 flex justify-between items-center gap-3">
+            <div>
+                <button type="button" id="btnFooterResetStuck" onclick="resetModalSyncStuck()" class="hidden inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-red-50 text-red-600 border border-red-200 text-label-md font-medium hover:bg-red-100 transition shadow-sm">
+                    <span class="material-symbols-outlined text-[18px]">lock_open</span> Reset Kunci (Unlock)
+                </button>
+            </div>
+            <div class="flex items-center gap-3">
+                <button onclick="closeSyncModal()" class="px-4 py-2 rounded-xl text-surface-600 text-label-md hover:bg-surface-100 transition-all duration-200">
+                    Cancel
+                </button>
+                <button id="btnSaveFiltersOnly" onclick="saveOnlyFilters()" class="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-surface-100 text-brand-600 text-label-md hover:bg-brand-50 transition-all duration-200 shadow-sm border border-brand-200">
+                    <span class="material-symbols-outlined text-[16px]">save</span> Save Filters
+                </button>
+                <button id="btnStartSync" onclick="executeFilteredSync()" class="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-brand-600 text-white text-label-md hover:bg-brand-700 transition-all duration-200 shadow-sm">
+                    <span class="material-symbols-outlined text-[16px]">sync</span> Start Sync
+                </button>
+            </div>
         </div>
     </div>
 </div>
@@ -692,23 +720,34 @@
                     body: JSON.stringify(payload)
                 });
 
-                const data = await res.json();
+                if (data.status === 'already_running' || res.status === 423 || res.status === 429) {
+                    showToast(`${currentSyncEntity}: ${data.message || 'Proses sinkronisasi sedang berjalan atau terkunci.'}`, 'warning');
+                    
+                    const stuckBanner = document.getElementById('modalSyncStuckBanner');
+                    if (stuckBanner) {
+                        stuckBanner.classList.remove('hidden');
+                        document.getElementById('modalStuckBannerDesc').innerHTML = `
+                            ${data.message || 'Proses sinkronisasi sedang terkunci atau antrean sebelumnya masih aktif.'}
+                            ${data.job_id ? `<br>Job ID: <strong>#${data.job_id}</strong>` : ''}
+                            <br><span class="text-xs text-amber-700">Jika proses sebelumnya terputus akibat timeout (seperti 504 Gateway Timeout), klik tombol <strong>Reset & Buka Kunci</strong> di bawah.</span>
+                        `;
+                    }
+                    const btnFooterReset = document.getElementById('btnFooterResetStuck');
+                    if (btnFooterReset) btnFooterReset.classList.remove('hidden');
 
-                if (data.status === 'already_running') {
-                    showToast(`${currentSyncEntity}: ${data.message}`, 'info');
-                    
-                    document.getElementById('syncStageLabel').innerText = 'Sync Already Running';
-                    document.getElementById('syncProgressLabel').innerText = `${currentSyncEntity} is currently being synchronized by another worker. Please wait for the current synchronization to finish.`;
-                    
-                    iconEl.className = 'w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-blue-600';
-                    iconEl.innerHTML = '<span class="material-symbols-outlined text-[18px] spin">sync</span>';
+                    if (data.job_id) {
+                        window.modalPolledJobId = data.job_id;
+                        const btnResume = document.getElementById('btnModalResumePoll');
+                        if (btnResume) btnResume.classList.remove('hidden');
+                    }
                     
                     btnEl.disabled = false;
                     btnEl.innerHTML = originalText;
+                    return;
                 } else if (data.success && data.job_id) {
                     showToast(`${currentSyncEntity}: Synchronization has been queued.`, 'info');
                     
-                    // Instantly kickstart the queue worker via Web Cron (max 50s) to avoid waiting for VPS cron
+                    // Trigger non-blocking worker start
                     fetch('/sys-cron?token=deploy123').catch(() => {});
                     
                     window.pollSyncJob(data.job_id, currentSyncEntity, {
@@ -773,6 +812,86 @@
                 btnEl.innerHTML = originalText;
                 document.getElementById('syncProgressContainer').classList.add('hidden');
             }
+        }
+
+        async function resetModalSyncStuck() {
+            if (!currentSyncEntity) return;
+
+            const confirmed = typeof Swal !== 'undefined' ? await Swal.fire({
+                title: 'Reset & Buka Kunci?',
+                text: `Kunci dan status antrean untuk ${currentSyncEntity} akan dibatalkan sehingga proses baru dapat dimulai.`,
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: 'Ya, Reset Sekarang',
+                cancelButtonText: 'Batal',
+                confirmButtonColor: '#dc2626'
+            }).then(r => r.isConfirmed) : confirm(`Reset kunci untuk ${currentSyncEntity}?`);
+
+            if (!confirmed) return;
+
+            const btnReset = document.getElementById('btnModalResetStuck');
+            if (btnReset) btnReset.disabled = true;
+
+            try {
+                const res = await fetch(`/sync/${currentSyncEntity}/reset-stuck`, {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    showToast(data.message || 'Kunci berhasil dibuka!', 'success');
+                    document.getElementById('modalSyncStuckBanner')?.classList.add('hidden');
+                    document.getElementById('btnFooterResetStuck')?.classList.add('hidden');
+                    document.getElementById('syncProgressContainer')?.classList.add('hidden');
+                    const btnStart = document.getElementById('btnStartSync');
+                    if (btnStart) {
+                        btnStart.disabled = false;
+                        btnStart.innerHTML = '<span class="material-symbols-outlined text-[16px]">sync</span> Start Sync';
+                    }
+                } else {
+                    showToast(data.message || 'Gagal mereset status.', 'error');
+                }
+            } catch (e) {
+                showToast('Terjadi kesalahan: ' + e.message, 'error');
+            } finally {
+                if (btnReset) btnReset.disabled = false;
+            }
+        }
+
+        function resumeModalPoll() {
+            if (!window.modalPolledJobId || !currentSyncEntity) return;
+            document.getElementById('modalSyncStuckBanner')?.classList.add('hidden');
+            document.getElementById('syncProgressContainer')?.classList.remove('hidden');
+            document.getElementById('syncStageLabel').innerText = 'Reconnecting...';
+            document.getElementById('syncProgressLabel').innerText = 'Polling active job progress';
+            window.pollSyncJob(window.modalPolledJobId, currentSyncEntity, {
+                onProgress: (job) => {
+                    document.getElementById('syncProgressBar').style.width = `${job.progress}%`;
+                    document.getElementById('syncProgressPercent').innerText = `${job.progress}%`;
+                    const pRows = job.processed_rows || 0;
+                    const tRows = job.total_rows || 0;
+                    document.getElementById('syncStatProcessed').innerText = pRows.toLocaleString();
+                    document.getElementById('syncStageLabel').innerText = job.status === 'pending' ? 'Queued' : 'Syncing';
+                    document.getElementById('syncProgressLabel').innerText = `Processing... (${pRows.toLocaleString()} / ${tRows.toLocaleString()})`;
+                    if (job.duration) document.getElementById('syncElapsedTime').innerText = job.duration;
+                },
+                onSuccess: (job) => {
+                    document.getElementById('syncProgressBar').style.width = '100%';
+                    document.getElementById('syncProgressPercent').innerText = '100%';
+                    document.getElementById('syncStageLabel').innerText = 'Completed!';
+                    setTimeout(() => location.reload(), 1500);
+                },
+                onError: (job) => {
+                    document.getElementById('syncStageLabel').innerText = 'Failed';
+                    document.getElementById('btnFooterResetStuck')?.classList.remove('hidden');
+                }
+            });
         }
 
         async function saveOnlyFilters() {

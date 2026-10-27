@@ -61,6 +61,7 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/sync-history', [\App\Http\Controllers\SyncJobController::class, 'page'])->name('sync-history.index');
         Route::get('/api/sync-jobs', [\App\Http\Controllers\SyncJobController::class, 'index'])->name('api.sync-jobs.index');
         Route::get('/api/sync-jobs/active', [\App\Http\Controllers\SyncJobController::class, 'active'])->name('api.sync-jobs.active');
+        Route::get('/api/sync-jobs/queue-status', [\App\Http\Controllers\SyncJobController::class, 'queueStatus'])->name('api.sync-jobs.queue-status');
         Route::get('/api/sync-jobs/{id}', [\App\Http\Controllers\SyncJobController::class, 'show'])->name('api.sync-jobs.show');
         Route::post('/api/sync-jobs/{id}/abort', [\App\Http\Controllers\SyncJobController::class, 'abort'])->name('api.sync-jobs.abort');
         

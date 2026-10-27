@@ -4,13 +4,106 @@
 @section('page-title', 'Synchronization History')
 
 @section('content')
-<div class="bg-white rounded-2xl border border-surface-200/60 flex flex-col shadow-card overflow-hidden animate-fade-up">
-    <div class="px-5 py-4 border-b border-surface-100 flex justify-between items-center bg-surface-50">
-        <h2 class="text-h3 text-surface-800">Job History</h2>
-        <button onclick="window.location.reload()" class="px-3 py-1.5 bg-white border border-surface-200 rounded-lg text-label-sm text-surface-600 hover:bg-surface-50 transition-colors flex items-center gap-1.5 shadow-sm">
-            <span class="material-symbols-outlined text-[16px]">refresh</span> Refresh
-        </button>
+<div class="space-y-6 animate-fade-up">
+    <!-- Worker & Queue Live Monitor -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <!-- Running Workers Card -->
+        <div class="bg-white rounded-2xl border border-surface-200/60 p-5 shadow-card flex flex-col justify-between">
+            <div>
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-label-sm font-semibold text-surface-500 uppercase tracking-wider">Worker Sedang Berjalan</span>
+                    <span class="flex h-2.5 w-2.5 relative">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+                    </span>
+                </div>
+                <div class="flex items-baseline gap-2">
+                    <span id="queue-running-count" class="text-h2 font-bold text-amber-600 font-mono">{{ $queueStatus['running_count'] ?? 0 }}</span>
+                    <span class="text-body-sm text-surface-500">worker aktif</span>
+                </div>
+            </div>
+            <div id="queue-running-details" class="mt-4 pt-3 border-t border-surface-100 space-y-2 text-body-sm max-h-36 overflow-y-auto">
+                @forelse($queueStatus['running_jobs'] ?? [] as $rJob)
+                    <div class="flex items-center justify-between text-surface-700 bg-amber-50/70 px-3 py-1.5 rounded-lg border border-amber-200/60">
+                        <div class="truncate mr-2">
+                            <span class="font-medium text-amber-900">{{ $rJob['entity'] }}</span>
+                            <span class="text-[10px] text-amber-600 block">{{ $rJob['started_at'] ?? 'Baru saja' }}</span>
+                        </div>
+                        <span class="font-mono text-xs font-semibold text-amber-800">{{ $rJob['progress'] }}%</span>
+                    </div>
+                @empty
+                    <p class="text-xs text-surface-400 italic">Tidak ada worker yang sedang berjalan saat ini.</p>
+                @endforelse
+            </div>
+        </div>
+
+        <!-- Queued Workers Card -->
+        <div class="bg-white rounded-2xl border border-surface-200/60 p-5 shadow-card flex flex-col justify-between">
+            <div>
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-label-sm font-semibold text-surface-500 uppercase tracking-wider">Antrean Worker (Pending)</span>
+                    <span class="material-symbols-outlined text-[20px] text-indigo-500">hourglass_top</span>
+                </div>
+                <div class="flex items-baseline gap-2">
+                    <span id="queue-pending-count" class="text-h2 font-bold text-indigo-600 font-mono">{{ $queueStatus['pending_count'] ?? 0 }}</span>
+                    <span class="text-body-sm text-surface-500">task mengantre</span>
+                </div>
+            </div>
+            <div id="queue-pending-details" class="mt-4 pt-3 border-t border-surface-100 space-y-2 text-body-sm max-h-36 overflow-y-auto">
+                @forelse($queueStatus['pending_jobs'] ?? [] as $pJob)
+                    <div class="flex items-center justify-between text-surface-700 bg-indigo-50/70 px-3 py-1.5 rounded-lg border border-indigo-200/60">
+                        <span class="font-medium text-indigo-900">{{ $pJob['entity'] }}</span>
+                        <span class="text-xs text-indigo-600 font-mono">{{ $pJob['queued_at'] ?? 'Menunggu giliran' }}</span>
+                    </div>
+                @empty
+                    <p class="text-xs text-surface-400 italic">Antrean kosong. Semua task telah selesai diproses.</p>
+                @endforelse
+            </div>
+        </div>
+
+        <!-- Locks & Engine Status Card -->
+        <div class="bg-white rounded-2xl border border-surface-200/60 p-5 shadow-card flex flex-col justify-between">
+            <div>
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-label-sm font-semibold text-surface-500 uppercase tracking-wider">Distributed Locks Held</span>
+                    <span class="material-symbols-outlined text-[20px] text-surface-400">lock</span>
+                </div>
+                <div class="flex items-baseline gap-2">
+                    <span id="queue-locks-count" class="text-h2 font-bold text-surface-800 font-mono">{{ count($queueStatus['active_locks'] ?? []) }}</span>
+                    <span class="text-body-sm text-surface-500">entitas terkunci</span>
+                </div>
+            </div>
+            <div id="queue-locks-details" class="mt-4 pt-3 border-t border-surface-100 space-y-2 text-body-sm max-h-36 overflow-y-auto">
+                @forelse($queueStatus['active_locks'] ?? [] as $lock)
+                    <div class="flex items-center justify-between text-surface-700 bg-surface-50 px-3 py-1.5 rounded-lg border border-surface-200">
+                        <div class="truncate mr-2">
+                            <span class="font-medium text-surface-800">{{ $lock['entity'] }}</span>
+                            <span class="text-[10px] text-surface-400 block truncate">{{ $lock['owner'] }}</span>
+                        </div>
+                        <button type="button" onclick="unlockEntity('{{ $lock['entity'] }}')" class="shrink-0 px-2 py-0.5 rounded text-xs bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 transition font-medium">
+                            Buka Kunci
+                        </button>
+                    </div>
+                @empty
+                    <p class="text-xs text-emerald-600 font-medium flex items-center gap-1">
+                        <span class="material-symbols-outlined text-[16px]">check_circle</span> Semua entitas bebas kunci (Idle).
+                    </p>
+                @endforelse
+            </div>
+        </div>
     </div>
+
+    <!-- Job History Card -->
+    <div class="bg-white rounded-2xl border border-surface-200/60 flex flex-col shadow-card overflow-hidden">
+        <div class="px-5 py-4 border-b border-surface-100 flex justify-between items-center bg-surface-50">
+            <div>
+                <h2 class="text-h3 text-surface-800">Job History</h2>
+                <p class="text-label-sm text-surface-500 mt-0.5">Riwayat eksekusi sinkronisasi data beserta status dan durasi.</p>
+            </div>
+            <button onclick="refreshPageData()" class="px-3.5 py-1.5 bg-white border border-surface-200 rounded-lg text-label-sm font-medium text-surface-600 hover:bg-surface-50 hover:text-surface-900 transition-colors flex items-center gap-1.5 shadow-sm">
+                <span class="material-symbols-outlined text-[16px]">refresh</span> Refresh
+            </button>
+        </div>
     <div class="overflow-x-auto min-h-[400px]">
         <table class="w-full text-left border-collapse">
             <thead>
@@ -99,6 +192,7 @@
         {{ $paginator->links() }}
     </div>
     @endif
+    </div>
 </div>
 @endsection
 
@@ -106,6 +200,82 @@
 <script>
 document.addEventListener('DOMContentLoaded', () => {
     let pollingInterval = null;
+
+    async function pollQueueStatus() {
+        try {
+            const res = await fetch('/api/sync-jobs/queue-status', {
+                headers: { 'Accept': 'application/json' }
+            });
+            if (!res.ok) return;
+            const resJson = await res.json();
+            const data = resJson.data;
+            if (!data) return;
+
+            // 1. Running count & details
+            const elRunning = document.getElementById('queue-running-count');
+            if (elRunning) elRunning.textContent = data.running_count || 0;
+
+            const elRunningDetails = document.getElementById('queue-running-details');
+            if (elRunningDetails) {
+                if (data.running_jobs && data.running_jobs.length > 0) {
+                    elRunningDetails.innerHTML = data.running_jobs.map(j => `
+                        <div class="flex items-center justify-between text-surface-700 bg-amber-50/70 px-3 py-1.5 rounded-lg border border-amber-200/60">
+                            <div class="truncate mr-2">
+                                <span class="font-medium text-amber-900">${j.entity}</span>
+                                <span class="text-[10px] text-amber-600 block">${j.started_at || 'Baru saja'}</span>
+                            </div>
+                            <span class="font-mono text-xs font-semibold text-amber-800">${j.progress}%</span>
+                        </div>
+                    `).join('');
+                } else {
+                    elRunningDetails.innerHTML = `<p class="text-xs text-surface-400 italic">Tidak ada worker yang sedang berjalan saat ini.</p>`;
+                }
+            }
+
+            // 2. Pending count & details
+            const elPending = document.getElementById('queue-pending-count');
+            if (elPending) elPending.textContent = data.pending_count || 0;
+
+            const elPendingDetails = document.getElementById('queue-pending-details');
+            if (elPendingDetails) {
+                if (data.pending_jobs && data.pending_jobs.length > 0) {
+                    elPendingDetails.innerHTML = data.pending_jobs.map(j => `
+                        <div class="flex items-center justify-between text-surface-700 bg-indigo-50/70 px-3 py-1.5 rounded-lg border border-indigo-200/60">
+                            <span class="font-medium text-indigo-900">${j.entity}</span>
+                            <span class="text-xs text-indigo-600 font-mono">${j.queued_at || 'Menunggu giliran'}</span>
+                        </div>
+                    `).join('');
+                } else {
+                    elPendingDetails.innerHTML = `<p class="text-xs text-surface-400 italic">Antrean kosong. Semua task telah selesai diproses.</p>`;
+                }
+            }
+
+            // 3. Locks count & details
+            const elLocks = document.getElementById('queue-locks-count');
+            if (elLocks) elLocks.textContent = (data.active_locks || []).length;
+
+            const elLocksDetails = document.getElementById('queue-locks-details');
+            if (elLocksDetails) {
+                if (data.active_locks && data.active_locks.length > 0) {
+                    elLocksDetails.innerHTML = data.active_locks.map(l => `
+                        <div class="flex items-center justify-between text-surface-700 bg-surface-50 px-3 py-1.5 rounded-lg border border-surface-200">
+                            <div class="truncate mr-2">
+                                <span class="font-medium text-surface-800">${l.entity}</span>
+                                <span class="text-[10px] text-surface-400 block truncate">${l.owner}</span>
+                            </div>
+                            <button type="button" onclick="unlockEntity('${l.entity}')" class="shrink-0 px-2 py-0.5 rounded text-xs bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 transition font-medium">
+                                Buka Kunci
+                            </button>
+                        </div>
+                    `).join('');
+                } else {
+                    elLocksDetails.innerHTML = `<p class="text-xs text-emerald-600 font-medium flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">check_circle</span> Semua entitas bebas kunci (Idle).</p>`;
+                }
+            }
+        } catch (e) {
+            console.error('Queue status polling error:', e);
+        }
+    }
 
     async function pollActiveJobs() {
         try {
@@ -118,17 +288,13 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await res.json();
             const activeJobs = data.data;
 
-            if (activeJobs.length === 0) {
-                // No more active jobs, we can stop polling.
-                clearInterval(pollingInterval);
-                return;
+            if (activeJobs && activeJobs.length > 0) {
+                activeJobs.forEach(job => {
+                    updateRow(job);
+                });
             }
-
-            activeJobs.forEach(job => {
-                updateRow(job);
-            });
         } catch (e) {
-            console.error('Polling failed:', e);
+            console.error('Active jobs polling failed:', e);
         }
     }
 
@@ -145,7 +311,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const pRows = (job.processed_rows || 0).toLocaleString();
             const tRows = (job.total_rows || 0).toLocaleString();
             progressText.textContent = `${pRows} / ${tRows}`;
-            row.querySelector('.text-label-sm.font-medium').textContent = `${job.progress}%`;
+            const pct = row.querySelector('.text-label-sm.font-medium');
+            if (pct) pct.textContent = `${job.progress}%`;
         }
 
         // Status Badge
@@ -191,6 +358,51 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    window.refreshPageData = async function() {
+        await Promise.all([pollQueueStatus(), pollActiveJobs()]);
+        window.location.reload();
+    };
+
+    window.unlockEntity = async function(entityKey) {
+        const confirmed = typeof Swal !== 'undefined' ? await Swal.fire({
+            title: `Buka Kunci ${entityKey}?`,
+            text: `Kunci distributed dan status job untuk ${entityKey} akan di-reset agar dapat diproses kembali.`,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: 'Ya, Buka Kunci',
+            cancelButtonText: 'Batal',
+            confirmButtonColor: '#dc2626'
+        }).then(r => r.isConfirmed) : confirm(`Reset kunci untuk ${entityKey}?`);
+
+        if (!confirmed) return;
+
+        try {
+            const res = await fetch(`/sync/${entityKey}/reset-stuck`, {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+                }
+            });
+            const data = await res.json();
+            if (data.success) {
+                if (typeof showToast === 'function') {
+                    showToast(data.message || 'Kunci berhasil dibuka.', 'success');
+                } else {
+                    alert(data.message || 'Kunci berhasil dibuka.');
+                }
+                pollQueueStatus();
+                pollActiveJobs();
+            } else {
+                alert(data.message || 'Gagal membuka kunci.');
+            }
+        } catch (e) {
+            console.error(e);
+            alert('Terjadi kesalahan: ' + e.message);
+        }
+    };
+
     window.abortJob = async function(jobId) {
         if (!confirm('Are you sure you want to abort this synchronization job?')) return;
         
@@ -212,6 +424,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (data.success) {
                 // Force an immediate poll to update the UI
                 pollActiveJobs();
+                pollQueueStatus();
             } else {
                 alert(data.message || 'Failed to abort job.');
                 if (btn) btn.disabled = false;
@@ -223,8 +436,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    // Start polling every 3 seconds
-    pollingInterval = setInterval(pollActiveJobs, 3000);
+    // Polling active jobs and queue status every 4 seconds
+    pollingInterval = setInterval(() => {
+        pollActiveJobs();
+        pollQueueStatus();
+    }, 4000);
 });
 </script>
 @endsection

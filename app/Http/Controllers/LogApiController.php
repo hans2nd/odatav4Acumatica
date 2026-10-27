@@ -47,7 +47,19 @@ class LogApiController extends Controller
     {
         // For KPI Cards
         $totalExecutions = SyncLog::count();
-        $running = SyncLog::whereIn('status', ['running', 'paused'])->count();
+        $runningLogs = SyncLog::whereIn('status', ['running', 'paused'])->count();
+        $runningJobs = \App\Models\SyncJob::where('status', \App\Models\SyncJob::STATUS_RUNNING)->count();
+        $running = max($runningLogs, $runningJobs);
+
+        $queuedJobs = \App\Models\SyncJob::where('status', \App\Models\SyncJob::STATUS_PENDING)->count();
+        $rawQueue = 0;
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('jobs')) {
+                $rawQueue = (int) DB::table('jobs')->count();
+            }
+        } catch (\Throwable $e) {}
+        $queued = max($queuedJobs, $rawQueue);
+
         $failed = SyncLog::where('status', 'failed')->count();
         
         $todayQuery = SyncLog::whereDate('started_at', now()->toDateString());
@@ -74,6 +86,7 @@ class LogApiController extends Controller
             'kpis' => [
                 'total_executions' => $totalExecutions,
                 'running' => $running,
+                'queued' => $queued,
                 'failed' => $failed,
                 'peak_rows_sec' => $peakRowsSec,
                 'peak_memory_mb' => $peakMemory,
