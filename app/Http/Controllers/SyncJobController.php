@@ -28,54 +28,71 @@ class SyncJobController extends Controller
 
     public function getQueueStatusData(): array
     {
-        $runningJobs = SyncJob::where('status', SyncJob::STATUS_RUNNING)
-            ->orderBy('started_at')
-            ->get();
-
-        $pendingJobs = SyncJob::where('status', SyncJob::STATUS_PENDING)
-            ->orderBy('created_at')
-            ->get();
-
-        $rawQueueCount = 0;
         try {
-            if (\Illuminate\Support\Facades\Schema::hasTable('jobs')) {
-                $rawQueueCount = (int) \Illuminate\Support\Facades\DB::table('jobs')->count();
-            }
-        } catch (\Throwable $e) {}
+            $runningJobs = SyncJob::where('status', SyncJob::STATUS_RUNNING)
+                ->orderBy('started_at')
+                ->get();
 
-        $activeLocks = \App\Models\SyncState::with('schedule')
-            ->whereNotNull('lock_owner')
-            ->where(function ($q) {
-                $q->whereNull('lock_expires_at')
-                  ->orWhere('lock_expires_at', '>', now());
-            })
-            ->get()
-            ->map(fn($s) => [
-                'entity' => $s->schedule?->entity_key ?? 'Unknown',
-                'owner' => $s->lock_owner,
-                'acquired_at' => $s->lock_acquired_at ? \Carbon\Carbon::parse($s->lock_acquired_at)->diffForHumans() : null,
-                'heartbeat_at' => $s->heartbeat_at ? \Carbon\Carbon::parse($s->heartbeat_at)->diffForHumans() : null,
-            ]);
+            $pendingJobs = SyncJob::where('status', SyncJob::STATUS_PENDING)
+                ->orderBy('created_at')
+                ->get();
 
-        return [
-            'running_count' => $runningJobs->count(),
-            'pending_count' => max($pendingJobs->count(), $rawQueueCount),
-            'raw_queue_count' => $rawQueueCount,
-            'running_jobs' => $runningJobs->map(fn($j) => [
-                'id' => $j->id,
-                'entity' => $j->entity,
-                'progress' => $j->progress,
-                'processed_rows' => $j->processed_rows,
-                'total_rows' => $j->total_rows,
-                'started_at' => $j->started_at ? \Carbon\Carbon::parse($j->started_at)->diffForHumans() : null,
-            ]),
-            'pending_jobs' => $pendingJobs->map(fn($j) => [
-                'id' => $j->id,
-                'entity' => $j->entity,
-                'queued_at' => $j->created_at ? \Carbon\Carbon::parse($j->created_at)->diffForHumans() : null,
-            ]),
-            'active_locks' => $activeLocks,
-        ];
+            $rawQueueCount = 0;
+            try {
+                if (\Illuminate\Support\Facades\Schema::hasTable('jobs')) {
+                    $rawQueueCount = (int) \Illuminate\Support\Facades\DB::table('jobs')->count();
+                }
+            } catch (\Throwable $e) {}
+
+            $activeLocks = collect();
+            try {
+                if (\Illuminate\Support\Facades\Schema::hasTable('sync_states')) {
+                    $activeLocks = \App\Models\SyncState::with('syncSchedule')
+                        ->whereNotNull('lock_owner')
+                        ->where(function ($q) {
+                            $q->whereNull('lock_expires_at')
+                              ->orWhere('lock_expires_at', '>', now());
+                        })
+                        ->get()
+                        ->map(fn($s) => [
+                            'entity' => $s->entity_name ?: ($s->syncSchedule?->entity_key ?? 'Unknown'),
+                            'owner' => $s->lock_owner,
+                            'acquired_at' => $s->lock_acquired_at ? \Carbon\Carbon::parse($s->lock_acquired_at)->diffForHumans() : null,
+                            'heartbeat_at' => $s->heartbeat_at ? \Carbon\Carbon::parse($s->heartbeat_at)->diffForHumans() : null,
+                        ]);
+                }
+            } catch (\Throwable $e) {}
+
+            return [
+                'running_count' => $runningJobs->count(),
+                'pending_count' => max($pendingJobs->count(), $rawQueueCount),
+                'raw_queue_count' => $rawQueueCount,
+                'running_jobs' => $runningJobs->map(fn($j) => [
+                    'id' => $j->id,
+                    'entity' => $j->entity,
+                    'progress' => $j->progress,
+                    'processed_rows' => $j->processed_rows,
+                    'total_rows' => $j->total_rows,
+                    'started_at' => $j->started_at ? \Carbon\Carbon::parse($j->started_at)->diffForHumans() : null,
+                ])->toArray(),
+                'pending_jobs' => $pendingJobs->map(fn($j) => [
+                    'id' => $j->id,
+                    'entity' => $j->entity,
+                    'queued_at' => $j->created_at ? \Carbon\Carbon::parse($j->created_at)->diffForHumans() : null,
+                ])->toArray(),
+                'active_locks' => $activeLocks->toArray(),
+            ];
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('getQueueStatusData error: ' . $e->getMessage(), ['exception' => $e]);
+            return [
+                'running_count' => 0,
+                'pending_count' => 0,
+                'raw_queue_count' => 0,
+                'running_jobs' => [],
+                'pending_jobs' => [],
+                'active_locks' => [],
+            ];
+        }
     }
 
     public function index(Request $request)

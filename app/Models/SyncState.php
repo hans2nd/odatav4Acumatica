@@ -43,6 +43,11 @@ class SyncState extends Model
         return $this->belongsTo(SyncSchedule::class, 'sync_schedule_id');
     }
 
+    public function schedule()
+    {
+        return $this->syncSchedule();
+    }
+
     public function syncLogs()
     {
         return $this->hasMany(SyncLog::class, 'entity_key', 'entity_name');
