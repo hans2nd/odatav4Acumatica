@@ -720,6 +720,16 @@
                     body: JSON.stringify(payload)
                 });
 
+                let data = {};
+                try {
+                    data = await res.json();
+                } catch (parseErr) {
+                    data = { 
+                        success: false, 
+                        message: `Server returned HTTP ${res.status}: ${res.statusText || 'Gagal memproses respon server.'}` 
+                    };
+                }
+
                 if (data.status === 'already_running' || res.status === 423 || res.status === 429) {
                     showToast(`${currentSyncEntity}: ${data.message || 'Proses sinkronisasi sedang berjalan atau terkunci.'}`, 'warning');
                     

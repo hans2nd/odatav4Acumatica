@@ -717,10 +717,18 @@
                     body: JSON.stringify(payload)
                 });
 
-                const data = await res.json();
+                let data = {};
+                try {
+                    data = await res.json();
+                } catch (parseErr) {
+                    data = { 
+                        success: false, 
+                        message: `Server returned HTTP ${res.status}: ${res.statusText || 'Gagal memproses respon server.'}` 
+                    };
+                }
 
-                if (data.status === 'already_running') {
-                    showToast(`${currentSyncEntity}: ${data.message}`, 'info');
+                if (data.status === 'already_running' || res.status === 423 || res.status === 429) {
+                    showToast(`${currentSyncEntity}: ${data.message || 'Proses sinkronisasi sedang berjalan atau terkunci.'}`, 'info');
                     
                     document.getElementById('syncStageLabel').innerText = 'Sync Already Running';
                     document.getElementById('syncProgressLabel').innerText = `${currentSyncEntity} is currently being synchronized by another worker. Please wait for the current synchronization to finish.`;
