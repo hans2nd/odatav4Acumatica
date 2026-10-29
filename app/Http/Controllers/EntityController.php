@@ -74,6 +74,11 @@ class EntityController extends Controller
         }
 
         $this->entityConfig->save($key, $validated);
+        $this->clearEntityConnectionMetadataCache(
+            $validated['source_connection'] ?? null,
+            $validated['destination_connection'] ?? null,
+            $validated['table'] ?? null
+        );
 
         \App\Jobs\DiscoverEntityMetadataJob::dispatch($key);
 
@@ -123,7 +128,20 @@ class EntityController extends Controller
             ], 422);
         }
 
+        $oldEntity = $this->entityConfig->get($key);
         $this->entityConfig->update($key, $newKey, $validated);
+        if ($oldEntity) {
+            $this->clearEntityConnectionMetadataCache(
+                $oldEntity['source_connection'] ?? null,
+                $oldEntity['destination_connection'] ?? null,
+                $oldEntity['table'] ?? null
+            );
+        }
+        $this->clearEntityConnectionMetadataCache(
+            $validated['source_connection'] ?? null,
+            $validated['destination_connection'] ?? null,
+            $validated['table'] ?? null
+        );
 
         \App\Jobs\DiscoverEntityMetadataJob::dispatch($newKey);
 
@@ -219,6 +237,11 @@ class EntityController extends Controller
                 $schemaManager = app(\App\Services\SchemaManager::class);
                 $schemaManager->ensureTableFromMappings($destConnection, $tableName, $fieldMappings);
             }
+            $this->clearEntityConnectionMetadataCache(
+                $config['source_connection'] ?? null,
+                $destConnection,
+                $tableName
+            );
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\Log::error("Failed to generate strict schema for {$key}: " . $e->getMessage());
             // We don't fail the request here, but log it so the user can be warned or it can be retried during sync.
@@ -317,11 +340,20 @@ class EntityController extends Controller
      */
     public function destroy(string $key): JsonResponse
     {
+        $oldEntity = $this->entityConfig->get($key);
         if (!$this->entityConfig->delete($key)) {
             return response()->json([
                 'success' => false,
                 'message' => "Entity '{$key}' not found.",
             ], 404);
+        }
+
+        if ($oldEntity) {
+            $this->clearEntityConnectionMetadataCache(
+                $oldEntity['source_connection'] ?? null,
+                $oldEntity['destination_connection'] ?? null,
+                $oldEntity['table'] ?? null
+            );
         }
 
         return response()->json([
@@ -343,11 +375,26 @@ class EntityController extends Controller
         $keys = array_values(array_unique($validated['keys']));
 
         try {
+            $entitiesToClear = [];
+            foreach ($keys as $k) {
+                if ($ent = $this->entityConfig->get($k)) {
+                    $entitiesToClear[] = $ent;
+                }
+            }
+
             if (!$this->entityConfig->batchDelete($keys)) {
                 return response()->json([
                     'success' => false,
                     'message' => "Failed to delete the selected entity/entities.",
                 ], 422);
+            }
+
+            foreach ($entitiesToClear as $ent) {
+                $this->clearEntityConnectionMetadataCache(
+                    $ent['source_connection'] ?? null,
+                    $ent['destination_connection'] ?? null,
+                    $ent['table'] ?? null
+                );
             }
 
             return response()->json([
@@ -359,6 +406,23 @@ class EntityController extends Controller
                 'success' => false,
                 'message' => "Error deleting entities: " . $e->getMessage(),
             ], 500);
+        }
+    }
+
+    /**
+     * Invalidate cached connection and table metadata when entity configuration or schema changes.
+     */
+    protected function clearEntityConnectionMetadataCache(?string $sourceConn, ?string $destConn, ?string $tableName = null): void
+    {
+        if ($sourceConn) {
+            \Illuminate\Support\Facades\Cache::forget("connection_{$sourceConn}_metadata");
+        }
+        if ($destConn) {
+            \Illuminate\Support\Facades\Cache::forget("connection_{$destConn}_metadata");
+            if ($tableName) {
+                \Illuminate\Support\Facades\Cache::forget("connection_{$destConn}_structure_" . md5($tableName));
+                \Illuminate\Support\Facades\Cache::forget("sync_metadata_table_{$destConn}_{$tableName}");
+            }
         }
     }
 }

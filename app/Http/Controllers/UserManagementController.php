@@ -256,6 +256,9 @@ class UserManagementController extends Controller
         $beforePermissionIds = $role->permissions()->pluck('permissions.id')->toArray();
         $role->permissions()->sync($validated['permission_ids']);
         app(\App\Services\RbacAuditService::class)->auditPermissionChange($role, $beforePermissionIds, $validated['permission_ids']);
+        foreach ($role->users as $roleUser) {
+            $roleUser->clearAuthorizationCache();
+        }
         \App\Services\MenuService::clearMenuCache();
 
         return response()->json([
@@ -663,6 +666,9 @@ class UserManagementController extends Controller
         $finalPermIds = array_merge($filteredPermIds, $permissionIdsToSync);
 
         $role->permissions()->sync($finalPermIds);
+        foreach ($role->users as $roleUser) {
+            $roleUser->clearAuthorizationCache();
+        }
         \App\Services\MenuService::clearMenuCache();
 
         return response()->json([

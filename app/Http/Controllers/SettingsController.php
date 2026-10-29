@@ -87,6 +87,7 @@ class SettingsController extends Controller
         }
 
         $this->connectionService->save($validated['key'], $validated);
+        \Illuminate\Support\Facades\Cache::forget("connection_{$validated['key']}_metadata");
 
         return response()->json([
             'success' => true,
@@ -129,6 +130,8 @@ class SettingsController extends Controller
         }
 
         $this->connectionService->update($key, $newKey, $validated);
+        \Illuminate\Support\Facades\Cache::forget("connection_{$key}_metadata");
+        \Illuminate\Support\Facades\Cache::forget("connection_{$newKey}_metadata");
 
         return response()->json([
             'success' => true,
@@ -142,6 +145,7 @@ class SettingsController extends Controller
         if (!$this->connectionService->delete($key)) {
             return response()->json(['success' => false, 'message' => 'Connection not found.'], 404);
         }
+        \Illuminate\Support\Facades\Cache::forget("connection_{$key}_metadata");
         return response()->json(['success' => true, 'message' => 'Connection deleted successfully.']);
     }
 
@@ -160,6 +164,10 @@ class SettingsController extends Controller
                     'success' => false,
                     'message' => "Failed to delete the selected connection(s).",
                 ], 422);
+            }
+
+            foreach ($keys as $k) {
+                \Illuminate\Support\Facades\Cache::forget("connection_{$k}_metadata");
             }
 
             return response()->json([
@@ -236,6 +244,7 @@ class SettingsController extends Controller
 
             if ($key && $conn = \App\Models\Connection::where('key', $key)->first()) {
                 $conn->update(['is_connected' => $isHealthy]);
+                \Illuminate\Support\Facades\Cache::forget("connection_{$key}_metadata");
             }
 
             return response()->json([
@@ -252,6 +261,7 @@ class SettingsController extends Controller
         } catch (\Throwable $e) {
             if ($key && $conn = \App\Models\Connection::where('key', $key)->first()) {
                 $conn->update(['is_connected' => false]);
+                \Illuminate\Support\Facades\Cache::forget("connection_{$key}_metadata");
             }
             return response()->json([
                 'success' => false,
@@ -265,6 +275,7 @@ class SettingsController extends Controller
         $conn = \App\Models\Connection::where('key', $key)->first();
         if ($conn) {
             $conn->update(['is_connected' => false]);
+            \Illuminate\Support\Facades\Cache::forget("connection_{$key}_metadata");
             return response()->json(['success' => true, 'message' => 'Disconnected successfully.']);
         }
         

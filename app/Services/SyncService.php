@@ -685,6 +685,11 @@ class SyncService
             $schedule->update(['last_run_at' => now()]);
 
             \Illuminate\Support\Facades\Cache::forget("entity_fields_{$entityKey}");
+            \Illuminate\Support\Facades\Cache::forget("connection_{$destConnKey}_metadata");
+            if (!empty($tableName)) {
+                \Illuminate\Support\Facades\Cache::forget("connection_{$destConnKey}_structure_" . md5($tableName));
+                \Illuminate\Support\Facades\Cache::forget("sync_metadata_table_{$destConnKey}_{$tableName}");
+            }
             
             try {
                 $connectionModel = \App\Models\Connection::where('key', $destConnKey)->first();

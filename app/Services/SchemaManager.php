@@ -16,6 +16,11 @@ class SchemaManager
      */
     public function ensureTable(?string $connectionName, string $tableName, array $sampleRow, array $fieldMappings = []): void
     {
+        $connKey = $connectionName ? preg_replace('/^dyn_/', '', $connectionName) : null;
+        if ($connectionName && !config("database.connections.{$connectionName}")) {
+            $connectionName = app(\App\Services\ConnectionService::class)->resolveConnectionName($connectionName);
+        }
+
         $columns = $this->extractColumns($sampleRow);
 
         $driver = DB::connection($connectionName)->getDriverName();
@@ -30,10 +35,12 @@ class SchemaManager
         if (! Schema::connection($connectionName)->hasTable($tableName)) {
             $this->createTable($connectionName, $tableName, $sampleRow, $columns, $fieldMappings);
             Log::info("SchemaManager: Created table [{$tableName}] on connection [{$connectionName}] with " . count($columns) . " columns.");
+            $this->invalidateConnectionMetadataCache($connKey, $tableName);
         } else {
             $added = $this->addMissingColumns($connectionName, $tableName, $sampleRow, $columns, $fieldMappings);
             if ($added > 0) {
                 Log::info("SchemaManager: Added {$added} new columns to [{$tableName}] on connection [{$connectionName}].");
+                $this->invalidateConnectionMetadataCache($connKey, $tableName);
             }
         }
 
@@ -53,6 +60,11 @@ class SchemaManager
      */
     public function ensureTableFromMappings(?string $connectionName, string $tableName, array $fieldMappings): void
     {
+        $connKey = $connectionName ? preg_replace('/^dyn_/', '', $connectionName) : null;
+        if ($connectionName && !config("database.connections.{$connectionName}")) {
+            $connectionName = app(\App\Services\ConnectionService::class)->resolveConnectionName($connectionName);
+        }
+
         $driver = DB::connection($connectionName)->getDriverName();
         $isMysql = in_array($driver, ['mysql', 'mariadb']);
 
@@ -81,6 +93,7 @@ class SchemaManager
                 $table->string('_row_hash', 64)->nullable()->index();
             });
             Log::info("SchemaManager: Created table [{$tableName}] explicitly from mappings on connection [{$connectionName}].");
+            $this->invalidateConnectionMetadataCache($connKey, $tableName);
         } else {
             // Table exists, add missing columns
             $existing = array_map('strtolower', Schema::connection($connectionName)->getColumnListing($tableName));
@@ -100,6 +113,7 @@ class SchemaManager
             }
             if ($added > 0) {
                 Log::info("SchemaManager: Added {$added} missing columns to [{$tableName}] explicitly from mappings.");
+                $this->invalidateConnectionMetadataCache($connKey, $tableName);
             }
         }
 
@@ -110,6 +124,19 @@ class SchemaManager
                 DB::connection($connectionName)->statement('SET innodb_strict_mode = 1;');
             } catch (\Exception $e) {}
         }
+    }
+
+    /**
+     * Invalidate cached metadata and structure for a connection/table after DDL changes.
+     */
+    private function invalidateConnectionMetadataCache(?string $connKey, string $tableName): void
+    {
+        if (!$connKey) {
+            return;
+        }
+        \Illuminate\Support\Facades\Cache::forget("connection_{$connKey}_metadata");
+        \Illuminate\Support\Facades\Cache::forget("connection_{$connKey}_structure_" . md5($tableName));
+        \Illuminate\Support\Facades\Cache::forget("sync_metadata_table_{$connKey}_{$tableName}");
     }
 
     /**

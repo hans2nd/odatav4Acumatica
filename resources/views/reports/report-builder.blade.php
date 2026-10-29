@@ -95,7 +95,7 @@
                                             <option value="{{ $conn['key'] }}">{{ $conn['name'] }} ({{ $conn['type'] }})</option>
                                         @endforeach
                                     </select>
-                                    <button type="button" onclick="onConnectionChange()"
+                                    <button type="button" id="btnConnectDb" onclick="onConnectionChange(false)"
                                         class="px-4 py-2.5 bg-brand-50 text-brand-700 font-medium rounded-xl border border-brand-200 hover:bg-brand-100 transition-colors whitespace-nowrap">
                                         Connect
                                     </button>
@@ -105,7 +105,7 @@
                                 <label class="text-label-md text-surface-700 mb-1.5 block">Table</label>
                                 <div class="relative">
                                     <input type="text" id="rbTableSearch" placeholder="Search or select table..." autocomplete="off"
-                                        disabled onfocus="document.getElementById('rbTableDropdown').classList.remove('hidden')"
+                                        disabled onfocus="filterTableList(this); document.getElementById('rbTableDropdown').classList.remove('hidden')"
                                         onblur="setTimeout(() => { document.getElementById('rbTableDropdown').classList.add('hidden'); }, 200)"
                                         oninput="filterTableList(this)"
                                         class="w-full bg-white border border-surface-300 rounded-xl px-4 py-2.5 text-body-md text-surface-900 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-all cursor-text disabled:bg-surface-50 disabled:text-surface-400">
@@ -309,6 +309,7 @@
         });
 
         function onConnectionDropdownChange() {
+            const connKey = document.getElementById('rbConnection').value;
             const tableInput = document.getElementById('rbTableSearch');
             const tableList = document.getElementById('rbTableList');
 
@@ -317,12 +318,19 @@
             tableList.innerHTML =
                 '<li class="px-4 py-2 text-sm text-surface-400 italic">-- Select Connection First --</li>';
             hideSteps();
+
+            if (connKey) {
+                onConnectionChange(false);
+            } else {
+                localStorage.removeItem('rb_saved_connection');
+            }
         }
 
         async function onConnectionChange(isAutoLoad = false) {
             const connKey = document.getElementById('rbConnection').value;
             const tableInput = document.getElementById('rbTableSearch');
             const tableList = document.getElementById('rbTableList');
+            const btnConnect = document.getElementById('btnConnectDb');
 
             if (!connKey) {
                 if (!isAutoLoad) showToast('Silakan pilih koneksi terlebih dahulu.', 'warning');
@@ -338,10 +346,23 @@
                 '<li class="px-4 py-2 text-sm text-surface-400 italic">-- Loading tables... --</li>';
             hideSteps();
 
+            if (btnConnect) {
+                btnConnect.disabled = true;
+                btnConnect.textContent = 'Connecting...';
+            }
+
             try {
-                // Fetch tables dynamically with refresh flag if not auto-loading
-                const refreshParam = isAutoLoad ? '0' : '1';
-                const res = await fetch(`/api/report-builder/tables?connection=${encodeURIComponent(connKey)}&refresh=${refreshParam}`);
+                // Always fetch fresh metadata (refresh=1) with cache-busting so newly synced/created tables appear without artisan cache:clear
+                const res = await fetch(
+                    `/api/report-builder/tables?connection=${encodeURIComponent(connKey)}&refresh=1&_t=${Date.now()}`,
+                    {
+                        cache: 'no-store',
+                        headers: {
+                            'Accept': 'application/json',
+                            'Cache-Control': 'no-cache'
+                        }
+                    }
+                );
                 const data = await res.json();
                 
                 if (data.success) {
@@ -361,6 +382,11 @@
             } catch (e) {
                 tableList.innerHTML = '<li class="px-4 py-2 text-sm text-red-500 italic">-- Error loading tables --</li>';
                 if (!isAutoLoad) showToast('Error loading tables', 'error');
+            } finally {
+                if (btnConnect) {
+                    btnConnect.disabled = false;
+                    btnConnect.textContent = 'Connect';
+                }
             }
         }
 
@@ -414,7 +440,14 @@
             try {
                 const baseUrl = "/api/report-builder";
                 const res = await fetch(
-                    `${baseUrl}/columns?connection=${encodeURIComponent(connKey)}&table=${encodeURIComponent(table)}`
+                    `${baseUrl}/columns?connection=${encodeURIComponent(connKey)}&table=${encodeURIComponent(table)}&refresh=1&_t=${Date.now()}`,
+                    {
+                        cache: 'no-store',
+                        headers: {
+                            'Accept': 'application/json',
+                            'Cache-Control': 'no-cache'
+                        }
+                    }
                 );
                 const data = await res.json();
                 if (data.success) {
@@ -1051,6 +1084,9 @@
             // We don't trigger onConnectionChange() because it resets everything, instead we manually select table
             document.getElementById('rbTableSearch').disabled = false;
             document.getElementById('rbTableSearch').value = template.table_name;
+            if (preloadedTables[template.connection_key] && preloadedTables[template.connection_key].length > 0) {
+                renderRbTableDropdown(preloadedTables[template.connection_key]);
+            }
             
             // Load columns
             showToast('Loading template...', 'info');
@@ -1096,7 +1132,16 @@
         async function loadTemplateColumns(connKey, table) {
             try {
                 const baseUrl = "/api/report-builder";
-                const res = await fetch(`${baseUrl}/columns?connection=${encodeURIComponent(connKey)}&table=${encodeURIComponent(table)}`);
+                const res = await fetch(
+                    `${baseUrl}/columns?connection=${encodeURIComponent(connKey)}&table=${encodeURIComponent(table)}&refresh=1&_t=${Date.now()}`,
+                    {
+                        cache: 'no-store',
+                        headers: {
+                            'Accept': 'application/json',
+                            'Cache-Control': 'no-cache'
+                        }
+                    }
+                );
                 const data = await res.json();
                 if (data.success) {
                     allColumns = data.columns;

@@ -45,32 +45,10 @@ class ReportBuilderController extends Controller
                     'type' => $conn['type'],
                 ];
                 
-                // Preload tables for this connection
+                // Preload tables for this connection using unified filtering logic
                 try {
-                    $tree = $this->connectionManager->discoverMetadata($key);
-                    $tables = [];
-                    $systemTables = [
-                        'migrations', 'users', 'password_reset_tokens', 'personal_access_tokens',
-                        'failed_jobs', 'jobs', 'api_endpoints', 'connections', 
-                        'sync_jobs', 'sync_logs', 'sync_metadata_definitions', 
-                        'sync_metadata_fields', 'sync_metadata_history', 
-                        'sync_metadata_refresh_history', 'permissions', 'roles', 
-                        'model_has_permissions', 'model_has_roles', 'role_has_permissions',
-                        'cache', 'cache_locks', 'sessions'
-                    ];
-                    
-                    foreach ($tree->nodes as $node) {
-                        if (!in_array(strtolower($node->name), $systemTables)) {
-                            // Check table-level permission
-                            if ($user && !$user->isSuperAdmin() && !$user->hasPermission("connection.{$key}.table.{$node->name}.access")) {
-                                continue;
-                            }
-                            $tables[] = $node->name;
-                        }
-                    }
-                    sort($tables);
-                    $allTables[$key] = $tables;
-                } catch (\Exception $e) {
+                    $allTables[$key] = $this->resolveTablesForConnection($key, $user, false);
+                } catch (\Throwable $e) {
                     $allTables[$key] = []; // On error, just empty array
                 }
             }
@@ -92,6 +70,68 @@ class ReportBuilderController extends Controller
             'allTables'   => $allTables,
             'templates'   => $templates,
         ]);
+    }
+
+    /**
+     * Resolve and filter available tables for a database connection.
+     */
+    protected function resolveTablesForConnection(string $connKey, $user = null, bool $forceRefresh = false): array
+    {
+        $tree = $this->connectionManager->discoverMetadata($connKey, $forceRefresh);
+        $tables = [];
+
+        $systemTables = [
+            'migrations', 'users', 'password_reset_tokens', 'personal_access_tokens',
+            'failed_jobs', 'jobs', 'api_endpoints', 'connections',
+            'sync_jobs', 'sync_logs', 'sync_metadata_definitions',
+            'sync_metadata_fields', 'sync_metadata_history',
+            'sync_metadata_refresh_history', 'permissions', 'roles',
+            'model_has_permissions', 'model_has_roles', 'role_has_permissions',
+            'cache', 'cache_locks', 'sessions', 'rbac_audit_logs', 'report_templates',
+            'report_template_role', 'sync_entities', 'sync_field_mappings',
+        ];
+
+        // Collect all configured tables for this connection from Entity Configuration
+        $entities = app(\App\Services\EntityConfigService::class)->getAll();
+        $configuredTables = [];
+        foreach ($entities as $entity) {
+            if (($entity['destination_connection'] ?? 'database_default') === $connKey && !empty($entity['table'])) {
+                $tbl = strtolower(trim($entity['table']));
+                $configuredTables[] = $tbl;
+                $configuredTables[] = preg_replace('/^dbo\./i', '', $tbl);
+            }
+            if (($entity['source_connection'] ?? 'acumatica_default') === $connKey && !empty($entity['odata_entity'])) {
+                $srcTbl = strtolower(trim($entity['odata_entity']));
+                $configuredTables[] = $srcTbl;
+                $configuredTables[] = preg_replace('/^dbo\./i', '', $srcTbl);
+            }
+        }
+        $configuredTables = array_values(array_unique(array_filter($configuredTables)));
+        $hasConfiguredEntities = !empty($configuredTables);
+
+        foreach ($tree->nodes as $node) {
+            $nodeNameLower = strtolower(trim($node->name));
+            $nodeNameStripped = preg_replace('/^dbo\./i', '', $nodeNameLower);
+
+            if (in_array($nodeNameLower, $systemTables, true) || in_array($nodeNameStripped, $systemTables, true)) {
+                continue;
+            }
+
+            // If this connection has configured entities, filter by them; otherwise fallback to all non-system tables
+            if ($hasConfiguredEntities && !in_array($nodeNameLower, $configuredTables, true) && !in_array($nodeNameStripped, $configuredTables, true)) {
+                continue;
+            }
+
+            if ($user && !$user->isSuperAdmin() && !$user->hasPermission("connection.{$connKey}.table.{$node->name}.access")) {
+                continue;
+            }
+
+            $tables[] = $node->name;
+        }
+
+        sort($tables);
+
+        return $tables;
     }
 
     /**
@@ -160,39 +200,16 @@ class ReportBuilderController extends Controller
             return response()->json(['success' => false, 'message' => 'Connection key is required.'], 400);
         }
 
-        if ($request->boolean('refresh')) {
-            \Illuminate\Support\Facades\Cache::forget("connection_{$connKey}_metadata");
+        $user = auth()->user();
+        if ($user && !$user->isSuperAdmin() && !$user->hasPermission("connection.{$connKey}.access")) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized access to this connection.'], 403);
         }
 
+        // Default refresh to true so connecting/selecting a DB always fetches up-to-date tables without artisan cache:clear
+        $forceRefresh = $request->has('refresh') ? $request->boolean('refresh') : true;
+
         try {
-            $tree = $this->connectionManager->discoverMetadata($connKey);
-            $tables = [];
-            
-            // Collect all configured tables for this connection from Entity Configuration
-            $entities = app(\App\Services\EntityConfigService::class)->getAll();
-            $configuredTables = [];
-            foreach ($entities as $entity) {
-                if (($entity['destination_connection'] ?? 'database_default') === $connKey && !empty($entity['table'])) {
-                    $configuredTables[] = strtolower($entity['table']);
-                }
-                if (($entity['source_connection'] ?? 'acumatica_default') === $connKey && !empty($entity['odata_entity'])) {
-                    $configuredTables[] = strtolower($entity['odata_entity']);
-                }
-            }
-            
-            $user = auth()->user();
-            foreach ($tree->nodes as $node) {
-                // Only include tables that are present in the Entity Configuration
-                if (!in_array(strtolower($node->name), $configuredTables)) {
-                    continue;
-                }
-                
-                if ($user && !$user->isSuperAdmin() && !$user->hasPermission("connection.{$connKey}.table.{$node->name}.access")) {
-                    continue;
-                }
-                $tables[] = $node->name;
-            }
-            sort($tables);
+            $tables = $this->resolveTablesForConnection($connKey, $user, $forceRefresh);
 
             return response()->json(['success' => true, 'tables' => $tables]);
         } catch (\Throwable $e) {
@@ -212,8 +229,14 @@ class ReportBuilderController extends Controller
             return response()->json(['success' => false, 'message' => 'Connection and table are required.'], 400);
         }
 
+        $forceRefresh = $request->boolean('refresh', false);
+
         try {
-            $result = $metadataRepository->getTableMetadata($connKey, $table);
+            $result = $metadataRepository->getTableMetadata($connKey, $table, $forceRefresh);
+            if ((!$result->isSuccess || empty($result->fields)) && !$forceRefresh) {
+                $result = $metadataRepository->getTableMetadata($connKey, $table, true);
+            }
+
             if (!$result->isSuccess) {
                 return response()->json(['success' => false, 'message' => 'Failed to fetch columns: ' . $result->errorMessage], 500);
             }
@@ -263,6 +286,17 @@ class ReportBuilderController extends Controller
             }
             $availableColumns = array_filter($availableColumns);
             $validColumns = array_intersect($columns, $availableColumns);
+
+            // If cached structure is stale and misses selected columns, refresh structure once
+            if (count($validColumns) < count($columns)) {
+                $node = $this->connectionManager->discoverStructure($connKey, $table, true);
+                $availableColumns = [];
+                foreach ($node->properties as $prop) {
+                    $availableColumns[] = is_array($prop) ? ($prop['name'] ?? $prop['Field'] ?? '') : (string)$prop;
+                }
+                $availableColumns = array_filter($availableColumns);
+                $validColumns = array_intersect($columns, $availableColumns);
+            }
 
             if (empty($validColumns)) {
                 return response()->json(['success' => false, 'message' => 'No valid columns selected.'], 400);
