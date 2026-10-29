@@ -284,6 +284,7 @@ Route::middleware(['auth'])->group(function () {
 
         Route::post('/api/roles', [UserManagementController::class, 'storeRole'])->name('api.roles.store');
         Route::put('/api/roles/{role}/permissions', [UserManagementController::class, 'updateRolePermissions'])->name('api.roles.permissions');
+        Route::post('/api/permissions/sync', [UserManagementController::class, 'syncPermissions'])->name('api.permissions.sync');
         Route::get('/api/roles/{role}/table-permissions', [UserManagementController::class, 'getTablePermissions'])->name('api.roles.table-permissions.get');
         Route::put('/api/roles/{role}/table-permissions', [UserManagementController::class, 'updateTablePermissions'])->name('api.roles.table-permissions.update');
         Route::delete('/api/roles/{role}', [UserManagementController::class, 'destroyRole'])->name('api.roles.destroy');

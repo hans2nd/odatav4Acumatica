@@ -21,7 +21,53 @@ class PermissionGeneratorService
             $this->generateSystemResources();
             $this->generateEntityResources();
             $this->generateApiEndpoints();
+            $this->generateMenuPermissions();
         });
+
+        \App\Models\User::clearGlobalCache();
+    }
+
+    /**
+     * Auto-ensure Resource & Permission records exist for any menu with a permission_key.
+     */
+    public function generateMenuPermissions()
+    {
+        $systemModule = Module::where('code', 'system')->first() ?? Module::first();
+        if (!$systemModule) return;
+
+        $viewAction = Action::where('code', 'view')->first() ?? Action::first();
+        if (!$viewAction) return;
+
+        $menusWithKeys = \App\Models\Menu::whereNotNull('permission_key')
+            ->where('permission_key', '!=', '')
+            ->get();
+
+        foreach ($menusWithKeys as $menu) {
+            $permKey = $menu->permission_key;
+            $parts = explode('.', $permKey);
+            $resourceSlug = $parts[0] ?? $permKey;
+            $actionCode = $parts[1] ?? 'view';
+
+            $action = Action::where('code', $actionCode)->first() ?? $viewAction;
+
+            $resource = Resource::firstOrCreate(
+                ['slug' => $resourceSlug],
+                [
+                    'name' => $menu->title ?: Str::title(str_replace(['_', '-'], ' ', $resourceSlug)),
+                    'module_id' => $menu->module_id ?: $systemModule->id,
+                    'description' => "Menu resource for {$menu->title}"
+                ]
+            );
+
+            Permission::firstOrCreate(
+                ['permission_key' => $permKey],
+                [
+                    'resource_id' => $resource->id,
+                    'action_id' => $action->id,
+                    'description' => "Access {$menu->title} Menu"
+                ]
+            );
+        }
     }
 
     public function generateApiEndpoints()
@@ -65,6 +111,8 @@ class PermissionGeneratorService
         if (!empty($toDelete)) {
             Resource::whereIn('slug', $toDelete)->delete();
         }
+
+        \App\Models\User::clearGlobalCache();
     }
 
     private function generateSystemResources()

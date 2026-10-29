@@ -5,7 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
-use App\Services\PermissionSyncService;
+use App\Services\PermissionGeneratorService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -254,11 +254,22 @@ class UserManagementController extends Controller
         ]);
 
         $beforePermissionIds = $role->permissions()->pluck('permissions.id')->toArray();
-        $role->permissions()->sync($validated['permission_ids']);
-        app(\App\Services\RbacAuditService::class)->auditPermissionChange($role, $beforePermissionIds, $validated['permission_ids']);
+
+        // Preserve table access permissions (configured separately in the Table Access modal)
+        $existingTablePermIds = $role->permissions()
+            ->where('permission_key', 'LIKE', 'connection.%.table.%.access')
+            ->pluck('permissions.id')
+            ->toArray();
+
+        $mergedPermissionIds = array_values(array_unique(array_merge($validated['permission_ids'], $existingTablePermIds)));
+
+        $role->permissions()->sync($mergedPermissionIds);
+        app(\App\Services\RbacAuditService::class)->auditPermissionChange($role, $beforePermissionIds, $mergedPermissionIds);
+
         foreach ($role->users as $roleUser) {
             $roleUser->clearAuthorizationCache();
         }
+        User::clearGlobalCache();
         \App\Services\MenuService::clearMenuCache();
 
         return response()->json([
@@ -366,6 +377,13 @@ class UserManagementController extends Controller
 
     public function permissions(): JsonResponse
     {
+        // Auto-generate missing dynamic permissions (entities, endpoints, system, menus)
+        try {
+            app(PermissionGeneratorService::class)->generate();
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Permission generator in permissions() failed: ' . $e->getMessage());
+        }
+
         // 1. Fetch menu tree with permissions
         $menus = \App\Models\Menu::with(['permission.action'])->orderBy('sort_order')->get();
         
@@ -562,7 +580,29 @@ class UserManagementController extends Controller
             'otherPermissions'        => $finalOther,
             'apiEndpointPermissions'  => array_values($apiEndpointPermissions),
             'dbConnectionPermissions' => $dbConnectionPermissions,
-        ]);
+        ])->header('Cache-Control', 'no-cache, no-store, must-revalidate');
+    }
+
+    /**
+     * Force full sync of all permissions and purge authorization cache.
+     */
+    public function syncPermissions(): JsonResponse
+    {
+        try {
+            app(PermissionGeneratorService::class)->generate();
+            User::clearGlobalCache();
+            \App\Services\MenuService::clearMenuCache();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'All permissions and authorization caches synchronized successfully.',
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Permission sync failed: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
     public function getTablePermissions(Request $request, \App\Models\Role $role)
@@ -669,6 +709,7 @@ class UserManagementController extends Controller
         foreach ($role->users as $roleUser) {
             $roleUser->clearAuthorizationCache();
         }
+        User::clearGlobalCache();
         \App\Services\MenuService::clearMenuCache();
 
         return response()->json([

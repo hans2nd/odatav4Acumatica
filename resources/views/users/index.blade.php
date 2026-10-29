@@ -85,12 +85,22 @@
         </div>
 
         {{-- Roles Section --}}
-        <div class="flex justify-between items-center mt-8 animate-fade-up">
-            <h2 class="text-h1 text-surface-800">Roles & Permissions</h2>
-            <button onclick="openCreateRoleModal()"
-                class="flex items-center gap-2 bg-surface-100 text-surface-700 px-4 py-2.5 rounded-xl border border-surface-200 hover:bg-surface-200 transition-all duration-200 text-label-md active:scale-[0.97]">
-                <span class="material-symbols-outlined text-[16px]">add</span> New Role
-            </button>
+        <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mt-8 animate-fade-up">
+            <div>
+                <h2 class="text-h1 text-surface-800">Roles & Permissions</h2>
+                <p class="text-body-sm text-surface-500 mt-0.5">Manage access control matrices, sync permissions, and table rules</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <button type="button" onclick="syncAllPermissions()" id="btn-page-sync-perms"
+                    class="flex items-center gap-1.5 bg-white text-surface-700 px-3.5 py-2.5 rounded-xl border border-surface-200 hover:bg-surface-50 hover:text-brand-600 transition-all duration-200 text-label-md shadow-xs active:scale-[0.97]"
+                    title="Auto-detect all new permissions & purge cache">
+                    <span class="material-symbols-outlined text-[18px]">sync</span> Sync Permissions
+                </button>
+                <button onclick="openCreateRoleModal()"
+                    class="flex items-center gap-2 bg-brand-600 text-white px-4 py-2.5 rounded-xl hover:bg-brand-700 transition-all duration-200 text-label-md shadow-sm active:scale-[0.97]">
+                    <span class="material-symbols-outlined text-[16px]">add</span> New Role
+                </button>
+            </div>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" @foreach ($roles as $role) <div
@@ -224,9 +234,17 @@
         <div class="absolute inset-0 flex items-center justify-center p-4">
             <div
                 class="bg-white rounded-2xl border border-surface-200/60 shadow-2xl w-full max-w-5xl max-h-[80vh] flex flex-col animate-fade-up overflow-hidden">
-                <div class="px-5 py-4 border-b border-surface-100">
-                    <h3 id="perm-modal-title" class="text-h3 text-surface-800">Role Permissions</h3>
-                    <p class="text-body-sm text-surface-500 mt-1">Select permissions for this role</p>
+                <div class="px-5 py-4 border-b border-surface-100 flex items-center justify-between">
+                    <div>
+                        <h3 id="perm-modal-title" class="text-h3 text-surface-800">Role Permissions</h3>
+                        <p class="text-body-sm text-surface-500 mt-1">Select permissions for this role</p>
+                    </div>
+                    <button type="button" onclick="syncPermissionsFromModal()" id="btn-sync-perms"
+                        class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-surface-200 bg-surface-50 text-surface-700 hover:bg-surface-100 hover:text-brand-600 text-label-sm transition-all duration-200 shadow-xs"
+                        title="Auto-detect & sync all dynamic permissions and clear authorization cache">
+                        <span class="material-symbols-outlined text-[16px]">sync</span>
+                        <span>Sync Permissions</span>
+                    </button>
                 </div>
                 <div id="perm-content" class="p-5 overflow-y-auto flex-1">
                     <p class="text-surface-500">Loading...</p>
@@ -470,12 +488,14 @@
 
             try {
                 const [permRes, roleRes] = await Promise.all([
-                    fetch('/api/permissions', {
+                    fetch(`/api/permissions?_t=${Date.now()}`, {
+                        cache: 'no-store',
                         headers: {
                             'Accept': 'application/json'
                         }
                     }),
-                    fetch(`/api/roles/${roleId}`, {
+                    fetch(`/api/roles/${roleId}?_t=${Date.now()}`, {
+                        cache: 'no-store',
                         headers: {
                             'Accept': 'application/json'
                         }
@@ -834,6 +854,49 @@
             } catch (err) {
                 showToast(err.message, 'error');
             }
+        }
+
+        async function syncAllPermissions(btnId = 'btn-page-sync-perms') {
+            const btn = document.getElementById(btnId);
+            const origHtml = btn ? btn.innerHTML : '';
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = `<span class="material-symbols-outlined text-[18px] animate-spin">sync</span> Syncing...`;
+            }
+
+            try {
+                const res = await fetch('/api/permissions/sync', {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRF-TOKEN': csrfToken,
+                        'Accept': 'application/json'
+                    }
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast(data.message || 'Permissions synchronized successfully!', 'success');
+                    if (currentPermRoleId && !document.getElementById('perm-modal').classList.contains('hidden')) {
+                        const titleEl = document.getElementById('perm-modal-title');
+                        const roleName = titleEl ? titleEl.textContent.replace('Permissions - ', '').trim() : '';
+                        openRolePermissionsModal(currentPermRoleId, roleName, false);
+                    } else {
+                        setTimeout(() => location.reload(), 600);
+                    }
+                } else {
+                    showToast(data.message || 'Sync failed', 'error');
+                }
+            } catch (err) {
+                showToast(err.message, 'error');
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = origHtml;
+                }
+            }
+        }
+
+        function syncPermissionsFromModal() {
+            syncAllPermissions('btn-sync-perms');
         }
 
         function openCreateRoleModal() {

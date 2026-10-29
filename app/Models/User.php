@@ -84,6 +84,23 @@ class User extends Authenticatable
         } catch (\Throwable $e) {
             Cache::forget("user_perm_ver_{$this->id}");
         }
+
+        self::clearGlobalCache();
+    }
+
+    /**
+     * Clear system-wide authorization and menu caches for all users immediately.
+     */
+    public static function clearGlobalCache(): void
+    {
+        try {
+            $ver = (int) Cache::get('global_perm_ver', 1);
+            Cache::put('global_perm_ver', $ver + 1, 86400 * 30);
+        } catch (\Throwable $e) {
+            Cache::forget('global_perm_ver');
+        }
+
+        \App\Services\MenuService::clearMenuCache();
     }
 
     /**
@@ -108,8 +125,9 @@ class User extends Authenticatable
             return $this->cachedIsSuperAdmin;
         }
 
+        $globalVer = Cache::get('global_perm_ver', 1);
         $userPermVer = Cache::get("user_perm_ver_{$this->id}", 1);
-        $cacheKey = "user_is_superadmin_{$this->id}_v{$userPermVer}";
+        $cacheKey = "user_is_superadmin_{$this->id}_g{$globalVer}_v{$userPermVer}";
 
         $this->cachedIsSuperAdmin = Cache::remember($cacheKey, 3600, function () {
             return $this->roles()
@@ -130,8 +148,9 @@ class User extends Authenticatable
             return; // Already loaded in request memory
         }
 
+        $globalVer = Cache::get('global_perm_ver', 1);
         $userPermVer = Cache::get("user_perm_ver_{$this->id}", 1);
-        $cacheKey = "user_perms_{$this->id}_v{$userPermVer}";
+        $cacheKey = "user_perms_{$this->id}_g{$globalVer}_v{$userPermVer}";
 
         $this->cachedPermissionsList = Cache::remember($cacheKey, 3600, function () {
             $roleIds = $this->roles()->where('roles.is_active', true)->pluck('roles.id');

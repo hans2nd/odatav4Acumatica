@@ -18,6 +18,12 @@ class MenuService
         } catch (\Throwable $e) {
             Cache::forget('menus_version');
         }
+        try {
+            $globalVer = (int) Cache::get('global_perm_ver', 1);
+            Cache::put('global_perm_ver', $globalVer + 1, 86400 * 30);
+        } catch (\Throwable $e) {
+            Cache::forget('global_perm_ver');
+        }
         Cache::forget('sidebar_menus');
     }
 
@@ -33,8 +39,13 @@ class MenuService
             } catch (\Throwable $e) {
                 Cache::forget("user_perm_ver_{$userId}");
             }
-        } else {
-            self::clearMenuCache();
+        }
+        self::clearMenuCache();
+        try {
+            $globalVer = (int) Cache::get('global_perm_ver', 1);
+            Cache::put('global_perm_ver', $globalVer + 1, 86400 * 30);
+        } catch (\Throwable $e) {
+            Cache::forget('global_perm_ver');
         }
     }
 
@@ -48,9 +59,10 @@ class MenuService
             return [];
         }
 
+        $globalVer = Cache::get('global_perm_ver', 1);
         $menuVersion = Cache::get('menus_version', 1);
         $userPermVersion = Cache::get("user_perm_ver_{$user->id}", 1);
-        $cacheKey = "user_menus_{$user->id}_v{$menuVersion}_{$userPermVersion}";
+        $cacheKey = "user_menus_{$user->id}_g{$globalVer}_v{$menuVersion}_{$userPermVersion}";
 
         return Cache::remember($cacheKey, 3600, function () use ($user) {
             return $this->buildUserMenus($user);
