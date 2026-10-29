@@ -33,18 +33,18 @@ class ReportBuilderController extends Controller
         foreach ($all as $key => $conn) {
             // Only include active and connected database-type connections
             if (in_array($conn['type'] ?? '', \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes()) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
-                
+
                 // Check permissions
                 if ($user && !$user->isSuperAdmin() && !$user->hasPermission("connection.{$key}.access")) {
                     continue;
                 }
 
                 $dbConnections[] = [
-                    'key'  => $key,
+                    'key' => $key,
                     'name' => $conn['name'] ?? $key,
                     'type' => $conn['type'],
                 ];
-                
+
                 // Preload tables for this connection using unified filtering logic
                 try {
                     $allTables[$key] = $this->resolveTablesForConnection($key, $user, false);
@@ -56,7 +56,7 @@ class ReportBuilderController extends Controller
 
         $templates = \App\Models\ReportTemplate::with('roles')
             ->where('user_id', $user ? $user->id : null)
-            ->orWhereHas('roles', function($q) use ($user) {
+            ->orWhereHas('roles', function ($q) use ($user) {
                 if ($user) {
                     $q->whereIn('roles.id', $user->roles->pluck('id'));
                 }
@@ -65,10 +65,10 @@ class ReportBuilderController extends Controller
             ->get();
 
         return view('reports.report-builder', [
-            'activeTab'   => 'report.builder',
+            'activeTab' => 'report.builder',
             'connections' => $dbConnections,
-            'allTables'   => $allTables,
-            'templates'   => $templates,
+            'allTables' => $allTables,
+            'templates' => $templates,
         ]);
     }
 
@@ -81,14 +81,33 @@ class ReportBuilderController extends Controller
         $tables = [];
 
         $systemTables = [
-            'migrations', 'users', 'password_reset_tokens', 'personal_access_tokens',
-            'failed_jobs', 'jobs', 'api_endpoints', 'connections',
-            'sync_jobs', 'sync_logs', 'sync_metadata_definitions',
-            'sync_metadata_fields', 'sync_metadata_history',
-            'sync_metadata_refresh_history', 'permissions', 'roles',
-            'model_has_permissions', 'model_has_roles', 'role_has_permissions',
-            'cache', 'cache_locks', 'sessions', 'rbac_audit_logs', 'report_templates',
-            'report_template_role', 'sync_entities', 'sync_field_mappings',
+            'migrations',
+            'users',
+            'password_reset_tokens',
+            'personal_access_tokens',
+            'failed_jobs',
+            'jobs',
+            'api_endpoints',
+            'connections',
+            'sync_jobs',
+            'sync_logs',
+            'sync_metadata_definitions',
+            'sync_metadata_fields',
+            'sync_metadata_history',
+            'sync_metadata_refresh_history',
+            'permissions',
+            'roles',
+            'model_has_permissions',
+            'model_has_roles',
+            'role_has_permissions',
+            'cache',
+            'cache_locks',
+            'sessions',
+            'rbac_audit_logs',
+            'report_templates',
+            'report_template_role',
+            'sync_entities',
+            'sync_field_mappings',
         ];
 
         // Collect all configured tables for this connection from Entity Configuration
@@ -146,7 +165,7 @@ class ReportBuilderController extends Controller
         foreach ($all as $key => $conn) {
             // Only include active and connected database-type connections
             if (in_array($conn['type'] ?? '', \App\Services\Connections\ConnectionProviderFactory::getDatabaseTypes()) && ($conn['is_active'] ?? true) && !empty($conn['is_connected'])) {
-                
+
                 // Check permissions
                 if ($user && !$user->isSuperAdmin() && !$user->hasPermission("connection.{$key}.access")) {
                     continue;
@@ -157,7 +176,7 @@ class ReportBuilderController extends Controller
                     \Illuminate\Support\Facades\DB::connection($connName)->getPdo();
 
                     $dbConnections[] = [
-                        'key'  => $key,
+                        'key' => $key,
                         'name' => $conn['name'] ?? $key,
                         'type' => $conn['type'],
                     ];
@@ -223,7 +242,7 @@ class ReportBuilderController extends Controller
     public function columns(Request $request, \App\Contracts\Metadata\MetadataRepositoryInterface $metadataRepository): JsonResponse
     {
         $connKey = $request->input('connection');
-        $table   = $request->input('table');
+        $table = $request->input('table');
 
         if (!$connKey || !$table) {
             return response()->json(['success' => false, 'message' => 'Connection and table are required.'], 400);
@@ -240,7 +259,7 @@ class ReportBuilderController extends Controller
             if (!$result->isSuccess) {
                 return response()->json(['success' => false, 'message' => 'Failed to fetch columns: ' . $result->errorMessage], 500);
             }
-            
+
             $columns = array_column($result->fields, 'name');
 
             return response()->json(['success' => true, 'columns' => $columns]);
@@ -256,18 +275,18 @@ class ReportBuilderController extends Controller
     {
         $request->validate([
             'connection' => 'required|string',
-            'table'      => 'required|string',
-            'columns'    => 'required|array|min:1',
-            'format'     => 'required|in:csv,xlsx',
-            'filters'    => 'nullable|array',
+            'table' => 'required|string',
+            'columns' => 'required|array|min:1',
+            'format' => 'required|in:csv,xlsx',
+            'filters' => 'nullable|array',
         ]);
 
         $connKey = $request->input('connection');
-        $table   = $request->input('table');
+        $table = $request->input('table');
         $columns = $request->input('columns');
-        $format  = $request->input('format');
+        $format = $request->input('format');
         $filters = $request->input('filters', []);
-        
+
         $downloadId = $request->input('download_id');
         $locale = $request->input('locale', 'id-ID'); // default to ID
         $timezone = $request->input('timezone', 'Asia/Jakarta');
@@ -282,7 +301,7 @@ class ReportBuilderController extends Controller
             $node = $this->connectionManager->discoverStructure($connKey, $table);
             $availableColumns = [];
             foreach ($node->properties as $prop) {
-                $availableColumns[] = is_array($prop) ? ($prop['name'] ?? $prop['Field'] ?? '') : (string)$prop;
+                $availableColumns[] = is_array($prop) ? ($prop['name'] ?? $prop['Field'] ?? '') : (string) $prop;
             }
             $availableColumns = array_filter($availableColumns);
             $validColumns = array_intersect($columns, $availableColumns);
@@ -292,7 +311,7 @@ class ReportBuilderController extends Controller
                 $node = $this->connectionManager->discoverStructure($connKey, $table, true);
                 $availableColumns = [];
                 foreach ($node->properties as $prop) {
-                    $availableColumns[] = is_array($prop) ? ($prop['name'] ?? $prop['Field'] ?? '') : (string)$prop;
+                    $availableColumns[] = is_array($prop) ? ($prop['name'] ?? $prop['Field'] ?? '') : (string) $prop;
                 }
                 $availableColumns = array_filter($availableColumns);
                 $validColumns = array_intersect($columns, $availableColumns);
@@ -308,43 +327,67 @@ class ReportBuilderController extends Controller
             // Apply filters
             foreach ($filters as $filter) {
                 $field = $filter['field'] ?? null;
-                $op    = $filter['operator'] ?? 'eq';
+                $op = $filter['operator'] ?? 'eq';
                 $value = $filter['value'] ?? null;
 
                 if (!$field || $value === null || $value === '' || !in_array($field, $availableColumns)) {
                     continue;
                 }
-                
+
                 // Detect if the value is exactly YYYY-MM-DD (Date Picker format)
                 $isDateOnly = preg_match('/^\d{4}-\d{2}-\d{2}$/', $value);
 
                 switch ($op) {
-                    case 'eq':         
-                        if ($isDateOnly) { $query->whereDate($field, '=', $value); } else { $query->where($field, '=', $value); }
+                    case 'eq':
+                        if ($isDateOnly) {
+                            $query->whereDate($field, '=', $value);
+                        } else {
+                            $query->where($field, '=', $value);
+                        }
                         break;
-                    case 'ne':         
-                        if ($isDateOnly) { $query->whereDate($field, '!=', $value); } else { $query->where($field, '!=', $value); }
+                    case 'ne':
+                        if ($isDateOnly) {
+                            $query->whereDate($field, '!=', $value);
+                        } else {
+                            $query->where($field, '!=', $value);
+                        }
                         break;
-                    case 'contains':   
-                        $query->where($field, 'like', '%' . $value . '%'); 
+                    case 'contains':
+                        $query->where($field, 'like', '%' . $value . '%');
                         break;
-                    case 'startswith': 
-                        $query->where($field, 'like', $value . '%'); 
+                    case 'startswith':
+                        $query->where($field, 'like', $value . '%');
                         break;
-                    case 'endswith':   
-                        $query->where($field, 'like', '%' . $value); 
+                    case 'endswith':
+                        $query->where($field, 'like', '%' . $value);
                         break;
-                    case 'gt':         
-                        if ($isDateOnly) { $query->whereDate($field, '>', $value); } else { $query->where($field, '>', $value); }
+                    case 'gt':
+                        if ($isDateOnly) {
+                            $query->whereDate($field, '>', $value);
+                        } else {
+                            $query->where($field, '>', $value);
+                        }
                         break;
-                    case 'ge':         
-                        if ($isDateOnly) { $query->whereDate($field, '>=', $value); } else { $query->where($field, '>=', $value); }
+                    case 'ge':
+                        if ($isDateOnly) {
+                            $query->whereDate($field, '>=', $value);
+                        } else {
+                            $query->where($field, '>=', $value);
+                        }
                         break;
-                    case 'lt':         
-                        if ($isDateOnly) { $query->whereDate($field, '<', $value); } else { $query->where($field, '<', $value); }
+                    case 'lt':
+                        if ($isDateOnly) {
+                            $query->whereDate($field, '<', $value);
+                        } else {
+                            $query->where($field, '<', $value);
+                        }
                         break;
-                    case 'le':         
-                        if ($isDateOnly) { $query->whereDate($field, '<=', $value); } else { $query->where($field, '<=', $value); }
+                    case 'le':
+                        if ($isDateOnly) {
+                            $query->whereDate($field, '<=', $value);
+                        } else {
+                            $query->where($field, '<=', $value);
+                        }
                         break;
                 }
             }
@@ -357,25 +400,25 @@ class ReportBuilderController extends Controller
             $cacheKey = $reportCache->generateCacheKey('report_builder', $connKey, $table, [
                 'columns' => $validColumns,
                 'filters' => $filters,
-                'locale'  => $locale,
-                'timezone'=> $timezone,
+                'locale' => $locale,
+                'timezone' => $timezone,
             ], $format);
 
             $cachedReport = $reportCache->getCachedReport($cacheKey, $format);
             if ($cachedReport) {
                 $token = Str::random(32);
                 \Illuminate\Support\Facades\Cache::put("report_download_{$token}", [
-                    'path'      => $cachedReport['path'],
-                    'filename'  => $downloadName,
+                    'path' => $cachedReport['path'],
+                    'filename' => $downloadName,
                     'is_cached' => true,
                 ], now()->addHour());
 
                 return response()->json([
-                    'success'   => true,
-                    'token'     => $token,
-                    'filename'  => $downloadName,
-                    'size'      => $this->formatBytes($cachedReport['size']),
-                    'cached'    => true,
+                    'success' => true,
+                    'token' => $token,
+                    'filename' => $downloadName,
+                    'size' => $this->formatBytes($cachedReport['size']),
+                    'cached' => true,
                 ]);
             }
 
@@ -385,7 +428,7 @@ class ReportBuilderController extends Controller
 
             // Now apply the select to the main query
             $query->select($validColumns);
-            
+
             $firstRow = $countResult['data'][0] ?? null;
             $totalRows = 0;
             if ($firstRow) {
@@ -412,7 +455,8 @@ class ReportBuilderController extends Controller
                             }
                         }
                     }
-                } catch (\Throwable $e) {}
+                } catch (\Throwable $e) {
+                }
             }
 
             $writer->addHeader($validColumns);
@@ -423,7 +467,8 @@ class ReportBuilderController extends Controller
                 try {
                     $numFormatter = new \NumberFormatter($locale, \NumberFormatter::DECIMAL);
                     $numFormatter->setAttribute(\NumberFormatter::MAX_FRACTION_DIGITS, 4);
-                } catch (\Throwable $e) {}
+                } catch (\Throwable $e) {
+                }
             }
 
             $count = 0;
@@ -435,39 +480,41 @@ class ReportBuilderController extends Controller
                 $rowArray = [];
                 foreach ($validColumns as $col) {
                     $val = $row->{$col} ?? '';
-                    
+
                     // Format numbers with thousand separator
                     if (is_numeric($val) && strpos($col, 'ID') === false && strpos($col, 'CD') === false && strpos($col, 'Nbr') === false && strpos(strtolower($col), 'phone') === false) {
                         if ($format === 'xlsx') {
-                            $val = (float)$val;
+                            $val = (float) $val;
                         } else {
                             if ($numFormatter) {
-                                $val = $numFormatter->format((float)$val);
+                                $val = $numFormatter->format((float) $val);
                             } else {
-                                $val = number_format((float)$val, 2, ',', '.'); // Fallback to ID format
+                                $val = number_format((float) $val, 2, ',', '.'); // Fallback to ID format
                             }
                         }
-                    } 
+                    }
                     // Format Dates
                     elseif (is_string($val) && preg_match('/^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$/i', trim($val))) {
                         $hasTime = preg_match('/[ T]\d{2}:\d{2}/', trim($val));
                         if ($format === 'xlsx') {
                             try {
-                                 // Return formatted string instead of DateTime object to prevent Excel from showing raw serial numbers (e.g., 45600)
-                                 $val = \Carbon\Carbon::parse(trim($val))->timezone($timezone)->format($hasTime ? 'Y-m-d H:i:s' : 'Y-m-d');
-                            } catch (\Throwable $e) {}
+                                // Return formatted string instead of DateTime object to prevent Excel from showing raw serial numbers (e.g., 45600)
+                                $val = \Carbon\Carbon::parse(trim($val))->timezone($timezone)->format($hasTime ? 'Y-m-d H:i:s' : 'Y-m-d');
+                            } catch (\Throwable $e) {
+                            }
                         } else {
                             try {
                                 $carbon = \Carbon\Carbon::parse(trim($val))->timezone($timezone)->locale($locale);
                                 $val = $carbon->translatedFormat($hasTime ? 'd M Y H:i:s' : 'd M Y');
-                            } catch (\Throwable $e) {}
+                            } catch (\Throwable $e) {
+                            }
                         }
                     }
 
                     $rowArray[$col] = $val;
                 }
                 $writer->addRow($rowArray);
-                
+
                 $count++;
                 if ($count % 500 === 0) {
                     if ($downloadId) {
@@ -488,16 +535,16 @@ class ReportBuilderController extends Controller
 
             $token = Str::random(32);
             \Illuminate\Support\Facades\Cache::put("report_download_{$token}", [
-                'path'      => $filePath,
-                'filename'  => $downloadName,
+                'path' => $filePath,
+                'filename' => $downloadName,
                 'is_cached' => true,
             ], now()->addHour());
 
             return response()->json([
-                'success'  => true,
-                'token'    => $token,
+                'success' => true,
+                'token' => $token,
                 'filename' => $downloadName,
-                'size'     => $this->formatBytes(filesize($filePath)),
+                'size' => $this->formatBytes(filesize($filePath)),
             ]);
         } catch (\Throwable $e) {
             Log::error('Report Builder prepare failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
@@ -564,7 +611,8 @@ class ReportBuilderController extends Controller
                     }
                 }
             }
-        } catch (\Throwable $e) {}
+        } catch (\Throwable $e) {
+        }
 
         $writer->addHeader($columns);
 
@@ -583,9 +631,12 @@ class ReportBuilderController extends Controller
      */
     private function formatBytes(int $bytes): string
     {
-        if ($bytes >= 1073741824) return number_format($bytes / 1073741824, 2) . ' GB';
-        if ($bytes >= 1048576) return number_format($bytes / 1048576, 2) . ' MB';
-        if ($bytes >= 1024) return number_format($bytes / 1024, 2) . ' KB';
+        if ($bytes >= 1073741824)
+            return number_format($bytes / 1073741824, 2) . ' GB';
+        if ($bytes >= 1048576)
+            return number_format($bytes / 1048576, 2) . ' MB';
+        if ($bytes >= 1024)
+            return number_format($bytes / 1024, 2) . ' KB';
         return $bytes . ' bytes';
     }
 

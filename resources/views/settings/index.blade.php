@@ -397,15 +397,90 @@
     </x-ui.modal>
 
     {{-- ── Field Management Modal ─────────────────────────────────────── --}}
-    <x-ui.modal id="fields-modal" title='Manage Fields: <span id="fields-modal-entity-name" class="font-mono text-brand-600 ml-1"></span>' titleIcon="list_alt" maxWidth="6xl">
-        <div class="p-4 border-b border-surface-100 shrink-0 flex justify-between items-center" style="background: linear-gradient(180deg, rgba(248,250,252,0.5) 0%, transparent 100%);">
-            <div class="relative w-64">
-                <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-surface-400 text-[18px]">search</span>
-                <input type="text" id="fields-search" onkeyup="filterFieldsTable()" placeholder="Search fields..." class="ui-input pl-9 pr-3 py-2" style="background:#fff;">
+    <x-ui.modal id="fields-modal" title='Manage Fields: <span id="fields-modal-entity-name" class="font-mono text-brand-600 ml-1"></span>' titleIcon="list_alt" maxWidth="7xl">
+        {{-- Top Toolbar: Search, Filter Pills, and Bulk Key Actions --}}
+        <div class="p-4 border-b border-surface-100 shrink-0 space-y-3" style="background: linear-gradient(180deg, rgba(248,250,252,0.7) 0%, rgba(255,255,255,0.4) 100%);">
+            <div class="flex flex-wrap justify-between items-center gap-3">
+                {{-- Search + Filter Pills --}}
+                <div class="flex flex-wrap items-center gap-2 flex-1 min-w-[280px]">
+                    <div class="relative w-64">
+                        <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-surface-400 text-[18px]">search</span>
+                        <input type="text" id="fields-search" oninput="filterFieldsTable()" placeholder="Search field, column, label..." class="ui-input pl-9 pr-8 py-1.5 text-sm" style="background:#fff;">
+                        <button type="button" id="fields-search-clear" onclick="clearFieldsSearch()" class="hidden absolute right-2.5 top-1/2 -translate-y-1/2 text-surface-400 hover:text-surface-600">
+                            <span class="material-symbols-outlined text-[16px]">close</span>
+                        </button>
+                    </div>
+
+                    {{-- Quick Filter Pills --}}
+                    <div class="inline-flex items-center bg-surface-100/80 p-1 rounded-xl border border-surface-200/70 gap-1">
+                        <button type="button" id="fields-filter-all" onclick="setFieldsFilterMode('all')"
+                            class="fields-filter-pill px-2.5 py-1 rounded-lg text-xs font-semibold transition-all bg-white text-surface-900 shadow-sm">
+                            All <span id="badge-count-all" class="ml-1 text-[11px] text-surface-500">0</span>
+                        </button>
+                        <button type="button" id="fields-filter-keys" onclick="setFieldsFilterMode('keys')"
+                            class="fields-filter-pill px-2.5 py-1 rounded-lg text-xs font-medium transition-all text-surface-600 hover:text-surface-900 flex items-center gap-1">
+                            <span class="material-symbols-outlined text-[14px] text-amber-500">vpn_key</span>
+                            Unique Keys <span id="badge-count-keys" class="ml-0.5 px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 text-[11px] font-bold">0</span>
+                        </button>
+                        <button type="button" id="fields-filter-candidates" onclick="setFieldsFilterMode('candidates')"
+                            class="fields-filter-pill px-2.5 py-1 rounded-lg text-xs font-medium transition-all text-surface-600 hover:text-surface-900 flex items-center gap-1"
+                            title="Show fields matching ID / Code / Key / Number patterns">
+                            <span class="material-symbols-outlined text-[14px] text-brand-500">bolt</span>
+                            ID / Key Candidates <span id="badge-count-candidates" class="ml-0.5 text-[11px] text-surface-500">0</span>
+                        </button>
+                        <button type="button" id="fields-filter-enabled" onclick="setFieldsFilterMode('enabled')"
+                            class="fields-filter-pill px-2.5 py-1 rounded-lg text-xs font-medium transition-all text-surface-600 hover:text-surface-900">
+                            Enabled <span id="badge-count-enabled" class="ml-0.5 text-[11px] text-surface-500">0</span>
+                        </button>
+                    </div>
+                </div>
+
+                {{-- Right Action Buttons --}}
+                <div class="flex flex-wrap items-center gap-2">
+                    {{-- Quick Key Actions Group --}}
+                    <div class="inline-flex items-center rounded-xl border border-amber-200 bg-amber-50/60 p-0.5 gap-0.5">
+                        <button type="button" onclick="autoDetectKeyFields()"
+                            class="px-2.5 py-1.5 rounded-lg text-xs font-semibold text-amber-800 hover:bg-amber-100/80 transition-colors inline-flex items-center gap-1"
+                            title="Otomatis pilih kolom ID/Key utama sebagai Unique Key">
+                            <span class="material-symbols-outlined text-[15px] text-amber-600">magic_button</span>
+                            Auto-Detect Key
+                        </button>
+                        <button type="button" onclick="setVisibleFieldsKey(true)"
+                            class="px-2.5 py-1.5 rounded-lg text-xs font-medium text-amber-800 hover:bg-amber-100/80 transition-colors inline-flex items-center gap-1 border-l border-amber-200/70"
+                            title="Jadikan semua field yang tampil saat ini sebagai Unique Key">
+                            <span class="material-symbols-outlined text-[15px] text-amber-600">done_all</span>
+                            Check Visible Keys
+                        </button>
+                        <button type="button" onclick="clearAllKeyFields()"
+                            class="px-2 py-1.5 rounded-lg text-xs font-medium text-amber-700 hover:bg-red-50 hover:text-red-600 transition-colors inline-flex items-center gap-0.5 border-l border-amber-200/70"
+                            title="Reset / hapus semua pilihan Unique Key">
+                            <span class="material-symbols-outlined text-[15px]">restart_alt</span>
+                            Reset Key
+                        </button>
+                    </div>
+
+                    <button type="button" id="btn-sort-keys-first" onclick="toggleSortKeysFirst()"
+                        class="px-2.5 py-1.5 rounded-xl border border-surface-200 bg-white text-xs font-medium text-surface-700 hover:bg-surface-50 transition-colors inline-flex items-center gap-1"
+                        title="Tampilkan kolom Unique Key di urutan paling atas">
+                        <span class="material-symbols-outlined text-[15px]">swap_vert</span>
+                        <span>Keys First</span>
+                    </button>
+
+                    <x-ui.btn variant="accent" icon="auto_awesome" size="sm" id="btn-suggest-fields-ai" onclick="suggestFieldsAI()">Auto-Suggest (AI)</x-ui.btn>
+                    <x-ui.btn variant="secondary" icon="sync" size="sm" id="btn-discover-fields" onclick="discoverFields()">Refresh Metadata</x-ui.btn>
+                </div>
             </div>
-            <div class="flex gap-2">
-                <x-ui.btn variant="accent" icon="auto_awesome" size="sm" id="btn-suggest-fields-ai" onclick="suggestFieldsAI()">Auto-Suggest (AI)</x-ui.btn>
-                <x-ui.btn variant="secondary" icon="sync" size="sm" id="btn-discover-fields" onclick="discoverFields()">Refresh Metadata</x-ui.btn>
+
+            {{-- Selected Unique Keys Interactive Chips Bar --}}
+            <div id="active-keys-bar" class="flex flex-wrap items-center gap-2 px-3 py-2 rounded-xl bg-amber-50/70 border border-amber-200/80 text-xs">
+                <span class="font-semibold text-amber-900 inline-flex items-center gap-1 shrink-0">
+                    <span class="material-symbols-outlined text-[16px] text-amber-600">vpn_key</span>
+                    Unique Key Table:
+                </span>
+                <div id="active-keys-chips" class="flex flex-wrap items-center gap-1.5 flex-1">
+                    <!-- Populated by JS -->
+                </div>
+                <span class="text-[11px] text-amber-700/80 hidden sm:inline shrink-0">Tip: Gunakan <strong>Shift + Klik</strong> untuk checklist banyak baris sekaligus</span>
             </div>
         </div>
 
@@ -418,19 +493,32 @@
             <table class="ui-table" id="fields-table">
                 <thead class="bg-surface-50 sticky top-0 z-10 shadow-sm shadow-surface-100/50">
                     <tr>
-                        <th class="w-12 text-center">
+                        <th class="w-12 text-center" title="Enable / Disable visible fields">
                             <input type="checkbox" id="fields-toggle-all" onchange="toggleAllFields(this)" class="ui-checkbox">
                         </th>
-                        <th class="min-w-[160px]">Source Field</th>
-                        <th class="min-w-[180px]">Destination Column</th>
-                        <th class="min-w-[140px]">Data Type</th>
-                        <th class="min-w-[140px]">Semantic Type</th>
-                        <th class="min-w-[160px]">Label</th>
-                        <th class="min-w-[220px]">Description</th>
-                        <th class="min-w-[160px]">Aliases</th>
-                        <th class="w-24 text-center">Is Key</th>
-                        <th class="w-24 text-center">Nullable</th>
-                        <th class="min-w-[140px]">Transform</th>
+                        <th class="w-28 text-center bg-amber-50/60 border-x border-amber-100/80" title="Toggle Unique Key untuk semua field yang tampil">
+                            <label class="inline-flex items-center justify-center gap-1.5 cursor-pointer select-none text-amber-900 font-semibold">
+                                <input type="checkbox" id="fields-toggle-all-keys" onchange="toggleAllVisibleKeys(this)" class="w-4 h-4 text-amber-500 rounded border-amber-300 focus:ring-amber-500 cursor-pointer">
+                                <span class="inline-flex items-center gap-0.5 text-xs">
+                                    <span class="material-symbols-outlined text-[14px] text-amber-600">vpn_key</span>
+                                    Is Key
+                                </span>
+                            </label>
+                        </th>
+                        <th class="min-w-[190px]">Source Field</th>
+                        <th class="min-w-[170px]">Destination Column</th>
+                        <th class="min-w-[145px]">Data Type</th>
+                        <th class="min-w-[145px]">Semantic Type</th>
+                        <th class="w-24 text-center" title="Toggle Nullable untuk semua field yang tampil">
+                            <label class="inline-flex items-center justify-center gap-1 cursor-pointer select-none">
+                                <input type="checkbox" id="fields-toggle-all-nullable" onchange="toggleAllVisibleNullable(this)" class="ui-checkbox">
+                                <span>Nullable</span>
+                            </label>
+                        </th>
+                        <th class="min-w-[150px]">Label</th>
+                        <th class="min-w-[200px]">Description</th>
+                        <th class="min-w-[150px]">Aliases</th>
+                        <th class="min-w-[130px]">Transform</th>
                     </tr>
                 </thead>
                 <tbody id="fields-tbody" class="divide-y divide-surface-100 text-body-sm">
@@ -441,7 +529,11 @@
 
         <x-slot:footer>
             <div class="flex justify-between items-center w-full">
-                <div class="text-label-sm text-surface-500" id="fields-count-summary">0 fields total</div>
+                <div class="flex items-center gap-3">
+                    <div class="text-label-sm text-surface-500" id="fields-count-summary">0 fields total</div>
+                    <span class="text-surface-300">|</span>
+                    <div class="text-label-sm font-medium text-amber-700" id="fields-keys-summary">0 unique keys selected</div>
+                </div>
                 <div class="flex gap-2">
                     <x-ui.btn variant="secondary" onclick="closeFieldsModal()">Cancel</x-ui.btn>
                     <x-ui.btn variant="primary" icon="save" id="fields-submit-btn" onclick="submitFieldsForm()">Save Mappings</x-ui.btn>
