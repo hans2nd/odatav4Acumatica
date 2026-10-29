@@ -397,7 +397,7 @@
     </x-ui.modal>
 
     {{-- ── Field Management Modal ─────────────────────────────────────── --}}
-    <x-ui.modal id="fields-modal" title='Manage Fields: <span id="fields-modal-entity-name" class="font-mono text-brand-600 ml-1"></span>' titleIcon="list_alt" maxWidth="7xl">
+    <x-ui.modal id="fields-modal" title='Manage Fields: <span id="fields-modal-entity-name" class="font-mono text-brand-600 ml-1"></span>' titleIcon="list_alt" maxWidth="6xl">
         {{-- Top Toolbar: Search, Filter Pills, and Bulk Key Actions --}}
         <div class="p-4 border-b border-surface-100 shrink-0 space-y-3" style="background: linear-gradient(180deg, rgba(248,250,252,0.7) 0%, rgba(255,255,255,0.4) 100%);">
             <div class="flex flex-wrap justify-between items-center gap-3">

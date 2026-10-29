@@ -758,7 +758,6 @@
 
     function renderFieldsTable() {
         const tbody = document.getElementById('fields-tbody');
-        const filter = document.getElementById('fields-search').value.toLowerCase();
         const searchInput = document.getElementById('fields-search');
         const filter = (searchInput ? searchInput.value : '').trim().toLowerCase();
         const clearBtn = document.getElementById('fields-search-clear');
@@ -784,46 +783,32 @@
         currentVisibleFieldIndices = indexedItems.map(item => item.index);
 
         let html = '';
-        let count = 0;
-        let allEnabled = true;
         let count = indexedItems.length;
         let visibleEnabledCount = 0;
         let visibleKeyCount = 0;
         let visibleNullableCount = 0;
 
-        currentFieldsData.forEach((field, index) => {
-            if (filter && !field.source_field.toLowerCase().includes(filter) && !(field.destination_field || '').toLowerCase().includes(filter)) {
-                return;
-            }
-            count++;
+        indexedItems.forEach(({ field, index }, visiblePos) => {
+            const isEnabled = field.is_enabled !== false;
+            const isKey = !!field.is_key;
+            const isNullable = field.is_nullable !== false;
+            const isCandidate = !isKey && isKeyCandidateField(field.source_field, field);
 
-            if (field.is_enabled === false) {
-                allEnabled = false;
-            }
-            indexedItems.forEach(({ field, index }, visiblePos) => {
-                const isEnabled = field.is_enabled !== false;
-                const isKey = !!field.is_key;
-                const isNullable = field.is_nullable !== false;
-                const isCandidate = !isKey && isKeyCandidateField(field.source_field, field);
+            if (isEnabled) visibleEnabledCount++;
+            if (isKey) visibleKeyCount++;
+            if (isNullable) visibleNullableCount++;
 
-                if (isEnabled) visibleEnabledCount++;
-                if (isKey) visibleKeyCount++;
-                if (isNullable) visibleNullableCount++;
+            const rowBgClass = isKey
+                ? 'bg-amber-50/40 hover:bg-amber-50/70'
+                : 'hover:bg-surface-50/50';
 
-                const rowBgClass = isKey
-                    ? 'bg-amber-50/40 hover:bg-amber-50/70'
-                    : 'hover:bg-surface-50/50';
+            const keyBtnClass = isKey
+                ? 'bg-amber-500 text-white border-amber-500 shadow-sm hover:bg-amber-600'
+                : (isCandidate
+                    ? 'bg-amber-50/80 text-amber-700 border-amber-200 hover:bg-amber-100 hover:border-amber-300'
+                    : 'bg-white text-surface-400 border-surface-200 hover:text-amber-600 hover:border-amber-300 hover:bg-amber-50/40');
 
-                const keyBtnClass = isKey
-                    ? 'bg-amber-500 text-white border-amber-500 shadow-sm hover:bg-amber-600'
-                    : (isCandidate
-                        ? 'bg-amber-50/80 text-amber-700 border-amber-200 hover:bg-amber-100 hover:border-amber-300'
-                        : 'bg-white text-surface-400 border-surface-200 hover:text-amber-600 hover:border-amber-300 hover:bg-amber-50/40');
-
-                html += `
-                <tr class="hover:bg-surface-50/50 transition-colors" data-index="${index}">
-                    <td class="py-2.5 px-4 text-center border-b border-surface-100">
-                        <input type="checkbox" class="field-enabled ui-checkbox" ${field.is_enabled !== false ? 'checked' : ''} onchange="updateFieldData(${index}, 'is_enabled', this.checked)">
+            html += `
                 <tr class="${rowBgClass} transition-colors" data-index="${index}" data-visible-pos="${visiblePos}">
                     <td class="py-2.5 px-3 text-center border-b border-surface-100">
                         <input type="checkbox" class="field-enabled ui-checkbox cursor-pointer" ${isEnabled ? 'checked' : ''}
@@ -839,7 +824,6 @@
                         </button>
                     </td>
                     <td class="py-2.5 px-4 border-b border-surface-100 font-mono text-surface-900 font-medium">
-                        ${field.source_field}
                         <div class="flex items-center gap-1.5 flex-wrap">
                             <span>${field.source_field}</span>
                             ${isKey ? '<span class="px-1.5 py-0.5 text-[10px] font-sans font-bold uppercase tracking-wider rounded bg-amber-100 text-amber-800 border border-amber-200">Unique Key</span>' : ''}
@@ -852,40 +836,40 @@
                     </td>
                     <td class="py-2.5 px-3 border-b border-surface-100">
                         ${renderCustomSelect(
-                    'data_type_' + index,
-                    field.data_type || '',
-                    [
-                        { value: '', label: 'Auto (Text)' },
-                        { value: 'string', label: 'String (VARCHAR)' },
-                        { value: 'text', label: 'Text (TEXT)' },
-                        { value: 'integer', label: 'Integer' },
-                        { value: 'number', label: 'Number (Decimal)' },
-                        { value: 'boolean', label: 'Boolean' },
-                        { value: 'datetime', label: 'DateTime' },
-                        { value: 'date', label: 'Date' }
-                    ],
-                    `updateFieldData(${index}, 'data_type', this.value)`
-                )}
+                            'data_type_' + index,
+                            field.data_type || '',
+                            [
+                                { value: '', label: 'Auto (Text)' },
+                                { value: 'string', label: 'String (VARCHAR)' },
+                                { value: 'text', label: 'Text (TEXT)' },
+                                { value: 'integer', label: 'Integer' },
+                                { value: 'number', label: 'Number (Decimal)' },
+                                { value: 'boolean', label: 'Boolean' },
+                                { value: 'datetime', label: 'DateTime' },
+                                { value: 'date', label: 'Date' }
+                            ],
+                            `updateFieldData(${index}, 'data_type', this.value)`
+                        )}
                     </td>
                     <td class="py-2.5 px-3 border-b border-surface-100">
                         ${renderCustomSelect(
-                    'semantic_type_' + index,
-                    field.semantic_type || '',
-                    [
-                        { value: '', label: 'None' },
-                        { value: 'identifier', label: 'Identifier' },
-                        { value: 'metric', label: 'Metric' },
-                        { value: 'amount', label: 'Amount' },
-                        { value: 'currency', label: 'Currency' },
-                        { value: 'dimension', label: 'Dimension' },
-                        { value: 'categorical', label: 'Categorical' },
-                        { value: 'date', label: 'Date' },
-                        { value: 'datetime', label: 'Datetime' },
-                        { value: 'boolean', label: 'Boolean' },
-                        { value: 'status', label: 'Status' }
-                    ],
-                    `updateFieldData(${index}, 'semantic_type', this.value)`
-                )}
+                            'semantic_type_' + index,
+                            field.semantic_type || '',
+                            [
+                                { value: '', label: 'None' },
+                                { value: 'identifier', label: 'Identifier' },
+                                { value: 'metric', label: 'Metric' },
+                                { value: 'amount', label: 'Amount' },
+                                { value: 'currency', label: 'Currency' },
+                                { value: 'dimension', label: 'Dimension' },
+                                { value: 'categorical', label: 'Categorical' },
+                                { value: 'date', label: 'Date' },
+                                { value: 'datetime', label: 'Datetime' },
+                                { value: 'boolean', label: 'Boolean' },
+                                { value: 'status', label: 'Status' }
+                            ],
+                            `updateFieldData(${index}, 'semantic_type', this.value)`
+                        )}
                     </td>
                     <td class="py-2.5 px-3 text-center border-b border-surface-100">
                         <input type="checkbox" class="field-nullable ui-checkbox cursor-pointer" ${isNullable ? 'checked' : ''} onchange="updateFieldData(${index}, 'is_nullable', this.checked); syncHeaderCheckboxes();">
@@ -899,21 +883,15 @@
                     <td class="py-2.5 px-3 border-b border-surface-100">
                         <textarea class="field-aliases w-full bg-surface-50 border border-surface-200 px-3 py-2 text-sm rounded-xl focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all shadow-sm resize-y" rows="1" placeholder="tag1, tag2" onchange="updateFieldAliases(${index}, this.value)">${(field.aliases || []).join(', ')}</textarea>
                     </td>
-                    <td class="py-2.5 px-3 text-center border-b border-surface-100">
-                        <input type="checkbox" class="field-key w-4 h-4 text-amber-500 rounded border-surface-300 focus:ring-amber-500" ${field.is_key ? 'checked' : ''} onchange="updateFieldData(${index}, 'is_key', this.checked)">
-                    </td>
-                    <td class="py-2.5 px-3 text-center border-b border-surface-100">
-                        <input type="checkbox" class="field-nullable ui-checkbox" ${field.is_nullable !== false ? 'checked' : ''} onchange="updateFieldData(${index}, 'is_nullable', this.checked)">
-                    </td>
                     <td class="py-2.5 px-3 border-b border-surface-100">
                         <textarea class="field-transform w-full bg-surface-50 border border-surface-200 px-3 py-2 text-sm rounded-xl focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all shadow-sm resize-y" rows="1" placeholder="e.g. trim" onchange="updateFieldData(${index}, 'transform_rule', this.value)">${field.transform_rule || ''}</textarea>
                     </td>
                 </tr>
             `;
-            });
+        });
 
-            if (count === 0) {
-                html = `
+        if (count === 0) {
+            html = `
                 <tr>
                     <td colspan="11" class="py-10 text-center text-surface-400">
                         <span class="material-symbols-outlined text-[28px] block mb-1">filter_list_off</span>
@@ -921,31 +899,29 @@
                     </td>
                 </tr>
             `;
-            }
-
-            tbody.innerHTML = html;
-            document.getElementById('fields-count-summary').textContent = `${count} fields visible`;
-            document.getElementById('fields-toggle-all').checked = count > 0 && allEnabled;
-            document.getElementById('fields-count-summary').textContent = `${count} of ${currentFieldsData.length} fields visible`;
-
-            const toggleAllEl = document.getElementById('fields-toggle-all');
-            if (toggleAllEl) {
-                toggleAllEl.checked = count > 0 && visibleEnabledCount === count;
-                toggleAllEl.indeterminate = visibleEnabledCount > 0 && visibleEnabledCount < count;
-            }
-
-            const toggleAllKeysEl = document.getElementById('fields-toggle-all-keys');
-            if (toggleAllKeysEl) {
-                toggleAllKeysEl.checked = count > 0 && visibleKeyCount === count;
-                toggleAllKeysEl.indeterminate = visibleKeyCount > 0 && visibleKeyCount < count;
-            }
-
-            const toggleAllNullEl = document.getElementById('fields-toggle-all-nullable');
-            if (toggleAllNullEl) {
-                toggleAllNullEl.checked = count > 0 && visibleNullableCount === count;
-                toggleAllNullEl.indeterminate = visibleNullableCount > 0 && visibleNullableCount < count;
-            }
         }
+
+        tbody.innerHTML = html;
+        document.getElementById('fields-count-summary').textContent = `${count} of ${currentFieldsData.length} fields visible`;
+
+        const toggleAllEl = document.getElementById('fields-toggle-all');
+        if (toggleAllEl) {
+            toggleAllEl.checked = count > 0 && visibleEnabledCount === count;
+            toggleAllEl.indeterminate = visibleEnabledCount > 0 && visibleEnabledCount < count;
+        }
+
+        const toggleAllKeysEl = document.getElementById('fields-toggle-all-keys');
+        if (toggleAllKeysEl) {
+            toggleAllKeysEl.checked = count > 0 && visibleKeyCount === count;
+            toggleAllKeysEl.indeterminate = visibleKeyCount > 0 && visibleKeyCount < count;
+        }
+
+        const toggleAllNullEl = document.getElementById('fields-toggle-all-nullable');
+        if (toggleAllNullEl) {
+            toggleAllNullEl.checked = count > 0 && visibleNullableCount === count;
+            toggleAllNullEl.indeterminate = visibleNullableCount > 0 && visibleNullableCount < count;
+        }
+    }
 
     function syncHeaderCheckboxes() {
                 updateActiveKeysBarAndBadges();
@@ -1096,23 +1072,16 @@
             }
 
     function toggleAllFields(checkbox) {
-                const checked = checkbox.checked;
-                const filter = document.getElementById('fields-search').value.toLowerCase();
+        const checked = checkbox.checked;
+        currentVisibleFieldIndices.forEach(idx => {
+            if (currentFieldsData[idx]) {
+                currentFieldsData[idx].is_enabled = checked;
+            }
+        });
+        renderFieldsTable();
+    }
 
-                currentFieldsData.forEach((field) => {
-                    if (filter && !field.source_field.toLowerCase().includes(filter) && !(field.destination_field || '').toLowerCase().includes(filter)) {
-                        return;
-                        currentVisibleFieldIndices.forEach(idx => {
-                            if (currentFieldsData[idx]) {
-                                currentFieldsData[idx].is_enabled = checked;
-                            }
-                            field.is_enabled = checked;
-                        });
-
-                        renderFieldsTable();
-                    }
-
-                    async function submitFieldsForm() {
+    async function submitFieldsForm() {
                         if (!currentFieldsEntity) return;
 
                         const btn = document.getElementById('fields-submit-btn');
