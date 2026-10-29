@@ -31,13 +31,11 @@ Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
 
 /*
 |--------------------------------------------------------------------------
-| Secured API Data Endpoints (Basic Auth for PowerBI/Excel)
+| Secured API Data Endpoints (Basic Auth for PowerBI/Excel + Access Audit)
 |--------------------------------------------------------------------------
 */
 
-Route::middleware(['auth.basic'])->group(function () {
-    Route::get('/data/{slug}', [\App\Http\Controllers\Api\DataEndpointController::class, 'getData'])->name('api.data.endpoint');
-});
+Route::get('/data/{slug}', [\App\Http\Controllers\Api\DataEndpointController::class, 'getData'])->name('api.data.endpoint');
 
 
 Route::middleware(['auth'])->group(function () {
@@ -64,7 +62,7 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/api/sync-jobs/queue-status', [\App\Http\Controllers\SyncJobController::class, 'queueStatus'])->name('api.sync-jobs.queue-status');
         Route::get('/api/sync-jobs/{id}', [\App\Http\Controllers\SyncJobController::class, 'show'])->name('api.sync-jobs.show');
         Route::post('/api/sync-jobs/{id}/abort', [\App\Http\Controllers\SyncJobController::class, 'abort'])->name('api.sync-jobs.abort');
-        
+
         // Scheduler (View Only)
         Route::get('/scheduler', [\App\Http\Controllers\ScheduleController::class, 'index'])->name('scheduler.index');
         Route::get('/api/scheduler/{entity}', [\App\Http\Controllers\ScheduleController::class, 'show'])->name('api.scheduler.show');
@@ -209,7 +207,7 @@ Route::middleware(['auth'])->group(function () {
 
     Route::middleware(['permission:logs.view'])->group(function () {
         Route::get('/logs', [SyncController::class, 'logsPage'])->name('logs.index');
-        
+
         // Enterprise API endpoints for Logs
         Route::get('/api/sync/logs', [\App\Http\Controllers\LogApiController::class, 'index'])->name('api.sync.logs');
         Route::post('/api/sync/logs/bulk', [\App\Http\Controllers\LogApiController::class, 'bulkAction'])->name('api.sync.logs.bulk');
@@ -271,6 +269,10 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/users', [UserManagementController::class, 'index'])->name('users.index');
         Route::get('/api/roles/{role}', [UserManagementController::class, 'showRole'])->name('api.roles.show');
         Route::get('/api/permissions', [UserManagementController::class, 'permissions'])->name('api.permissions.index');
+
+        // Security & Access Monitor
+        Route::get('/security-monitor', [\App\Http\Controllers\SecurityMonitorController::class, 'index'])->name('security-monitor.index');
+        Route::get('/api/security-monitor/data', [\App\Http\Controllers\SecurityMonitorController::class, 'data'])->name('api.security-monitor.data');
     });
 
     Route::middleware(['permission:users.manage'])->group(function () {
@@ -285,6 +287,12 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/api/roles/{role}/table-permissions', [UserManagementController::class, 'getTablePermissions'])->name('api.roles.table-permissions.get');
         Route::put('/api/roles/{role}/table-permissions', [UserManagementController::class, 'updateTablePermissions'])->name('api.roles.table-permissions.update');
         Route::delete('/api/roles/{role}', [UserManagementController::class, 'destroyRole'])->name('api.roles.destroy');
+
+        // Security & Access Monitor Actions
+        Route::delete('/api/security-monitor/sessions/{sessionId}', [\App\Http\Controllers\SecurityMonitorController::class, 'revokeSession'])->name('api.security-monitor.revoke-session');
+        Route::post('/api/security-monitor/sessions/revoke-user/{userId}', [\App\Http\Controllers\SecurityMonitorController::class, 'revokeUserSessions'])->name('api.security-monitor.revoke-user');
+        Route::post('/api/security-monitor/sessions/purge-guests', [\App\Http\Controllers\SecurityMonitorController::class, 'purgeGuestSessions'])->name('api.security-monitor.purge-guests');
+        Route::delete('/api/security-monitor/logs', [\App\Http\Controllers\SecurityMonitorController::class, 'clearAccessLogs'])->name('api.security-monitor.clear-logs');
     });
     /*
     |--------------------------------------------------------------------------
@@ -316,7 +324,7 @@ Route::middleware(['auth'])->group(function () {
     Route::middleware(['permission:ai_settings.view'])->group(function () {
         Route::get('/settings/ai/openrouter', [\App\Http\Controllers\AiSettingsController::class, 'index'])->name('settings.ai.openrouter');
     });
-    
+
     Route::middleware(['permission:ai_metadata.view'])->group(function () {
         Route::get('/settings/ai/metadata', [\App\Http\Controllers\AiSettingsController::class, 'metadataIndex'])->name('settings.ai.metadata');
     });

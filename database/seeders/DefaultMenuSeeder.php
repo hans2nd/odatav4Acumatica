@@ -242,6 +242,20 @@ class DefaultMenuSeeder extends Seeder
         );
 
         Menu::updateOrCreate(
+            ['route_name' => 'security-monitor.index'],
+            [
+                'parent_id' => $settings->id,
+                'title' => 'Security & Access Monitor',
+                'icon' => 'shield_lock',
+                'sort_order' => 25,
+                'type' => 'link',
+                'is_active' => true,
+                'is_visible' => true,
+                'permission_key' => 'users.view',
+            ]
+        );
+
+        Menu::updateOrCreate(
             ['route_name' => 'menu-management.index'],
             [
                 'parent_id' => $settings->id,

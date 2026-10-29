@@ -36,8 +36,30 @@ class AuthController extends Controller
         if (Auth::attempt($credentials, $remember)) {
             $request->session()->regenerate();
 
+            \App\Models\SecurityAccessLog::recordEvent(
+                $request,
+                'login_success',
+                200,
+                false,
+                Auth::id(),
+                Auth::user()?->email,
+                '/login',
+                'Web login successful'
+            );
+
             return redirect()->intended(route('dashboard'));
         }
+
+        \App\Models\SecurityAccessLog::recordEvent(
+            $request,
+            'login_failed',
+            422,
+            true,
+            null,
+            $request->input('email') ?: 'Anonymous',
+            '/login',
+            'Failed login attempt (invalid email or password)'
+        );
 
         return back()->withErrors([
             'email' => 'Email atau password salah.',

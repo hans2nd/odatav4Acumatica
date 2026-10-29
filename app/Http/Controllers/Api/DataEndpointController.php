@@ -4,8 +4,10 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\ApiEndpoint;
+use App\Models\SecurityAccessLog;
 use App\Services\ConnectionService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
 class DataEndpointController extends Controller
@@ -19,9 +21,76 @@ class DataEndpointController extends Controller
 
     public function getData(Request $request, $slug)
     {
+        $endpointPath = "/data/{$slug}";
+
+        // Authenticate via existing web session OR HTTP Basic Auth (while logging anonymous/failed attempts)
+        if (!Auth::check()) {
+            $providedUser = $request->getUser();
+            if (!$providedUser) {
+                SecurityAccessLog::recordEvent(
+                    $request,
+                    'api_unauthorized',
+                    401,
+                    true,
+                    null,
+                    'Anonymous (No Auth Header)',
+                    $endpointPath,
+                    "Anonymous request to {$endpointPath} without Basic Auth credentials"
+                );
+
+                return response('Invalid credentials.', 401, ['WWW-Authenticate' => 'Basic']);
+            }
+
+            $basicChallenge = Auth::onceBasic('email');
+            if ($basicChallenge) {
+                SecurityAccessLog::recordEvent(
+                    $request,
+                    'api_unauthorized',
+                    401,
+                    true,
+                    null,
+                    $providedUser,
+                    $endpointPath,
+                    "Invalid Basic Auth credentials for {$endpointPath}"
+                );
+
+                return $basicChallenge;
+            }
+        }
+
+        $user = $request->user() ?: Auth::user();
+        if (!$user || (isset($user->is_active) && !$user->is_active)) {
+            SecurityAccessLog::recordEvent(
+                $request,
+                'api_unauthorized',
+                403,
+                true,
+                $user?->id,
+                $user?->email ?? ($request->getUser() ?: 'Anonymous'),
+                $endpointPath,
+                'Inactive or unauthenticated user account'
+            );
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Account is inactive or unauthorized.'
+            ], 403);
+        }
+
         $endpoint = ApiEndpoint::where('endpoint_slug', $slug)->where('is_active', true)->first();
 
         if (!$endpoint) {
+            SecurityAccessLog::recordEvent(
+                $request,
+                'api_access',
+                404,
+                false,
+                $user->id,
+                $user->email,
+                $endpointPath,
+                'Endpoint not found or inactive'
+            );
+
             return response()->json([
                 'success' => false,
                 'message' => 'Endpoint not found or inactive.'
@@ -29,24 +98,47 @@ class DataEndpointController extends Controller
         }
 
         $permName = "api.endpoint.{$endpoint->endpoint_slug}.view";
-        if (!$request->user() || !$request->user()->hasPermission($permName)) {
+        if (!$user->hasPermission($permName)) {
+            SecurityAccessLog::recordEvent(
+                $request,
+                'api_unauthorized',
+                403,
+                false,
+                $user->id,
+                $user->email,
+                $endpointPath,
+                "Forbidden: missing permission {$permName}"
+            );
+
             return response()->json([
                 'success' => false,
                 'message' => "Unauthorized. Missing permission: {$permName}"
             ], 403);
         }
 
+        SecurityAccessLog::recordEvent(
+            $request,
+            'api_access',
+            200,
+            false,
+            $user->id,
+            $user->email,
+            $endpointPath,
+            "Authorized access to endpoint '{$endpoint->name}' (table: {$endpoint->table_name})"
+        );
+
         try {
             // Mencegah timeout dan memory limit saat streaming jutaan data ke Power BI
             set_time_limit(0);
-            ini_set('memory_limit', '2048M'); // Atau '-1' untuk unlimited
+            ini_set('memory_limit', '2048M');
 
             $connName = $this->connectionService->resolveConnectionName($endpoint->connection_key);
 
             // Allow dynamic per_page from query, default to 1000
             $perPage = $request->query('per_page', 1000);
-            if ($perPage > 5000)
-                $perPage = 5000; // Cap it
+            if ($perPage > 5000) {
+                $perPage = 5000;
+            }
 
             $query = DB::connection($connName)->table($endpoint->table_name);
 
@@ -115,14 +207,11 @@ class DataEndpointController extends Controller
                 }
             }
 
-            // Execute the query
-            // If user requests a limit, apply it to prevent huge memory spikes, otherwise get all.
             $limit = $request->query('limit');
             if ($limit) {
                 $query->limit($limit);
             }
 
-            // Stream the JSON response to prevent memory exhaustion (500 errors) on large tables
             return response()->stream(function () use ($query, $endpoint) {
                 $sql = $query->toSql();
                 $bindings = $query->getBindings();
@@ -135,8 +224,6 @@ class DataEndpointController extends Controller
                         echo ',';
                     }
 
-                    // Convert numeric strings to actual floats and dates to ISO 8601 
-                    // so Power BI / Excel treats them as native Numbers/Dates and formats them by the user's Region.
                     foreach ((array) $row as $col => $val) {
                         if (is_numeric($val) && strpos($col, 'ID') === false && strpos($col, 'CD') === false && strpos($col, 'Nbr') === false && strpos(strtolower($col), 'phone') === false) {
                             $row->{$col} = (float) $val;
@@ -164,6 +251,4 @@ class DataEndpointController extends Controller
             ], 500);
         }
     }
-
-
 }
