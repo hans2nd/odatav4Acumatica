@@ -24,6 +24,7 @@ class AcumaticaODataService
     private bool $authenticated = false;
     private ?HandlerStack $handlerStack = null;
     private ?PendingRequest $persistentRequest = null;
+    private bool $isV4 = true;
 
     public function __construct()
     {
@@ -36,6 +37,7 @@ class AcumaticaODataService
         $this->includeTenantInODataUrl = (bool) config('acumatica.odata_include_tenant', false);
         $this->pageSize = config('acumatica.page_size', 500);
         $this->timeout = config('acumatica.timeout', 600);
+        $this->isV4 = config('acumatica.odata_path', 'odatav4') === 'odatav4' || stripos($this->baseUrl, 'odatav4') !== false;
     }
 
     /**
@@ -78,6 +80,27 @@ class AcumaticaODataService
             $this->includeTenantInODataUrl = false;
             config(['acumatica.odata_path' => '']);
         }
+
+        $protocol = strtolower((string) ($creds['protocol'] ?? ''));
+        if ($protocol === 'odata_v3' || $protocol === 'v3') {
+            $this->isV4 = false;
+        } elseif ($protocol === 'odata_v4' || $protocol === 'v4') {
+            $this->isV4 = true;
+        } elseif (stripos($this->baseUrl, 'odatav4') !== false) {
+            $this->isV4 = true;
+        } elseif (preg_match('#/(odata)(/|$|\?)#i', $this->baseUrl)) {
+            $this->isV4 = false;
+        } else {
+            $this->isV4 = config('acumatica.odata_path', 'odatav4') === 'odatav4';
+        }
+    }
+
+    /**
+     * Check if currently configured connection uses OData v4.
+     */
+    public function isV4(): bool
+    {
+        return $this->isV4;
     }
 
     /**
@@ -195,8 +218,7 @@ class AcumaticaODataService
 
         $queryCount = '';
         if ($includeCount) {
-            $isV4 = config('acumatica.odata_path') === 'odatav4' || stripos($this->baseUrl, 'odatav4') !== false;
-            $queryCount = $isV4 ? '&$count=true' : '&$inlinecount=allpages&$format=json';
+            $queryCount = $this->isV4 ? '&$count=true' : '&$inlinecount=allpages&$format=json';
         }
 
         $url = implode('/', $pathParts) . sprintf('?$top=%d&$skip=%d%s', $top, $skip, $queryCount);

@@ -142,6 +142,18 @@ class SyncService
                 throw new \Exception("Koneksi tidak ditemukan! Data koneksi ({$sourceConnKey}) mungkin telah dihapus atau belum dikonfigurasi. Harap periksa menu Connection Management.");
             }
 
+            $sourceType = $sourceConnection['type'] ?? 'odata';
+            if ($sourceType === 'odata' || $sourceType === 'acumatica') {
+                $this->odataService->setConnectionConfig($sourceConnection);
+                if (isset($entity['batch_size']) && $entity['batch_size'] > 0) {
+                    $this->odataService->setPageSize($entity['batch_size']);
+                }
+            }
+
+            $isODataV4 = ($sourceType === 'odata' || $sourceType === 'acumatica')
+                ? $this->odataService->isV4()
+                : $this->isConnectionODataV4($sourceConnection);
+
             // --- BEGIN INCREMENTAL LOGIC ---
             $filter = '';
             $syncMode = $entity['sync_mode'] ?? 'full';
@@ -187,7 +199,7 @@ class SyncService
                         } elseif ($watermarkType === 'string') {
                             $watermark = new \App\Services\Sync\Watermarks\StringWatermark($lastModifiedCol, $maxModifiedStr);
                         } else {
-                            $watermark = new \App\Services\Sync\Watermarks\TimestampWatermark($lastModifiedCol, $maxModifiedStr);
+                            $watermark = new \App\Services\Sync\Watermarks\TimestampWatermark($lastModifiedCol, $maxModifiedStr, $isODataV4);
                         }
                         
                         $filter = $watermark->toFilterString();
@@ -212,17 +224,20 @@ class SyncService
                     $parsedDateStr = null;
 
                     if ($isDateField) {
-                        try {
-                            if (preg_match('/^(\d{2})\/(\d{2})\/(\d{4})$/', $valSafe, $m)) {
-                                $date = \Carbon\Carbon::create($m[3], $m[2], $m[1], 0, 0, 0);
-                            } else {
-                                $date = \Carbon\Carbon::parse($valSafe);
+                        if (str_starts_with(strtolower($valSafe), 'datetime\'')) {
+                            $parsedDateStr = $valSafe;
+                        } else {
+                            try {
+                                if (preg_match('/^(\d{2})\/(\d{2})\/(\d{4})$/', $valSafe, $m)) {
+                                    $date = \Carbon\Carbon::create($m[3], $m[2], $m[1], 0, 0, 0);
+                                } else {
+                                    $date = \Carbon\Carbon::parse($valSafe);
+                                }
+                                $dateStr = $date->format('Y-m-d\TH:i:s.v');
+                                $parsedDateStr = $isODataV4 ? "{$dateStr}Z" : "datetime'{$dateStr}'";
+                            } catch (\Exception $e) {
+                                $parsedDateStr = null;
                             }
-                            $isV4 = config('acumatica.odata_path', 'odatav4') === 'odatav4';
-                            $dateStr = $date->format('Y-m-d\TH:i:s.v');
-                            $parsedDateStr = $isV4 ? "{$dateStr}Z" : "datetime'{$dateStr}'";
-                        } catch (\Exception $e) {
-                            $parsedDateStr = null;
                         }
                     }
 
@@ -1052,5 +1067,49 @@ class SyncService
             'failed_count' => $failedCount,
             'entity_stats' => $entityStats,
         ];
+    }
+
+    /**
+     * Determine whether the given connection config uses OData v4 or v3.
+     */
+    public function isConnectionODataV4(?array $connection): bool
+    {
+        if (!$connection) {
+            return config('acumatica.odata_path', 'odatav4') === 'odatav4';
+        }
+
+        $creds = $connection['credentials'] ?? [];
+        $protocol = strtolower((string) ($creds['protocol'] ?? ''));
+
+        if ($protocol === 'odata_v3' || $protocol === 'v3') {
+            return false;
+        }
+
+        if ($protocol === 'odata_v4' || $protocol === 'v4') {
+            return true;
+        }
+
+        $urlsToCheck = [
+            $creds['odata_url'] ?? '',
+            $creds['url'] ?? '',
+            $creds['base_url'] ?? '',
+        ];
+
+        foreach ($urlsToCheck as $rawUrl) {
+            if (empty($rawUrl)) continue;
+            $url = strtolower($rawUrl);
+            if (str_contains($url, 'odatav4')) {
+                return true;
+            }
+            if (preg_match('#/(odata)(/|$|\?)#i', $url)) {
+                return false;
+            }
+        }
+
+        if (!empty($creds['odata_path'])) {
+            return strtolower($creds['odata_path']) === 'odatav4';
+        }
+
+        return config('acumatica.odata_path', 'odatav4') === 'odatav4';
     }
 }
