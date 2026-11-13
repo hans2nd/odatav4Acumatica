@@ -99,13 +99,14 @@ class ConnectionManager
     {
         $connection = $this->getConnectionModel($connectionKey);
         $provider = $this->factory->make($connection->type);
-        
+
+        $isDatabase = in_array(strtolower((string) $connection->type), ConnectionProviderFactory::getDatabaseTypes(), true);
         $cacheKey = "connection_{$connectionKey}_metadata";
-        
-        if ($forceRefresh) {
+
+        if ($forceRefresh || $isDatabase) {
             \Illuminate\Support\Facades\Cache::forget($cacheKey);
         }
-        
+
         return \Illuminate\Support\Facades\Cache::remember($cacheKey, now()->addHours(24), function () use ($provider, $connection) {
             return $provider->discoverMetadata($connection->credentials ?? []);
         });
@@ -118,9 +119,10 @@ class ConnectionManager
     {
         $connection = $this->getConnectionModel($connectionKey);
         $provider = $this->factory->make($connection->type);
-        
+
+        $isDatabase = in_array(strtolower((string) $connection->type), ConnectionProviderFactory::getDatabaseTypes(), true);
         $cacheKey = "connection_{$connectionKey}_structure_" . md5($objectName);
-        if ($forceRefresh) {
+        if ($forceRefresh || $isDatabase) {
             \Illuminate\Support\Facades\Cache::forget($cacheKey);
         }
         return \Illuminate\Support\Facades\Cache::remember($cacheKey, now()->addHours(24), function () use ($provider, $connection, $objectName) {

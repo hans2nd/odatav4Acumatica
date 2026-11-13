@@ -33,13 +33,34 @@ class TransactionController extends Controller
                 }
                 $customFilters = $decoded;
             }
+            if (!is_array($customFilters)) {
+                $customFilters = [];
+            }
+
+            $isSp = ($entity['source_object_type'] ?? '') === 'stored_procedure'
+                || !empty($entity['sp_execution_mode'])
+                || preg_match('/^(dbo\.)?(usp_|sp_)/i', (string) ($entity['odata_entity'] ?? ''));
+
+            if ($isSp && empty($customFilters)) {
+                $spMode = $entity['sp_execution_mode'] ?? 'two_phase_delta';
+                if ($spMode === 'two_phase_delta') {
+                    $customFilters = [
+                        ['field' => '@SyncProcessName', 'operator' => 'eq', 'value' => (string) ($entity['sp_sync_process_name'] ?? 'SO_TO_MYSQL_SYNC')],
+                        ['field' => '@CompanyID', 'operator' => 'eq', 'value' => (string) ($entity['sp_company_id'] ?? 2)],
+                    ];
+                    if (!empty($entity['sp_custom_start_date'])) {
+                        $customFilters[] = ['field' => '@CustomStartDate', 'operator' => 'ge', 'value' => (string) $entity['sp_custom_start_date']];
+                    }
+                }
+            }
 
             $entityData[$key] = [
-                'config'       => $entity,
-                'schedule'     => $schedule,
-                'table_exists' => $schemaManager->tableExists($connName, $entity['table']),
-                'records'      => $schemaManager->getRowCount($connName, $entity['table']),
+                'config'         => $entity,
+                'schedule'       => $schedule,
+                'table_exists'   => $schemaManager->tableExists($connName, $entity['table']),
+                'records'        => $schemaManager->getRowCount($connName, $entity['table']),
                 'custom_filters' => $customFilters ?: [],
+                'is_sp'          => $isSp,
             ];
         }
 

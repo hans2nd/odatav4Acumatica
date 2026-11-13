@@ -300,10 +300,17 @@ class SyncService
                 \Illuminate\Support\Facades\Schema::connection($destConnection)->dropIfExists($stagingTableName);
             }
 
-            $processChunkCallback = function ($recordsChunk) use (&$fetchedCount, &$insertedCount, &$hasData, &$totalRecordsCount, $tableName, $isIncremental, $isAppendOnly, $customFilters, $syncJobId, $destConnection, $log, $schedule, $syncStartTime, $entityKey, $workerId, $isFullSync, $stagingTableName, $writeTableName, $entity) {
-                // Heartbeat to extend the distributed lock
-                $this->syncStateService->heartbeatSynchronizationLock($schedule->id, $workerId);
+            $isTwoPhaseSpSync = false;
+            $spCompletionContext = [
+                'needs_completion' => false,
+                'completed'        => false,
+            ];
 
+            $lastTelemetryUpdate = $syncStartTime;
+            $pendingStatsFetched = 0;
+            $pendingStatsInserted = 0;
+
+            $processChunkCallback = function ($recordsChunk) use (&$fetchedCount, &$insertedCount, &$hasData, &$totalRecordsCount, &$isTwoPhaseSpSync, &$lastTelemetryUpdate, &$pendingStatsFetched, &$pendingStatsInserted, $tableName, $isIncremental, $isAppendOnly, $customFilters, $syncJobId, $destConnection, $log, $schedule, $syncStartTime, $entityKey, $workerId, $isFullSync, $stagingTableName, $writeTableName, &$entity) {
                 // Extend PHP execution timer on each active batch so ongoing syncs never get killed by timeout
                 @set_time_limit(600);
 
@@ -312,10 +319,8 @@ class SyncService
 
                 $chunkSize = count($recordsChunk);
                 if ($chunkSize === 0) {
-                    Log::warning("Sync [{$entityKey}]: Fetched 0 rows in chunk, stopping.");
                     return;
                 }
-                Log::info("STEP 1: Rows fetched from source. Retrieved {$chunkSize} rows");
 
                 $chunkStartTime = microtime(true);
                 $memoryMb = memory_get_usage(true) / 1024 / 1024;
@@ -324,118 +329,132 @@ class SyncService
                 $hasData = true;
 
                 $fetchedCount += $chunkSize;
+                $pendingStatsFetched += $chunkSize;
+
+                $fieldMappings = $entity['field_mappings'] ?? [];
 
                 if ($isFirstChunk) {
-                    $fieldMappings = $entity['field_mappings'] ?? [];
-                    
-                    // Validation: The table MUST already exist (Schema-on-Configuration)
-                    if (!\Illuminate\Support\Facades\Schema::connection($destConnection)->hasTable($tableName)) {
-                        $errorMsg = "Target table [{$tableName}] does not exist. Please save 'Manage Fields' configuration first to generate the schema.";
-                        Log::error("Sync [{$entityKey}]: {$errorMsg}");
-                        
-                        // Let's also update the SyncJob to failed
-                        if ($syncJobId) {
-                            \App\Models\SyncJob::where('id', $syncJobId)->update([
-                                'status' => \App\Models\SyncJob::STATUS_FAILED,
-                                'error_message' => $errorMsg,
-                                'completed_at' => now(),
-                            ]);
+                    $sampleRow = (array) ($recordsChunk[0] ?? []);
+
+                    // Auto-register discovered fields if Manage Fields has not been populated yet
+                    if (empty($fieldMappings) && !empty($sampleRow)) {
+                        try {
+                            $this->entityConfigService->updateAvailableFields($entityKey, array_keys($sampleRow));
+                            $refreshedEntity = $this->entityConfigService->get($entityKey);
+                            if ($refreshedEntity) {
+                                $entity = $refreshedEntity;
+                                $fieldMappings = $entity['field_mappings'] ?? [];
+                            }
+                        } catch (\Throwable $e) {
+                            // Non-fatal fallback
                         }
-                        throw new \Exception($errorMsg);
+                    }
+
+                    // Ensure target table and any newly mapped/discovered columns exist automatically without requiring manual Manage Fields save
+                    if (!empty($fieldMappings)) {
+                        $this->schemaManager->ensureTableFromMappings($destConnection, $tableName, $fieldMappings);
+                    }
+                    if (!empty($sampleRow)) {
+                        $this->schemaManager->ensureTable($destConnection, $tableName, $sampleRow, $fieldMappings);
                     }
 
                     if ($isFullSync) {
-                        // Create staging table strictly from mappings
-                        $this->schemaManager->ensureTableFromMappings($destConnection, $stagingTableName, $fieldMappings);
+                        if (!empty($fieldMappings)) {
+                            $this->schemaManager->ensureTableFromMappings($destConnection, $stagingTableName, $fieldMappings);
+                        }
+                        if (!empty($sampleRow)) {
+                            $this->schemaManager->ensureTable($destConnection, $stagingTableName, $sampleRow, $fieldMappings);
+                        }
                     }
                 }
 
-                // Clean and strictly filter unmapped fields
-                $fieldMappings = $entity['field_mappings'] ?? [];
+                // Clean and map fields according to Manage Fields configuration
                 $cleanData = $this->schemaManager->cleanRecords($recordsChunk, $fieldMappings);
                 $cleanSize = count($cleanData);
-
-                Log::info("STEP 2: Rows after transformation. {$cleanSize} rows");
 
                 if ($cleanSize === 0) {
                     Log::error("Sync [{$entityKey}]: Transformed payload became empty. Stopping synchronization.");
                     throw new \Exception("Transformed payload became empty. Synchronization aborted.");
                 }
 
-                if ($isIncremental && !isset($cleanData[0]['id']) && !isset($cleanData[0]['NoteID']) && !isset($cleanData[0]['noteid']) && !isset($cleanData[0]['_row_hash'])) {
+                if ($isIncremental && !$isTwoPhaseSpSync && !isset($cleanData[0]['id']) && !isset($cleanData[0]['NoteID']) && !isset($cleanData[0]['noteid']) && !isset($cleanData[0]['_row_hash'])) {
                     Log::warning("Sync [{$entityKey}]: Missing primary key or hash in payload for upsert. Data might be duplicated or fail.");
                 }
-
-                Log::info("STEP 3: Rows before entering executeUpsert(). {$cleanSize} rows");
 
                 $fetchTimeMs = (microtime(true) - $chunkStartTime) * 1000;
                 $writeStartTime = microtime(true);
 
-                $entityConfig = $this->entityConfigService->get($entityKey);
-                $primaryKeys = $entityConfig['primary_keys'] ?? null;
-
-                if (empty($primaryKeys)) {
-                    if (isset($cleanData[0]['id'])) {
-                        $primaryKeys = ['id'];
-                    } elseif (isset($cleanData[0]['NoteID'])) {
-                        $primaryKeys = ['NoteID'];
-                    } elseif (isset($cleanData[0]['noteid'])) {
-                        $primaryKeys = ['noteid'];
-                    }
-                }
-
-                $hasPrimaryKey = !empty($primaryKeys);
-
-                $useUpsert = false;
-                if ($hasPrimaryKey && $isIncremental && !$isAppendOnly) {
-                    $useUpsert = true;
-                } elseif (!$hasPrimaryKey && $isIncremental && !empty($customFilters) && !$isAppendOnly) {
-                    // Custom filter sync with NO primary key -> use replaceTableData to replace the scope
-                    $useUpsert = false;
-                } elseif (!$hasPrimaryKey && $isIncremental && empty($customFilters) && !$isAppendOnly) {
-                    // True incremental sync (LastModifiedDateTime) but NO primary key -> IMPOSSIBLE to safely apply delta
-                    Log::error("Sync [{$entityKey}]: Cannot perform incremental sync without a primary key (id, NoteID, or configured primary_keys).");
-                    throw new \Exception("Cannot perform incremental sync without a primary key. Please configure 'primary_keys' for this entity in Settings, or run a Full Sync.");
-                }
-
-                if ($isAppendOnly) {
-                    Log::info("STEP ?: Using appendTableData because sync_mode is backdate (Append Only)");
+                if ($isTwoPhaseSpSync) {
+                    // In Two-Phase Delta SP mode, changed orders (Result Set 1) have already been deleted from $writeTableName
+                    // (or $writeTableName is a fresh staging table during Full Sync), so we batch-insert cleanly.
                     $inserted = $this->appendTableData($destConnection, $writeTableName, $cleanData, $syncJobId, $insertedCount, $totalRecordsCount);
-                } elseif ($useUpsert) {
-                    Log::info("STEP ?: Using upsertTableData because primary key exists and isIncremental = true");
-                    $inserted = $this->upsertTableData($destConnection, $tableName, $cleanData, $customFilters, $syncJobId, $isFirstChunk, $insertedCount, $totalRecordsCount, $primaryKeys);
                 } else {
-                    Log::info("STEP ?: Using replaceTableData because useUpsert = false");
-                    $inserted = $this->replaceTableData($destConnection, $writeTableName, $cleanData, $customFilters, $syncJobId, $isFirstChunk, $insertedCount, $totalRecordsCount);
+                    $primaryKeys = $entity['primary_keys'] ?? null;
+
+                    if (empty($primaryKeys)) {
+                        if (isset($cleanData[0]['id'])) {
+                            $primaryKeys = ['id'];
+                        } elseif (isset($cleanData[0]['NoteID'])) {
+                            $primaryKeys = ['NoteID'];
+                        } elseif (isset($cleanData[0]['noteid'])) {
+                            $primaryKeys = ['noteid'];
+                        }
+                    }
+
+                    $hasPrimaryKey = !empty($primaryKeys);
+
+                    $useUpsert = false;
+                    if ($hasPrimaryKey && $isIncremental && !$isAppendOnly) {
+                        $useUpsert = true;
+                    } elseif (!$hasPrimaryKey && $isIncremental && !empty($customFilters) && !$isAppendOnly) {
+                        // Custom filter sync with NO primary key -> use replaceTableData to replace the scope
+                        $useUpsert = false;
+                    } elseif (!$hasPrimaryKey && $isIncremental && empty($customFilters) && !$isAppendOnly) {
+                        Log::error("Sync [{$entityKey}]: Cannot perform incremental sync without a primary key (id, NoteID, or configured primary_keys).");
+                        throw new \Exception("Cannot perform incremental sync without a primary key. Please configure 'primary_keys' for this entity in Settings, or run a Full Sync.");
+                    }
+
+                    if ($isAppendOnly) {
+                        $inserted = $this->appendTableData($destConnection, $writeTableName, $cleanData, $syncJobId, $insertedCount, $totalRecordsCount);
+                    } elseif ($useUpsert) {
+                        $inserted = $this->upsertTableData($destConnection, $tableName, $cleanData, $customFilters, $syncJobId, $isFirstChunk, $insertedCount, $totalRecordsCount, $primaryKeys);
+                    } else {
+                        $inserted = $this->replaceTableData($destConnection, $writeTableName, $cleanData, $customFilters, $syncJobId, $isFirstChunk, $insertedCount, $totalRecordsCount);
+                    }
                 }
 
                 $writeTimeMs = (microtime(true) - $writeStartTime) * 1000;
 
                 $insertedCount += $inserted;
+                $pendingStatsInserted += $inserted;
 
-                $actualCount = $this->schemaManager->getRowCount($destConnection, $writeTableName);
-                Log::info("Sync [{$entityKey}]: Database verification after operation. Actual row count in DB ({$writeTableName}): {$actualCount}");
+                unset($cleanData, $recordsChunk);
 
-                $this->syncStateService->updateStatistics($schedule->id, $chunkSize, $inserted, 0, 0);
+                // Throttle telemetry, lock heartbeat, and log DB updates to once every 2.5 seconds to eliminate I/O bottlenecks
+                $now = microtime(true);
+                if ($isFirstChunk || ($now - $lastTelemetryUpdate) >= 2.5) {
+                    $this->syncStateService->heartbeatSynchronizationLock($schedule->id, $workerId);
+                    $this->syncStateService->updateStatistics($schedule->id, $pendingStatsFetched, $pendingStatsInserted, 0, 0);
+                    $pendingStatsFetched = 0;
+                    $pendingStatsInserted = 0;
 
-                // Throughput calculation
-                $elapsed = microtime(true) - $syncStartTime;
-                $rowsPerSec = $elapsed > 0 ? $fetchedCount / $elapsed : 0;
+                    $elapsed = $now - $syncStartTime;
+                    $rowsPerSec = $elapsed > 0 ? $fetchedCount / $elapsed : 0;
 
-                // Bottleneck detection
-                $this->bottleneckDetector->analyzeChunk($log, $fetchTimeMs, $writeTimeMs, $memoryMb);
+                    $this->bottleneckDetector->analyzeChunk($log, $fetchTimeMs, $writeTimeMs, $memoryMb);
 
-                // Update Granular Log Metrics safely
-                try {
-                    $log->update([
-                        'current_stage' => 'processing_chunk',
-                        'current_batch' => ceil($fetchedCount / max(1, count($recordsChunk))),
-                        'records_updated' => $insertedCount, // Keep cumulative processed count during live sync
-                        'rows_per_second' => $rowsPerSec,
-                        'peak_memory_mb' => max($log->peak_memory_mb ?? 0, $memoryMb),
-                    ]);
-                } catch (\Exception $e) {
-                    // Ignore if columns don't exist yet (migration not run)
+                    try {
+                        $log->update([
+                            'current_stage' => 'processing_chunk',
+                            'current_batch' => ceil($fetchedCount / max(1, $chunkSize)),
+                            'records_updated' => $insertedCount,
+                            'rows_per_second' => $rowsPerSec,
+                            'peak_memory_mb' => max($log->peak_memory_mb ?? 0, $memoryMb),
+                        ]);
+                    } catch (\Exception $e) {
+                        // Ignore if columns don't exist yet
+                    }
+                    $lastTelemetryUpdate = $now;
                 }
             };
 
@@ -445,12 +464,20 @@ class SyncService
                 }
 
                 $now = microtime(true);
-                // Buffer progress update: every 5 seconds or if finished
-                if ($syncJobId && (($now - $lastProgressUpdate) >= 5.0 || $current === $total)) {
+                // Buffer progress update: every 2 seconds or if finished
+                if ($syncJobId && (($now - $lastProgressUpdate) >= 2.0 || ($total !== null && $current === $total))) {
+                    $calculatedProgress = 0;
+                    if ($totalRecordsCount !== null && $totalRecordsCount > 0) {
+                        $calculatedProgress = min(99, (int) round(($current / $totalRecordsCount) * 100));
+                    } elseif ($current > 0) {
+                        // Dynamic asymptotic progress indicator (5% -> 95%) when streaming from Stored Procedures without upfront COUNT(*)
+                        $calculatedProgress = min(95, max(5, (int) round(90 * (1 - exp(-$current / 50000)))));
+                    }
+
                     \App\Models\SyncJob::where('id', $syncJobId)->update([
                         'processed_rows' => $current,
-                        'total_rows' => $totalRecordsCount,
-                        'progress' => $totalRecordsCount > 0 ? min(99, (int) round(($current / $totalRecordsCount) * 100)) : ($current === $total && $total !== null ? 100 : 0),
+                        'total_rows' => $totalRecordsCount ?? $current,
+                        'progress' => $calculatedProgress,
                     ]);
                     $lastProgressUpdate = $now;
                 }
@@ -485,103 +512,126 @@ class SyncService
                         // Ignore connection-specific logging errors
                     }
                 }
-                $query = DB::connection($resolvedSourceConn)->table($odataEntity);
 
-                // Apply custom filters for DB sources
-                if (!empty($customFilters)) {
-                    $query->where(function ($q) use ($customFilters) {
-                        foreach ($customFilters as $cf) {
-                            $field = $cf['field'] ?? '';
-                            $op = $cf['operator'] ?? 'eq';
-                            $val = $cf['value'] ?? '';
+                if ($this->isStoredProcedureEntity($entity, $odataEntity, $resolvedSourceConn)) {
+                    $this->executeStoredProcedureSourceSync(
+                        $resolvedSourceConn,
+                        $destConnection,
+                        $entityKey,
+                        $entity,
+                        $odataEntity,
+                        $tableName,
+                        $writeTableName,
+                        $isFullSync,
+                        $isIncremental,
+                        $isAppendOnly,
+                        $customFilters,
+                        $processChunkCallback,
+                        $progressCallback,
+                        $fetchedCount,
+                        $totalRecordsCount,
+                        $isTwoPhaseSpSync,
+                        $spCompletionContext
+                    );
+                } else {
+                    $query = DB::connection($resolvedSourceConn)->table($odataEntity);
 
-                            if ($field && $val !== '') {
-                                switch ($op) {
-                                    case 'eq':
-                                        $q->where($field, '=', $val);
-                                        break;
-                                    case 'ne':
-                                        $q->where($field, '!=', $val);
-                                        break;
-                                    case 'contains':
-                                        $q->where($field, 'like', '%' . $val . '%');
-                                        break;
-                                    case 'startswith':
-                                        $q->where($field, 'like', $val . '%');
-                                        break;
-                                    case 'endswith':
-                                        $q->where($field, 'like', '%' . $val);
-                                        break;
-                                    case 'gt':
-                                        $q->where($field, '>', $val);
-                                        break;
-                                    case 'ge':
-                                        $q->where($field, '>=', $val);
-                                        break;
-                                    case 'lt':
-                                        $q->where($field, '<', $val);
-                                        break;
-                                    case 'le':
-                                        $q->where($field, '<=', $val);
-                                        break;
+                    // Apply custom filters for DB sources
+                    if (!empty($customFilters)) {
+                        $query->where(function ($q) use ($customFilters) {
+                            foreach ($customFilters as $cf) {
+                                $field = $cf['field'] ?? '';
+                                $op = $cf['operator'] ?? 'eq';
+                                $val = $cf['value'] ?? '';
+
+                                if ($field && $val !== '' && !str_starts_with(trim($field), '@')) {
+                                    switch ($op) {
+                                        case 'eq':
+                                            $q->where($field, '=', $val);
+                                            break;
+                                        case 'ne':
+                                            $q->where($field, '!=', $val);
+                                            break;
+                                        case 'contains':
+                                            $q->where($field, 'like', '%' . $val . '%');
+                                            break;
+                                        case 'startswith':
+                                            $q->where($field, 'like', $val . '%');
+                                            break;
+                                        case 'endswith':
+                                            $q->where($field, 'like', '%' . $val);
+                                            break;
+                                        case 'gt':
+                                            $q->where($field, '>', $val);
+                                            break;
+                                        case 'ge':
+                                            $q->where($field, '>=', $val);
+                                            break;
+                                        case 'lt':
+                                            $q->where($field, '<', $val);
+                                            break;
+                                        case 'le':
+                                            $q->where($field, '<=', $val);
+                                            break;
+                                    }
                                 }
                             }
+                        });
+                    }
+
+                    $totalRecordsCount = $query->count();
+                    $progressCallback(0, $totalRecordsCount);
+
+                    $chunkSize = min(1000, max(100, (int) ($entity['batch_size'] ?? 1000)));
+
+                    // Prefer streaming with cursor() for low memory footprint, with fallback to chunkById/chunk
+                    try {
+                        $batch = [];
+                        foreach ($query->cursor() as $record) {
+                            $batch[] = (array) $record;
+                            if (count($batch) >= $chunkSize) {
+                                $processChunkCallback($batch);
+                                $progressCallback($fetchedCount, $totalRecordsCount);
+                                $batch = [];
+                            }
                         }
-                    });
-                }
-
-                $totalRecordsCount = $query->count();
-                $progressCallback(0, $totalRecordsCount);
-
-                $chunkSize = min(1000, max(100, (int) ($entity['batch_size'] ?? 1000)));
-
-                // Prefer streaming with cursor() for low memory footprint, with fallback to chunkById/chunk
-                try {
-                    $batch = [];
-                    foreach ($query->cursor() as $record) {
-                        $batch[] = (array) $record;
-                        if (count($batch) >= $chunkSize) {
+                        if (!empty($batch)) {
                             $processChunkCallback($batch);
                             $progressCallback($fetchedCount, $totalRecordsCount);
                             $batch = [];
                         }
-                    }
-                    if (!empty($batch)) {
-                        $processChunkCallback($batch);
-                        $progressCallback($fetchedCount, $totalRecordsCount);
-                        $batch = [];
-                    }
-                } catch (\Throwable $cursorException) {
-                    Log::warning("Sync [{$entityKey}]: Cursor stream failed, falling back to chunkById: " . $cursorException->getMessage());
+                    } catch (\Throwable $cursorException) {
+                        Log::warning("Sync [{$entityKey}]: Cursor stream failed, falling back to chunkById: " . $cursorException->getMessage());
 
-                    $entityConfig = $this->entityConfigService->get($entityKey);
-                    $primaryKeys = $entityConfig['primary_keys'] ?? null;
-                    $chunkColumn = 'id';
-                    if (!empty($primaryKeys) && is_array($primaryKeys) && count($primaryKeys) > 0) {
-                        $chunkColumn = $primaryKeys[0];
-                    }
-
-                    try {
-                        $query->chunkById($chunkSize, function ($records) use ($processChunkCallback, &$fetchedCount, $progressCallback, $totalRecordsCount) {
-                            $arr = $records->map(fn($record) => (array) $record)->toArray();
-                            $processChunkCallback($arr);
-                            $progressCallback($fetchedCount, $totalRecordsCount);
-                            unset($arr, $records);
-                        }, $chunkColumn);
-                    } catch (\Exception $e) {
-                        // Fallback if no chunkColumn exists
-                        $firstRow = DB::connection($resolvedSourceConn)->table($odataEntity)->first();
-                        $firstCol = $firstRow ? array_key_first((array) $firstRow) : null;
-                        if ($firstCol) {
-                            $query->orderBy($firstCol);
+                        $entityConfig = $this->entityConfigService->get($entityKey);
+                        $primaryKeys = $entityConfig['primary_keys'] ?? null;
+                        $chunkColumn = 'id';
+                        if (!empty($primaryKeys) && is_array($primaryKeys) && count($primaryKeys) > 0) {
+                            $chunkColumn = $primaryKeys[0];
                         }
 
-                        $query->chunk($chunkSize, function ($records) use ($processChunkCallback, &$fetchedCount, $progressCallback, $totalRecordsCount) {
-                            $arr = $records->map(fn($record) => (array) $record)->toArray();
-                            $processChunkCallback($arr);
-                            $progressCallback($fetchedCount, $totalRecordsCount);
-                            unset($arr, $records);
-                        });
+                        try {
+                            $query->chunkById($chunkSize, function ($records) use ($processChunkCallback, &$fetchedCount, $progressCallback, $totalRecordsCount) {
+                                $arr = $records->map(fn($record) => (array) $record)->toArray();
+                                $processChunkCallback($arr);
+                                $progressCallback($fetchedCount, $totalRecordsCount);
+                                unset($arr, $records);
+                            }, $chunkColumn);
+                        } catch (\Exception $e) {
+                            // Fallback if no chunkColumn exists
+                            $firstRow = DB::connection($resolvedSourceConn)->table($odataEntity)->first();
+                            $firstCol = $firstRow ? array_key_first((array) $firstRow) : null;
+                            if ($firstCol) {
+                                $query->orderBy($firstCol);
+                            }
+
+                            $query->chunk($chunkSize, function ($records) use ($processChunkCallback, &$fetchedCount, $progressCallback, $totalRecordsCount) {
+                                $arr = $records->map(fn($record) => (array) $record)->toArray();
+                                $processChunkCallback($arr);
+                                $progressCallback($fetchedCount, $totalRecordsCount);
+                                unset($arr, $records);
+                            });
+                        }
                     }
                 }
             } else if ($sourceType === 'sharepoint') {
@@ -622,6 +672,10 @@ class SyncService
 
             if ($fetchedCount === 0) {
                 Log::warning("Sync [{$entityKey}]: 0 records were fetched from the source. Aborting sync early without any database modifications.");
+
+                if (!empty($spCompletionContext['needs_completion']) && empty($spCompletionContext['completed'])) {
+                    $this->completeSqlServerStoredProcedureSync($spCompletionContext, 0, true, null);
+                }
 
                 $this->syncStateService->updateWatermark($schedule->id, null, null);
                 $this->syncStateService->completeSynchronization($schedule->id);
@@ -673,6 +727,16 @@ class SyncService
                 // Cleanup
                 \Illuminate\Support\Facades\Schema::connection($destConnection)->dropIfExists($stagingTableName);
                 Log::info("Sync [{$entityKey}]: Atomic replacement completed successfully.");
+            }
+
+            if (!empty($spCompletionContext['needs_completion']) && empty($spCompletionContext['completed'])) {
+                $this->completeSqlServerStoredProcedureSync($spCompletionContext, $fetchedCount, true, null);
+            }
+
+            if ($pendingStatsFetched > 0 || $pendingStatsInserted > 0) {
+                $this->syncStateService->updateStatistics($schedule->id, $pendingStatsFetched, $pendingStatsInserted, 0, 0);
+                $pendingStatsFetched = 0;
+                $pendingStatsInserted = 0;
             }
 
             $this->syncStateService->updateWatermark($schedule->id, null, null);
@@ -729,6 +793,12 @@ class SyncService
             return $log;
 
         } catch (\App\Exceptions\SyncStopException $e) {
+            if (!empty($spCompletionContext['needs_completion']) && empty($spCompletionContext['completed'])) {
+                try {
+                    $this->completeSqlServerStoredProcedureSync($spCompletionContext, $fetchedCount ?? 0, false, 'Stopped by user: ' . $e->getMessage());
+                } catch (\Throwable $spErr) {
+                }
+            }
             if (isset($isFullSync) && $isFullSync && isset($stagingTableName) && isset($destConnection)) {
                 try {
                     \Illuminate\Support\Facades\Schema::connection($destConnection)->dropIfExists($stagingTableName);
@@ -755,6 +825,12 @@ class SyncService
             return $log;
 
         } catch (\App\Exceptions\SyncCancelException $e) {
+            if (!empty($spCompletionContext['needs_completion']) && empty($spCompletionContext['completed'])) {
+                try {
+                    $this->completeSqlServerStoredProcedureSync($spCompletionContext, $fetchedCount ?? 0, false, 'Cancelled by user: ' . $e->getMessage());
+                } catch (\Throwable $spErr) {
+                }
+            }
             if (isset($isFullSync) && $isFullSync && isset($stagingTableName) && isset($destConnection)) {
                 try {
                     \Illuminate\Support\Facades\Schema::connection($destConnection)->dropIfExists($stagingTableName);
@@ -781,6 +857,12 @@ class SyncService
             return $log;
 
         } catch (\Throwable $e) {
+            if (!empty($spCompletionContext['needs_completion']) && empty($spCompletionContext['completed'])) {
+                try {
+                    $this->completeSqlServerStoredProcedureSync($spCompletionContext, $fetchedCount ?? 0, false, $e->getMessage());
+                } catch (\Throwable $spErr) {
+                }
+            }
             if (isset($isFullSync) && $isFullSync && isset($stagingTableName) && isset($destConnection)) {
                 try {
                     \Illuminate\Support\Facades\Schema::connection($destConnection)->dropIfExists($stagingTableName);
@@ -947,11 +1029,19 @@ class SyncService
 
                 if ($syncJobId) {
                     $now = microtime(true);
-                    if (($now - $lastProgressUpdate) >= 5.0) {
+                    if (($now - $lastProgressUpdate) >= 2.0) {
+                        $currentProcessed = $baseInserted + $insertedOrUpdated;
+                        $calculatedProgress = 0;
+                        if ($totalRecordsCount !== null && $totalRecordsCount > 0) {
+                            $calculatedProgress = min(99, (int) round(($currentProcessed / $totalRecordsCount) * 100));
+                        } elseif ($currentProcessed > 0) {
+                            $calculatedProgress = min(95, max(5, (int) round(90 * (1 - exp(-$currentProcessed / 50000)))));
+                        }
+
                         \App\Models\SyncJob::where('id', $syncJobId)->update([
-                            'processed_rows' => $baseInserted + $insertedOrUpdated,
-                            'total_rows' => $totalRecordsCount,
-                            'progress' => $totalRecordsCount > 0 ? min(99, (int) round((($baseInserted + $insertedOrUpdated) / $totalRecordsCount) * 100)) : 0,
+                            'processed_rows' => $currentProcessed,
+                            'total_rows' => $totalRecordsCount ?? $currentProcessed,
+                            'progress' => $calculatedProgress,
                         ]);
                         $lastProgressUpdate = $now;
                     }
@@ -1111,5 +1201,873 @@ class SyncService
         }
 
         return config('acumatica.odata_path', 'odatav4') === 'odatav4';
+    }
+
+    /**
+     * Determine whether the entity is configured to pull from a Stored Procedure.
+     */
+    private function isStoredProcedureEntity(array $entity, string $odataEntity, ?string $resolvedSourceConn = null): bool
+    {
+        if (($entity['source_object_type'] ?? '') === 'stored_procedure') {
+            return true;
+        }
+
+        if (!empty($entity['sp_execution_mode'])) {
+            return true;
+        }
+
+        $cleanName = trim($odataEntity, " \t\n\r\0\x0B[]");
+        if (preg_match('/^(dbo\.)?(usp_|sp_)/i', $cleanName)) {
+            return true;
+        }
+
+        if ($resolvedSourceConn) {
+            try {
+                $driver = DB::connection($resolvedSourceConn)->getDriverName();
+                if ($driver === 'sqlsrv') {
+                    $escaped = str_replace("'", "''", $this->formatSqlServerProcedureName($odataEntity, false));
+                    $row = DB::connection($resolvedSourceConn)->selectOne("SELECT type FROM sys.objects WHERE object_id = OBJECT_ID('{$escaped}') AND type IN ('P', 'PC')");
+                    if ($row) {
+                        return true;
+                    }
+                }
+            } catch (\Throwable $e) {
+                // Ignore check errors
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Format a SQL Server stored procedure identifier safely.
+     */
+    private function formatSqlServerProcedureName(string $rawName, bool $withBrackets = true): string
+    {
+        $parts = explode('.', trim($rawName));
+        $parts = array_values(array_filter(array_map(fn($p) => trim($p, " \t\n\r\0\x0B[]"), $parts), fn($p) => $p !== ''));
+
+        if (count($parts) === 1) {
+            array_unshift($parts, 'dbo');
+        }
+
+        if (!$withBrackets) {
+            return implode('.', $parts);
+        }
+
+        return implode('.', array_map(fn($p) => '[' . str_replace(']', ']]', $p) . ']', $parts));
+    }
+
+    /**
+     * Execute a SQL Server Stored Procedure synchronization (supports Two-Phase Delta SP & Single Result Set SP).
+     */
+    private function executeStoredProcedureSourceSync(
+        string $resolvedSourceConn,
+        string $destConnection,
+        string $entityKey,
+        array $entity,
+        string $odataEntity,
+        string $tableName,
+        string $writeTableName,
+        bool $isFullSync,
+        bool $isIncremental,
+        bool $isAppendOnly,
+        array $customFilters,
+        callable $processChunkCallback,
+        callable $progressCallback,
+        int &$fetchedCount,
+        ?int &$totalRecordsCount,
+        bool &$isTwoPhaseSpSync,
+        array &$spCompletionContext
+    ): void {
+        $pdo = DB::connection($resolvedSourceConn)->getPdo();
+        try {
+            if (defined('PDO::SQLSRV_ATTR_QUERY_TIMEOUT')) {
+                $pdo->setAttribute(\PDO::SQLSRV_ATTR_QUERY_TIMEOUT, 600);
+            }
+        } catch (\Throwable $e) {
+            // Ignore attribute errors if driver does not support SQLSRV_ATTR_QUERY_TIMEOUT
+        }
+
+        $procBracketed = $this->formatSqlServerProcedureName($odataEntity, true);
+        $procPlain = $this->formatSqlServerProcedureName($odataEntity, false);
+
+        // Safeguard: If the entity was accidentally configured with the completion callback SP
+        // (e.g. usp_CompleteIncrementalSync), automatically resolve it to the data-fetching SP (usp_GetIncremental...).
+        if (stripos($procPlain, 'usp_CompleteIncrementalSync') !== false) {
+            try {
+                $getProcRow = DB::connection($resolvedSourceConn)->selectOne("SELECT TOP 1 SCHEMA_NAME(schema_id) AS sname, name FROM sys.procedures WHERE name LIKE 'usp_GetIncremental%' ORDER BY name");
+                if ($getProcRow && !empty($getProcRow->name)) {
+                    $resolvedGetName = ($getProcRow->sname ?: 'dbo') . '.' . $getProcRow->name;
+                    Log::warning("Sync [{$entityKey}]: Source object was set to completion SP [{$procPlain}]; auto-redirecting to data SP [{$resolvedGetName}].");
+                    $procBracketed = $this->formatSqlServerProcedureName($resolvedGetName, true);
+                    $procPlain = $this->formatSqlServerProcedureName($resolvedGetName, false);
+                }
+            } catch (\Throwable $e) {
+            }
+        }
+
+        // Determine SP mode: explicit config or auto-detect from sys.parameters
+        $spMode = $entity['sp_execution_mode'] ?? '';
+        if ($spMode === '') {
+            try {
+                $escaped = str_replace("'", "''", $procPlain);
+                $params = DB::connection($resolvedSourceConn)->select("SELECT LOWER(name) AS pname FROM sys.parameters WHERE object_id = OBJECT_ID('{$escaped}')");
+                $pNames = array_map(fn($r) => $r->pname ?? '', $params);
+                if (in_array('@batchlogid', $pNames, true) && in_array('@newwatermark', $pNames, true)) {
+                    $spMode = 'two_phase_delta';
+                } else {
+                    $spMode = 'single_result_set';
+                }
+            } catch (\Throwable $e) {
+                $spMode = 'single_result_set';
+            }
+        }
+
+        $chunkSize = min(1000, max(100, (int) ($entity['batch_size'] ?? 1000)));
+        $fieldMappings = $entity['field_mappings'] ?? [];
+
+        // Ensure target table exists before executing SP
+        if (!\Illuminate\Support\Facades\Schema::connection($destConnection)->hasTable($tableName) && !empty($fieldMappings)) {
+            $this->schemaManager->ensureTableFromMappings($destConnection, $tableName, $fieldMappings);
+        }
+
+        // Extract SP parameter overrides (@Param) and optional row-level post-filters from $customFilters
+        $spParamOverrides = [];
+        $rowLevelFilters = [];
+        foreach ($customFilters as $cf) {
+            $rawField = trim((string) ($cf['field'] ?? ''));
+            $val = trim((string) ($cf['value'] ?? ''));
+            $op = strtolower(trim((string) ($cf['operator'] ?? 'eq')));
+            if ($rawField === '' || $val === '') {
+                continue;
+            }
+            $cleanParam = strtolower(ltrim($rawField, '@'));
+            if (str_starts_with($rawField, '@') || in_array($cleanParam, ['syncprocessname', 'companyid', 'customstartdate', 'orderdatefrom', 'orderdateto', 'keepcurrentwatermark', 'keepwatermark'], true)) {
+                $spParamOverrides[$cleanParam] = $val;
+            } else {
+                $rowLevelFilters[] = ['field' => $rawField, 'operator' => $op, 'value' => $val];
+            }
+        }
+
+        if ($spMode === 'two_phase_delta') {
+            $isTwoPhaseSpSync = true;
+
+            $syncProcessName = !empty($spParamOverrides['syncprocessname'])
+                ? $spParamOverrides['syncprocessname']
+                : (!empty($entity['sp_sync_process_name']) ? trim((string) $entity['sp_sync_process_name']) : 'SO_TO_MYSQL_SYNC');
+
+            $companyId = isset($spParamOverrides['companyid']) && is_numeric($spParamOverrides['companyid'])
+                ? (int) $spParamOverrides['companyid']
+                : (!empty($entity['sp_company_id']) ? (int) $entity['sp_company_id'] : 2);
+
+            $completionProc = !empty($entity['sp_completion_proc'])
+                ? trim((string) $entity['sp_completion_proc'])
+                : 'dbo.usp_CompleteIncrementalSync';
+
+            $deleteKeyColsRaw = !empty($entity['sp_delete_keys'])
+                ? (string) $entity['sp_delete_keys']
+                : 'CompanyID,OrderType,OrderNbr';
+            $deleteKeyCols = array_values(array_filter(array_map('trim', explode(',', $deleteKeyColsRaw))));
+
+            $customStartDate = !empty($spParamOverrides['customstartdate'])
+                ? $spParamOverrides['customstartdate']
+                : (!empty($entity['sp_custom_start_date']) ? trim((string) $entity['sp_custom_start_date']) : null);
+
+            if ($customStartDate !== null && $customStartDate !== '') {
+                try {
+                    $customStartDate = \Carbon\Carbon::parse($customStartDate)->format('Y-m-d H:i:s.v');
+                } catch (\Throwable $e) {
+                }
+            } else {
+                if ($isFullSync) {
+                    $customStartDate = '2000-01-01 00:00:00.000';
+                } elseif (!empty($rowLevelFilters)) {
+                    foreach ($rowLevelFilters as $cf) {
+                        $f = strtolower((string) ($cf['field'] ?? ''));
+                        $op = strtolower((string) ($cf['operator'] ?? ''));
+                        $val = trim((string) ($cf['value'] ?? ''));
+                        if ($val !== '' && in_array($op, ['ge', 'gt', 'eq'], true) && (str_contains($f, 'date') || str_contains($f, 'time'))) {
+                            try {
+                                $customStartDate = \Carbon\Carbon::parse($val)->format('Y-m-d H:i:s.v');
+                                break;
+                            } catch (\Throwable $e) {
+                            }
+                        }
+                    }
+                }
+            }
+
+            $orderDateFrom = !empty($spParamOverrides['orderdatefrom']) ? trim((string) $spParamOverrides['orderdatefrom']) : null;
+            if ($orderDateFrom !== null && $orderDateFrom !== '') {
+                try {
+                    $orderDateFrom = \Carbon\Carbon::parse($orderDateFrom)->format('Y-m-d');
+                } catch (\Throwable $e) {
+                }
+            }
+
+            $orderDateTo = !empty($spParamOverrides['orderdateto']) ? trim((string) $spParamOverrides['orderdateto']) : null;
+            if ($orderDateTo !== null && $orderDateTo !== '') {
+                try {
+                    $orderDateTo = \Carbon\Carbon::parse($orderDateTo)->format('Y-m-d');
+                } catch (\Throwable $e) {
+                }
+            }
+
+            $keepWatermarkRaw = $spParamOverrides['keepcurrentwatermark'] ?? $spParamOverrides['keepwatermark'] ?? null;
+            $keepCurrentWatermark = $keepWatermarkRaw !== null
+                && in_array(strtolower(trim((string) $keepWatermarkRaw)), ['1', 'true', 'yes', 'on'], true);
+
+            // Detect declared SP parameters so we only pass parameters supported by the physical Stored Procedure
+            $declaredSpParams = [];
+            try {
+                $procPlainEscaped = str_replace("'", "''", $procPlain);
+                $paramCheckStmt = $pdo->query("SELECT LOWER(name) AS pname FROM sys.parameters WHERE object_id = OBJECT_ID('{$procPlainEscaped}')");
+                while ($pRow = $paramCheckStmt->fetch(\PDO::FETCH_ASSOC)) {
+                    if (!empty($pRow['pname'])) {
+                        $declaredSpParams[$pRow['pname']] = true;
+                    }
+                }
+            } catch (\Throwable $paramErr) {
+                $declaredSpParams['@customstartdate'] = true;
+            }
+            $hasCustomStartParam = !empty($declaredSpParams['@customstartdate']) || empty($declaredSpParams);
+            $hasOrderDateFromParam = !empty($declaredSpParams['@orderdatefrom']);
+            $hasOrderDateToParam = !empty($declaredSpParams['@orderdateto']);
+
+            $preservedWatermark = null;
+            if ($keepCurrentWatermark) {
+                try {
+                    $wmKeepStmt = $pdo->prepare("
+                        SELECT CONVERT(VARCHAR(30), LastSuccessSyncTime, 121) AS LastSuccessSyncTime
+                        FROM dbo.SyncWatermarkControl
+                        WHERE SyncProcessName = :proc_name AND CompanyID = :comp_id
+                    ");
+                    $wmKeepStmt->execute([
+                        ':proc_name' => $syncProcessName,
+                        ':comp_id'   => $companyId,
+                    ]);
+                    $preservedWatermark = $wmKeepStmt->fetchColumn() ?: null;
+                } catch (\Throwable $wmKeepErr) {
+                }
+            }
+
+            $spCompletionContext = [
+                'needs_completion'    => true,
+                'completed'           => false,
+                'source_connection'   => $resolvedSourceConn,
+                'completion_proc'     => $completionProc,
+                'sync_process_name'   => $syncProcessName,
+                'company_id'          => $companyId,
+                'batch_log_id'        => null,
+                'new_watermark'       => null,
+                'preserved_watermark' => $preservedWatermark,
+            ];
+
+            // Pre-flight safety: If a previous run was killed/aborted and left IsRunning = 1 in dbo.SyncWatermarkControl,
+            // release the stale SQL Server watermark lock before starting the new Two-Phase execution.
+            try {
+                $pdo->prepare("
+                    UPDATE dbo.SyncWatermarkControl
+                    SET IsRunning = 0, LastRunStatus = 'IDLE', UpdatedDateTime = SYSDATETIME()
+                    WHERE SyncProcessName = :proc_name AND CompanyID = :comp_id AND IsRunning = 1;
+
+                    UPDATE dbo.SyncExecutionLog
+                    SET EndTime = SYSDATETIME(), Status = 'ABORTED', ErrorMessage = 'Auto-cleaned stale RUNNING log before new sync'
+                    WHERE SyncProcessName = :proc_name2 AND Status = 'RUNNING';
+                ")->execute([
+                    ':proc_name'  => $syncProcessName,
+                    ':comp_id'    => $companyId,
+                    ':proc_name2' => $syncProcessName,
+                ]);
+            } catch (\Throwable $preFlightErr) {
+                // Non-fatal if table does not exist or schema differs
+            }
+
+            Log::info("Sync [{$entityKey}]: Executing Two-Phase Delta SP {$procPlain} (@SyncProcessName='{$syncProcessName}', @CompanyID={$companyId}, @CustomStartDate=" . ($customStartDate ?? 'NULL') . ", @OrderDateFrom=" . ($orderDateFrom ?? 'NULL') . ", @OrderDateTo=" . ($orderDateTo ?? 'NULL') . ", KeepWatermark=" . ($keepCurrentWatermark ? '1' : '0') . ")");
+
+            $execParamLines = [
+                '@SyncProcessName = :sync_process_name',
+                '@CompanyID = :company_id',
+            ];
+            if ($hasCustomStartParam) {
+                $execParamLines[] = '@CustomStartDate = :custom_start_date';
+            }
+            if ($hasOrderDateFromParam) {
+                $execParamLines[] = '@OrderDateFrom = :order_date_from';
+            }
+            if ($hasOrderDateToParam) {
+                $execParamLines[] = '@OrderDateTo = :order_date_to';
+            }
+            $execParamLines[] = '@BatchLogID = @BatchLogID OUTPUT';
+            $execParamLines[] = '@NewWatermark = @NewWatermark OUTPUT';
+            $execParamSql = implode(",\n                    ", $execParamLines);
+
+            $sql = "
+                SET NOCOUNT ON;
+                DECLARE @BatchLogID BIGINT, @NewWatermark DATETIME2(3);
+                EXEC {$procBracketed}
+                    {$execParamSql};
+                SELECT @BatchLogID AS BatchLogID, CONVERT(VARCHAR(30), @NewWatermark, 121) AS NewWatermark;
+            ";
+
+            $stmt = $pdo->prepare($sql);
+            $stmt->bindValue(':sync_process_name', $syncProcessName, \PDO::PARAM_STR);
+            $stmt->bindValue(':company_id', $companyId, \PDO::PARAM_INT);
+            if ($hasCustomStartParam) {
+                if ($customStartDate !== null && $customStartDate !== '') {
+                    $stmt->bindValue(':custom_start_date', $customStartDate, \PDO::PARAM_STR);
+                } else {
+                    $stmt->bindValue(':custom_start_date', null, \PDO::PARAM_NULL);
+                }
+            }
+            if ($hasOrderDateFromParam) {
+                if ($orderDateFrom !== null && $orderDateFrom !== '') {
+                    $stmt->bindValue(':order_date_from', $orderDateFrom, \PDO::PARAM_STR);
+                } else {
+                    $stmt->bindValue(':order_date_from', null, \PDO::PARAM_NULL);
+                }
+            }
+            if ($hasOrderDateToParam) {
+                if ($orderDateTo !== null && $orderDateTo !== '') {
+                    $stmt->bindValue(':order_date_to', $orderDateTo, \PDO::PARAM_STR);
+                } else {
+                    $stmt->bindValue(':order_date_to', null, \PDO::PARAM_NULL);
+                }
+            }
+
+            $stmt->execute();
+
+            try {
+                // Result Set 1: #ChangedOrders (Keys to delete in target table)
+                $changedOrders = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+
+                // Guard in case Result Set 1 was already the @BatchLogID / @NewWatermark output row
+                if (count($changedOrders) === 1 && array_key_exists('BatchLogID', $changedOrders[0]) && array_key_exists('NewWatermark', $changedOrders[0])) {
+                    $spCompletionContext['batch_log_id'] = $changedOrders[0]['BatchLogID'] !== null ? (int) $changedOrders[0]['BatchLogID'] : null;
+                    $spCompletionContext['new_watermark'] = $changedOrders[0]['NewWatermark'] ?? null;
+                    $changedOrders = [];
+                }
+
+                $changedOrdersCount = count($changedOrders);
+                Log::info("Sync [{$entityKey}]: SP Result Set 1 (#ChangedOrders) returned {$changedOrdersCount} order key(s).");
+
+                // Phase 1: Delete changed orders from destination table when in incremental mode
+                if (!$isFullSync && !$isAppendOnly && $changedOrdersCount > 0) {
+                    if (\Illuminate\Support\Facades\Schema::connection($destConnection)->hasTable($writeTableName)) {
+                        $this->ensureDeleteKeysIndex($destConnection, $writeTableName, $deleteKeyCols, $fieldMappings);
+                        $deletedCount = $this->deleteChangedOrdersFromDestination(
+                            $destConnection,
+                            $writeTableName,
+                            $changedOrders,
+                            $deleteKeyCols,
+                            $fieldMappings
+                        );
+                        Log::info("Sync [{$entityKey}]: Deleted {$deletedCount} existing row(s) in [{$writeTableName}] matching {$changedOrdersCount} changed order(s).");
+                    }
+                }
+
+                // Result Set 2: Stream data rows from View (vw_UsrSyncSalesOrderInvoice)
+                if ($stmt->nextRowset()) {
+                    $batch = [];
+                    while (($row = $stmt->fetch(\PDO::FETCH_ASSOC)) !== false) {
+                        if (count($row) === 2 && array_key_exists('BatchLogID', $row) && array_key_exists('NewWatermark', $row)) {
+                            $spCompletionContext['batch_log_id'] = $row['BatchLogID'] !== null ? (int) $row['BatchLogID'] : null;
+                            $spCompletionContext['new_watermark'] = $row['NewWatermark'] ?? null;
+                            continue;
+                        }
+
+                        if (!empty($rowLevelFilters) && !$this->matchesRowCustomFilters($row, $rowLevelFilters)) {
+                            continue;
+                        }
+
+                        $batch[] = $row;
+                        if (count($batch) >= $chunkSize) {
+                            $processChunkCallback($batch);
+                            $progressCallback($fetchedCount, $totalRecordsCount);
+                            $batch = [];
+                        }
+                    }
+
+                    if (!empty($batch)) {
+                        $processChunkCallback($batch);
+                        $progressCallback($fetchedCount, $totalRecordsCount);
+                        $batch = [];
+                    }
+                }
+
+                // Result Set 3: Capture @BatchLogID and @NewWatermark
+                while ($stmt->nextRowset()) {
+                    $outRow = $stmt->fetch(\PDO::FETCH_ASSOC);
+                    if (is_array($outRow) && (array_key_exists('BatchLogID', $outRow) || array_key_exists('NewWatermark', $outRow))) {
+                        $spCompletionContext['batch_log_id'] = $outRow['BatchLogID'] !== null ? (int) $outRow['BatchLogID'] : null;
+                        $spCompletionContext['new_watermark'] = $outRow['NewWatermark'] ?? null;
+                    }
+                }
+            } finally {
+                // If an exception occurred mid-stream before Result Set 3 was read, try advancing rowsets to capture BatchLogID
+                if ($spCompletionContext['batch_log_id'] === null) {
+                    try {
+                        while ($stmt->nextRowset()) {
+                            $outRow = $stmt->fetch(\PDO::FETCH_ASSOC);
+                            if (is_array($outRow) && array_key_exists('BatchLogID', $outRow)) {
+                                $spCompletionContext['batch_log_id'] = $outRow['BatchLogID'] !== null ? (int) $outRow['BatchLogID'] : null;
+                                $spCompletionContext['new_watermark'] = $outRow['NewWatermark'] ?? null;
+                            }
+                        }
+                    } catch (\Throwable $ignore) {
+                    }
+                }
+                try {
+                    $stmt->closeCursor();
+                } catch (\Throwable $ignore) {
+                }
+            }
+
+            return;
+        }
+
+        // Standard Single Result Set Stored Procedure (supports binding @Param filters from card)
+        $execAssignments = [];
+        $execBindings = [];
+        $paramIdx = 0;
+        foreach ($customFilters as $cf) {
+            $rawField = trim((string) ($cf['field'] ?? ''));
+            $val = trim((string) ($cf['value'] ?? ''));
+            if (str_starts_with($rawField, '@') && $val !== '' && preg_match('/^@[A-Za-z0-9_]+$/', $rawField)) {
+                $placeholder = ":sp_param_{$paramIdx}";
+                $execAssignments[] = "{$rawField} = {$placeholder}";
+                $execBindings[$placeholder] = $val;
+                $paramIdx++;
+            }
+        }
+        $execParamClause = !empty($execAssignments) ? ' ' . implode(', ', $execAssignments) : '';
+
+        Log::info("Sync [{$entityKey}]: Executing Standard Stored Procedure {$procPlain}{$execParamClause}");
+        $stmt = $pdo->prepare("SET NOCOUNT ON; EXEC {$procBracketed}{$execParamClause};");
+        foreach ($execBindings as $ph => $bVal) {
+            $stmt->bindValue($ph, $bVal);
+        }
+        $stmt->execute();
+
+        try {
+            do {
+                if ($stmt->columnCount() > 0) {
+                    $batch = [];
+                    while (($row = $stmt->fetch(\PDO::FETCH_ASSOC)) !== false) {
+                        if (!empty($rowLevelFilters) && !$this->matchesRowCustomFilters($row, $rowLevelFilters)) {
+                            continue;
+                        }
+                        $batch[] = $row;
+                        if (count($batch) >= $chunkSize) {
+                            $processChunkCallback($batch);
+                            $progressCallback($fetchedCount, $totalRecordsCount);
+                            $batch = [];
+                        }
+                    }
+                    if (!empty($batch)) {
+                        $processChunkCallback($batch);
+                        $progressCallback($fetchedCount, $totalRecordsCount);
+                        $batch = [];
+                    }
+                    break;
+                }
+            } while ($stmt->nextRowset());
+        } finally {
+            try {
+                $stmt->closeCursor();
+            } catch (\Throwable $ignore) {
+            }
+        }
+    }
+
+    /**
+     * Evaluate optional row-level custom filters on rows streamed from a Stored Procedure.
+     */
+    private function matchesRowCustomFilters(array $row, array $filters): bool
+    {
+        foreach ($filters as $cf) {
+            $field = $cf['field'] ?? '';
+            $op = strtolower($cf['operator'] ?? 'eq');
+            $targetVal = (string) ($cf['value'] ?? '');
+
+            $actualVal = null;
+            if (array_key_exists($field, $row)) {
+                $actualVal = $row[$field];
+            } else {
+                foreach ($row as $k => $v) {
+                    if (strcasecmp((string) $k, $field) === 0) {
+                        $actualVal = $v;
+                        break;
+                    }
+                }
+            }
+
+            $actualStr = (string) ($actualVal ?? '');
+            $matched = match ($op) {
+                'eq'         => strcasecmp($actualStr, $targetVal) === 0,
+                'ne'         => strcasecmp($actualStr, $targetVal) !== 0,
+                'contains'   => stripos($actualStr, $targetVal) !== false,
+                'startswith' => stripos($actualStr, $targetVal) === 0,
+                'endswith'   => str_ends_with(strtolower($actualStr), strtolower($targetVal)),
+                'gt'         => is_numeric($actualStr) && is_numeric($targetVal) ? ((float) $actualStr > (float) $targetVal) : ($actualStr > $targetVal),
+                'ge'         => is_numeric($actualStr) && is_numeric($targetVal) ? ((float) $actualStr >= (float) $targetVal) : ($actualStr >= $targetVal),
+                'lt'         => is_numeric($actualStr) && is_numeric($targetVal) ? ((float) $actualStr < (float) $targetVal) : ($actualStr < $targetVal),
+                'le'         => is_numeric($actualStr) && is_numeric($targetVal) ? ((float) $actualStr <= (float) $targetVal) : ($actualStr <= $targetVal),
+                default      => true,
+            };
+
+            if (!$matched) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Delete rows in destination table matching #ChangedOrders keys (e.g. CompanyID, OrderType, OrderNbr).
+     * Groups by prefix keys (CompanyID, OrderType) and runs batched WHERE IN on the final key (OrderNbr) for maximum speed.
+     */
+    private function deleteChangedOrdersFromDestination(
+        string $destConnection,
+        string $tableName,
+        array $changedOrders,
+        array $deleteKeyCols,
+        array $fieldMappings = []
+    ): int {
+        if (empty($changedOrders)) {
+            return 0;
+        }
+
+        // Determine actual column names in the first row of $changedOrders
+        $sampleRow = $changedOrders[0];
+        $sourceCols = [];
+        foreach ($deleteKeyCols as $configuredCol) {
+            foreach (array_keys($sampleRow) as $actualKey) {
+                if (strcasecmp($configuredCol, $actualKey) === 0) {
+                    $sourceCols[] = $actualKey;
+                    break;
+                }
+            }
+        }
+
+        if (empty($sourceCols)) {
+            $sourceCols = array_keys($sampleRow);
+        }
+
+        // Map source key names to destination column names
+        $destColsMap = [];
+        foreach ($sourceCols as $srcCol) {
+            $mappedDest = trim((string) ($fieldMappings[$srcCol]['destination_field'] ?? ''));
+            $destColsMap[$srcCol] = $this->schemaManager->sanitizeColumnName($mappedDest !== '' ? $mappedDest : $srcCol);
+        }
+
+        $totalDeleted = 0;
+
+        DB::connection($destConnection)->transaction(function () use ($destConnection, $tableName, $changedOrders, $sourceCols, $destColsMap, &$totalDeleted) {
+            if (count($sourceCols) === 1) {
+                $srcCol = $sourceCols[0];
+                $destCol = $destColsMap[$srcCol];
+                $values = array_values(array_unique(array_filter(array_column($changedOrders, $srcCol), fn($v) => $v !== null && $v !== '')));
+                foreach (array_chunk($values, 500) as $chunk) {
+                    $totalDeleted += DB::connection($destConnection)
+                        ->table($tableName)
+                        ->whereIn($destCol, $chunk)
+                        ->delete();
+                }
+                return;
+            }
+
+            // Multiple keys (e.g. CompanyID, OrderType, OrderNbr):
+            // Group by all prefix keys (CompanyID, OrderType) and batch whereIn on the last key (OrderNbr)
+            $lastSrcCol = end($sourceCols);
+            $lastDestCol = $destColsMap[$lastSrcCol];
+            $prefixSrcCols = array_slice($sourceCols, 0, -1);
+
+            $groups = [];
+            foreach ($changedOrders as $row) {
+                $lastVal = $row[$lastSrcCol] ?? null;
+                if ($lastVal === null || $lastVal === '') {
+                    continue;
+                }
+                $prefixValues = [];
+                foreach ($prefixSrcCols as $pCol) {
+                    $prefixValues[$destColsMap[$pCol]] = $row[$pCol] ?? null;
+                }
+                $groupKey = json_encode($prefixValues);
+                $groups[$groupKey]['prefix'] = $prefixValues;
+                $groups[$groupKey]['in_values'][] = $lastVal;
+            }
+
+            foreach ($groups as $group) {
+                $inValues = array_values(array_unique($group['in_values']));
+                foreach (array_chunk($inValues, 500) as $chunk) {
+                    $q = DB::connection($destConnection)->table($tableName);
+                    foreach ($group['prefix'] as $destCol => $val) {
+                        $q->where($destCol, $val);
+                    }
+                    $totalDeleted += $q->whereIn($lastDestCol, $chunk)->delete();
+                }
+            }
+        }, 3);
+
+        return $totalDeleted;
+    }
+
+    /**
+     * Ensure an index exists on the destination table for the delete key columns (e.g. CompanyID, OrderType, OrderNbr)
+     * so Phase 1 DELETE queries execute via fast B-Tree Index Seek instead of full table scan.
+     */
+    private function ensureDeleteKeysIndex(
+        string $destConnection,
+        string $tableName,
+        array $deleteKeyCols,
+        array $fieldMappings = []
+    ): void {
+        if (empty($deleteKeyCols)) {
+            return;
+        }
+
+        try {
+            $driver = DB::connection($destConnection)->getDriverName();
+            if (!in_array($driver, ['mysql', 'mariadb'], true)) {
+                return;
+            }
+
+            $indexName = 'idx_' . substr(md5($tableName . '_' . implode('_', $deleteKeyCols)), 0, 16) . '_sync_keys';
+            $existingIdx = DB::connection($destConnection)->select("SHOW INDEX FROM `{$tableName}` WHERE Key_name = ?", [$indexName]);
+            if (!empty($existingIdx)) {
+                return;
+            }
+
+            $colDefs = DB::connection($destConnection)->select("SHOW COLUMNS FROM `{$tableName}`");
+            $colTypesByLower = [];
+            $actualColNamesByLower = [];
+            foreach ($colDefs as $c) {
+                $f = (string) ($c->Field ?? '');
+                $colTypesByLower[strtolower($f)] = strtolower((string) ($c->Type ?? ''));
+                $actualColNamesByLower[strtolower($f)] = $f;
+            }
+
+            $indexParts = [];
+            foreach ($deleteKeyCols as $srcCol) {
+                $mappedDest = trim((string) ($fieldMappings[$srcCol]['destination_field'] ?? ''));
+                $destCol = $this->schemaManager->sanitizeColumnName($mappedDest !== '' ? $mappedDest : $srcCol);
+                $lower = strtolower($destCol);
+                if (!isset($actualColNamesByLower[$lower])) {
+                    continue;
+                }
+                $actualCol = $actualColNamesByLower[$lower];
+                $type = $colTypesByLower[$lower] ?? '';
+                // In MySQL/MariaDB, TEXT/BLOB columns require a prefix length in index definitions
+                if (str_contains($type, 'text') || str_contains($type, 'blob')) {
+                    $indexParts[] = "`{$actualCol}`(50)";
+                } else {
+                    $indexParts[] = "`{$actualCol}`";
+                }
+            }
+
+            if (!empty($indexParts)) {
+                $colsSql = implode(', ', $indexParts);
+                DB::connection($destConnection)->statement("CREATE INDEX `{$indexName}` ON `{$tableName}` ({$colsSql})");
+                Log::info("Sync: Created composite index [{$indexName}] on [{$tableName}] ({$colsSql}) for fast SP delta deletion.");
+            }
+        } catch (\Throwable $e) {
+            Log::warning("Sync: Could not auto-create delete keys index on [{$tableName}]: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Call the completion Stored Procedure (e.g. dbo.usp_CompleteIncrementalSync) in the SQL Server Staging DB
+     * to commit @NewWatermark on success or record FAILED status and release IsRunning=0 on failure.
+     */
+    private function completeSqlServerStoredProcedureSync(
+        array &$spCompletionContext,
+        int $extractedRowsCount,
+        bool $isSuccess,
+        ?string $errorMessage = null
+    ): void {
+        if (empty($spCompletionContext['needs_completion']) || !empty($spCompletionContext['completed'])) {
+            return;
+        }
+
+        $resolvedSourceConn = $spCompletionContext['source_connection'] ?? null;
+        $completionProc = $spCompletionContext['completion_proc'] ?? 'dbo.usp_CompleteIncrementalSync';
+        $syncProcessName = $spCompletionContext['sync_process_name'] ?? 'SO_TO_MYSQL_SYNC';
+        $companyId = (int) ($spCompletionContext['company_id'] ?? 2);
+        $batchLogId = $spCompletionContext['batch_log_id'] ?? null;
+        $newWatermark = $spCompletionContext['new_watermark'] ?? null;
+
+        if (!$resolvedSourceConn || !$completionProc) {
+            return;
+        }
+
+        // If the previous statement was interrupted mid-stream (e.g. stopped/cancelled/failed before Result Set 3),
+        // purge and reconnect the source DB connection so the TDS buffer is immediately released and does not throw IMSSP busy errors.
+        if (!$isSuccess || $batchLogId === null) {
+            try {
+                DB::purge($resolvedSourceConn);
+                DB::connection($resolvedSourceConn)->reconnect();
+            } catch (\Throwable $e) {
+            }
+        }
+
+        $pdo = DB::connection($resolvedSourceConn)->getPdo();
+
+        // Fallback: if an exception interrupted streaming before Result Set 3 was read,
+        // look up the active RUNNING LogID and WatermarkTo from dbo.SyncExecutionLog
+        if ($batchLogId === null || $newWatermark === null) {
+            try {
+                $lookupStmt = $pdo->prepare("
+                    SELECT TOP 1 LogID, CONVERT(VARCHAR(30), WatermarkTo, 121) AS WatermarkTo
+                    FROM dbo.SyncExecutionLog
+                    WHERE SyncProcessName = :proc_name AND Status = 'RUNNING'
+                    ORDER BY LogID DESC
+                ");
+                $lookupStmt->execute([':proc_name' => $syncProcessName]);
+                if ($row = $lookupStmt->fetch(\PDO::FETCH_ASSOC)) {
+                    $batchLogId = $batchLogId ?? (int) $row['LogID'];
+                    $newWatermark = $newWatermark ?? $row['WatermarkTo'];
+                }
+            } catch (\Throwable $e) {
+                // Ignore fallback lookup errors
+            }
+        }
+
+        if ($batchLogId === null) {
+            // Even if no BatchLogID row was found, ensure IsRunning = 0 on dbo.SyncWatermarkControl
+            try {
+                $pdo->prepare("
+                    UPDATE dbo.SyncWatermarkControl
+                    SET IsRunning = 0, LastRunStatus = :status, UpdatedDateTime = SYSDATETIME()
+                    WHERE SyncProcessName = :proc_name AND CompanyID = :comp_id
+                ")->execute([
+                    ':status'    => $isSuccess ? 'SUCCESS' : 'FAILED',
+                    ':proc_name' => $syncProcessName,
+                    ':comp_id'   => $companyId,
+                ]);
+            } catch (\Throwable $e) {
+            }
+            Log::warning("Sync: Skipping {$completionProc} because BatchLogID was not generated (IsRunning reset to 0).");
+            return;
+        }
+
+        if ($isSuccess && !empty($spCompletionContext['preserved_watermark'])) {
+            $newWatermark = $spCompletionContext['preserved_watermark'];
+        } elseif ($newWatermark === null) {
+            $newWatermark = now()->utc()->format('Y-m-d H:i:s.v');
+        }
+
+        $procBracketed = $this->formatSqlServerProcedureName($completionProc, true);
+
+        // Check whether the completion stored procedure actually exists in the target SQL Server database
+        $completionProcExists = false;
+        try {
+            $checkStmt = $pdo->prepare("SELECT OBJECT_ID(:proc_name, 'P') AS proc_id");
+            $checkStmt->execute([':proc_name' => $procBracketed]);
+            $procRow = $checkStmt->fetch(\PDO::FETCH_ASSOC);
+            $completionProcExists = !empty($procRow['proc_id']);
+        } catch (\Throwable $e) {
+            $completionProcExists = false;
+        }
+
+        if (!$completionProcExists) {
+            // Fallback: update dbo.SyncExecutionLog and dbo.SyncWatermarkControl directly if they exist
+            $statusLabel = $isSuccess ? 'SUCCESS' : 'FAILED';
+            $truncatedError = ($errorMessage !== null && $errorMessage !== '') ? mb_substr($errorMessage, 0, 4000) : null;
+
+            try {
+                if ($pdo->query("SELECT OBJECT_ID('dbo.SyncExecutionLog', 'U')")->fetchColumn()) {
+                    $logStmt = $pdo->prepare("
+                        UPDATE dbo.SyncExecutionLog
+                        SET EndTime = SYSDATETIME(),
+                            ExtractedRowsCount = :extracted_rows_count,
+                            Status = :status,
+                            ErrorMessage = :error_message
+                        WHERE LogID = :batch_log_id
+                    ");
+                    $logStmt->bindValue(':extracted_rows_count', $extractedRowsCount, \PDO::PARAM_INT);
+                    $logStmt->bindValue(':status', $statusLabel, \PDO::PARAM_STR);
+                    if ($truncatedError !== null) {
+                        $logStmt->bindValue(':error_message', $truncatedError, \PDO::PARAM_STR);
+                    } else {
+                        $logStmt->bindValue(':error_message', null, \PDO::PARAM_NULL);
+                    }
+                    $logStmt->bindValue(':batch_log_id', (int) $batchLogId, \PDO::PARAM_INT);
+                    $logStmt->execute();
+                }
+            } catch (\Throwable $e) {
+                Log::warning("Sync: Fallback update on dbo.SyncExecutionLog failed: " . $e->getMessage());
+            }
+
+            try {
+                if ($pdo->query("SELECT OBJECT_ID('dbo.SyncWatermarkControl', 'U')")->fetchColumn()) {
+                    if ($isSuccess) {
+                        $wmStmt = $pdo->prepare("
+                            UPDATE dbo.SyncWatermarkControl
+                            SET IsRunning = 0,
+                                LastSuccessSyncTime = COALESCE(TRY_CONVERT(DATETIME2(3), :new_watermark), LastSuccessSyncTime),
+                                LastRunStatus = 'SUCCESS',
+                                UpdatedDateTime = SYSDATETIME()
+                            WHERE SyncProcessName = :proc_name AND CompanyID = :comp_id
+                        ");
+                        $wmStmt->execute([
+                            ':new_watermark' => (string) $newWatermark,
+                            ':proc_name'     => $syncProcessName,
+                            ':comp_id'       => $companyId,
+                        ]);
+                    } else {
+                        $wmStmt = $pdo->prepare("
+                            UPDATE dbo.SyncWatermarkControl
+                            SET IsRunning = 0,
+                                LastRunStatus = 'FAILED',
+                                UpdatedDateTime = SYSDATETIME()
+                            WHERE SyncProcessName = :proc_name AND CompanyID = :comp_id
+                        ");
+                        $wmStmt->execute([
+                            ':proc_name' => $syncProcessName,
+                            ':comp_id'   => $companyId,
+                        ]);
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::warning("Sync: Fallback update on dbo.SyncWatermarkControl failed: " . $e->getMessage());
+            }
+
+            $spCompletionContext['completed'] = true;
+            Log::warning("Sync: Stored procedure {$completionProc} not found in target database; applied direct SyncExecutionLog/SyncWatermarkControl fallback (BatchLogID={$batchLogId}, Status={$statusLabel}, ExtractedRows={$extractedRowsCount}, Watermark={$newWatermark}).");
+            return;
+        }
+
+        $sql = "
+            SET NOCOUNT ON;
+            EXEC {$procBracketed}
+                @SyncProcessName = :sync_process_name,
+                @CompanyID = :company_id,
+                @BatchLogID = :batch_log_id,
+                @NewWatermark = :new_watermark,
+                @ExtractedRowsCount = :extracted_rows_count,
+                @IsSuccess = :is_success,
+                @ErrorMessage = :error_message;
+        ";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->bindValue(':sync_process_name', $syncProcessName, \PDO::PARAM_STR);
+        $stmt->bindValue(':company_id', $companyId, \PDO::PARAM_INT);
+        $stmt->bindValue(':batch_log_id', (int) $batchLogId, \PDO::PARAM_INT);
+        $stmt->bindValue(':new_watermark', (string) $newWatermark, \PDO::PARAM_STR);
+        $stmt->bindValue(':extracted_rows_count', $extractedRowsCount, \PDO::PARAM_INT);
+        $stmt->bindValue(':is_success', $isSuccess ? 1 : 0, \PDO::PARAM_INT);
+        if ($errorMessage !== null && $errorMessage !== '') {
+            $stmt->bindValue(':error_message', mb_substr($errorMessage, 0, 4000), \PDO::PARAM_STR);
+        } else {
+            $stmt->bindValue(':error_message', null, \PDO::PARAM_NULL);
+        }
+
+        $stmt->execute();
+        $spCompletionContext['completed'] = true;
+
+        Log::info("Sync: Executed {$completionProc} (BatchLogID={$batchLogId}, IsSuccess=" . ($isSuccess ? '1' : '0') . ", ExtractedRows={$extractedRowsCount}, Watermark={$newWatermark}).");
     }
 }

@@ -80,6 +80,13 @@ Route::middleware(['auth'])->group(function () {
         Route::put('/api/scheduler/{entity}', [\App\Http\Controllers\ScheduleController::class, 'update'])->name('api.scheduler.update');
         Route::patch('/api/scheduler/{entity}/toggle', [\App\Http\Controllers\ScheduleController::class, 'toggle'])->name('api.scheduler.toggle');
         Route::post('/api/scheduler/{entity}/run-now', [\App\Http\Controllers\ScheduleController::class, 'runNow'])->name('api.scheduler.run-now');
+
+        // Dedicated SQL Server -> MySQL Stored Procedure ETL Pipeline
+        Route::get('/etl-pipeline', [\App\Http\Controllers\EtlPipelineController::class, 'index'])->name('etl-pipeline.index');
+        Route::get('/api/etl-pipeline/{entity}/state', [\App\Http\Controllers\EtlPipelineController::class, 'state'])->name('api.etl-pipeline.state');
+        Route::post('/api/etl-pipeline/{entity}/run', [\App\Http\Controllers\EtlPipelineController::class, 'run'])->name('api.etl-pipeline.run');
+        Route::post('/api/etl-pipeline/{entity}/update-watermark', [\App\Http\Controllers\EtlPipelineController::class, 'updateWatermark'])->name('api.etl-pipeline.update-watermark');
+        Route::post('/api/etl-pipeline/{entity}/unlock', [\App\Http\Controllers\EtlPipelineController::class, 'unlock'])->name('api.etl-pipeline.unlock');
     });
 
     /*

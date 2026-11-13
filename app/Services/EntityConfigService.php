@@ -78,12 +78,13 @@ class EntityConfigService
         $knownKeys = [
             'code', 'key', 'name', 'odata_entity', 'table', 'type', 'icon',
             'description', 'source_connection', 'destination_connection',
-            'schedule_minutes', 'available_fields', 'created_at', 'updated_at'
+            'schedule_minutes', 'available_fields', 'created_at', 'updated_at',
+            'sync_mode', 'watermark_type', 'watermark_column', 'batch_size', 'is_active',
         ];
 
         $extra = [];
         foreach ($data as $k => $v) {
-            if (!in_array($k, $knownKeys)) {
+            if (!in_array($k, $knownKeys, true)) {
                 $extra[$k] = $v;
             }
         }
@@ -170,23 +171,46 @@ class EntityConfigService
             return;
         }
 
-        DB::transaction(function () use ($entity, $fields) {
+        $schemaManager = app(\App\Services\SchemaManager::class);
+
+        DB::transaction(function () use ($entity, $fields, $schemaManager) {
             foreach ($fields as $fieldData) {
-                $fieldName = is_array($fieldData) ? $fieldData['name'] : $fieldData;
+                $fieldName = is_array($fieldData) ? ($fieldData['name'] ?? '') : (string) $fieldData;
+                if ($fieldName === '') {
+                    continue;
+                }
+
                 $record = SyncEntityField::firstOrNew([
                     'sync_entity_id' => $entity->id,
                     'source_field'   => $fieldName,
                 ]);
 
+                $defaultDest = $schemaManager->sanitizeColumnName($fieldName);
+                $defaultLabel = $this->humanizeFieldLabel($fieldName);
+
                 if (!$record->exists) {
-                    $record->data_type = is_array($fieldData) ? ($fieldData['data_type'] ?? null) : null;
-                    $record->semantic_type = is_array($fieldData) ? ($fieldData['semantic_type'] ?? null) : null;
-                    if (is_array($fieldData) && isset($fieldData['is_key'])) {
-                        $record->is_key = $fieldData['is_key'];
-                    }
+                    $record->destination_field = is_array($fieldData) && !empty($fieldData['destination_field'])
+                        ? $fieldData['destination_field']
+                        : $defaultDest;
+                    $record->data_type = is_array($fieldData) ? ($fieldData['data_type'] ?? 'string') : 'string';
+                    $record->semantic_type = is_array($fieldData) ? ($fieldData['semantic_type'] ?? 'dimension') : 'dimension';
+                    $record->is_key = is_array($fieldData) && isset($fieldData['is_key']) ? (bool) $fieldData['is_key'] : false;
+                    $record->is_enabled = true;
+                    $record->is_nullable = true;
+                    $record->label = is_array($fieldData) && !empty($fieldData['label'])
+                        ? $fieldData['label']
+                        : $defaultLabel;
                     $record->save();
                 } else {
                     $dirty = false;
+                    if (empty($record->destination_field)) {
+                        $record->destination_field = $defaultDest;
+                        $dirty = true;
+                    }
+                    if (empty($record->label)) {
+                        $record->label = $defaultLabel;
+                        $dirty = true;
+                    }
                     if (is_array($fieldData)) {
                         if (empty($record->data_type) && !empty($fieldData['data_type'])) {
                             $record->data_type = $fieldData['data_type'];
@@ -196,13 +220,30 @@ class EntityConfigService
                             $record->semantic_type = $fieldData['semantic_type'];
                             $dirty = true;
                         }
-                        // We only auto-set is_key if it wasn't manually defined before (or we could just not touch it on existing records)
-                        // It's safer to only set it on creation so we don't overwrite user changes.
                     }
-                    if ($dirty) $record->save();
+                    if ($dirty) {
+                        $record->save();
+                    }
                 }
             }
         });
+    }
+
+    /**
+     * Generate a clean human-readable label from a source column name.
+     */
+    private function humanizeFieldLabel(string $fieldName): string
+    {
+        $clean = trim($fieldName);
+        if (str_contains($clean, '(%)')) {
+            $base = str_replace('(%)', '', $clean);
+            $base = preg_replace('/(?<!^)[A-Z]/', ' $0', $base);
+            return trim(str_replace('_', ' ', $base)) . ' (%)';
+        }
+        $spaced = preg_replace('/([a-z])([A-Z])/', '$1 $2', $clean);
+        $spaced = preg_replace('/([A-Z]+)([A-Z][a-z])/', '$1 $2', $spaced);
+        $spaced = str_replace(['_', '-'], ' ', $spaced);
+        return trim(preg_replace('/\s+/', ' ', $spaced));
     }
 
     /**

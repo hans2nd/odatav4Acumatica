@@ -85,9 +85,14 @@ class MetadataRepository implements MetadataRepositoryInterface
 
                 $sourceConnName = $config['source_connection'] ?? 'acumatica_default';
                 $odataEntity = $config['odata_entity'];
+                $schemaObjectOverride = trim((string) ($config['sp_schema_object'] ?? ''));
+                $structureTarget = $schemaObjectOverride !== '' ? $schemaObjectOverride : $odataEntity;
                 
                 // Use the newly dedicated method and discover structure through the ConnectionManager
-                $metadataNode = $this->connectionManager->discoverStructure($sourceConnName, $odataEntity, $forceRefresh);
+                $metadataNode = $this->connectionManager->discoverStructure($sourceConnName, $structureTarget, $forceRefresh);
+                if (empty($metadataNode->properties) && $structureTarget !== $odataEntity) {
+                    $metadataNode = $this->connectionManager->discoverStructure($sourceConnName, $odataEntity, $forceRefresh);
+                }
                 $providerNetworkMs = round((microtime(true) - $tProvNetStart) * 1000);
                 
                 if (!$metadataNode->isQueryable) {
@@ -98,6 +103,13 @@ class MetadataRepository implements MetadataRepositoryInterface
                 $tProvProcStart = microtime(true);
                 $fields = [];
                 $fieldNames = [];
+                $configuredDeleteKeys = [];
+                if (!empty($config['sp_delete_keys'])) {
+                    $configuredDeleteKeys = array_map(
+                        fn($k) => strtolower(trim($k)),
+                        array_filter(explode(',', (string) $config['sp_delete_keys']))
+                    );
+                }
                 if (!empty($metadataNode->properties)) {
                     foreach ($metadataNode->properties as $prop) {
                         $propName = is_array($prop) ? ($prop['name'] ?? $prop['Field'] ?? '') : (string)$prop;
@@ -125,7 +137,9 @@ class MetadataRepository implements MetadataRepositoryInterface
                             $semanticType = 'dimension';
                         }
 
-                        $isPrimaryKey = (strcasecmp($propName, 'id') === 0 || preg_match('/ID$/i', $propName));
+                        $isPrimaryKey = !empty($configuredDeleteKeys)
+                            ? in_array(strtolower($propName), $configuredDeleteKeys, true)
+                            : (strcasecmp($propName, 'id') === 0 || preg_match('/ID$/i', $propName));
 
                         $fieldNames[] = [
                             'name'          => $propName,

@@ -19,16 +19,30 @@ class QueueWorkerService
      */
     protected function getPhpBinary(): string
     {
+        // On Windows (e.g. Laragon Apache mod_php or FastCGI), PHP_BINDIR always points to the PHP directory
+        if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN' && defined('PHP_BINDIR') && PHP_BINDIR) {
+            $cliInBinDir = rtrim(PHP_BINDIR, '\\/') . DIRECTORY_SEPARATOR . 'php.exe';
+            if (file_exists($cliInBinDir)) {
+                return $cliInBinDir;
+            }
+        }
+
         $binary = defined('PHP_BINARY') && PHP_BINARY ? PHP_BINARY : 'php';
-        
+        $lowerBinary = strtolower($binary);
+
         // If web server is running under php-cgi.exe, look for php.exe in the same directory
-        if (str_ends_with(strtolower($binary), 'php-cgi.exe')) {
+        if (str_ends_with($lowerBinary, 'php-cgi.exe')) {
             $cli = dirname($binary) . DIRECTORY_SEPARATOR . 'php.exe';
             if (file_exists($cli)) {
                 return $cli;
             }
         }
-        
+
+        // If running under Apache mod_php (httpd.exe), fall back to 'php' in PATH
+        if (str_ends_with($lowerBinary, 'httpd.exe') || str_ends_with($lowerBinary, 'apache.exe')) {
+            return 'php';
+        }
+
         return $binary;
     }
 
@@ -49,12 +63,14 @@ class QueueWorkerService
 
         try {
             if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-                // Detached process in Windows
+                // Detached process in Windows:
+                // Note: Windows `start` command treats the first quoted string as the window title!
+                // Passing `start "" /B` provides an empty title so the quoted PHP binary path is executed properly.
                 if (class_exists('COM')) {
                     $WshShell = new \COM("WScript.Shell");
-                    $WshShell->Run("cmd /c {$command}", 0, false);
+                    $WshShell->Run($command, 0, false);
                 } else {
-                    pclose(popen("start /B " . $command . " > NUL 2>&1", "r"));
+                    pclose(popen("start \"\" /B {$command} > NUL 2>&1", "r"));
                 }
             } else {
                 // Detached process in Linux/Unix

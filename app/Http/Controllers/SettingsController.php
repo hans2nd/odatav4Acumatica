@@ -297,13 +297,19 @@ class SettingsController extends Controller
             $tree = $this->connectionManager->discoverMetadata($key, $forceRefresh);
             
             $objects = [];
+            $objectDetails = [];
             foreach ($tree->nodes as $node) {
                 $objects[] = $node->name;
+                $objectDetails[] = [
+                    'name' => $node->name,
+                    'type' => $node->type ?? 'table',
+                ];
             }
 
             return response()->json([
-                'success' => true,
-                'objects' => $objects
+                'success'        => true,
+                'objects'        => $objects,
+                'object_details' => $objectDetails,
             ]);
         } catch (\Throwable $e) {
             return response()->json([
@@ -316,9 +322,12 @@ class SettingsController extends Controller
     public function getConnectionObjectColumns(string $key, string $objectName): JsonResponse
     {
         try {
-            // Note: objectName may contain slashes for SharePoint, we need to handle it properly if passed via query or path.
-            // Assuming it's passed safely in the URL path.
-            $node = $this->connectionManager->discoverStructure($key, urldecode($objectName));
+            $decodedObject = urldecode($objectName);
+            $schemaObjectOverride = trim((string) request()->query('schema_object', ''));
+            $forceRefresh = request()->query('force') === 'true';
+
+            $targetForColumns = $schemaObjectOverride !== '' ? $schemaObjectOverride : $decodedObject;
+            $node = $this->connectionManager->discoverStructure($key, $targetForColumns, $forceRefresh);
             
             $columns = [];
             foreach ($node->properties as $prop) {
@@ -332,9 +341,24 @@ class SettingsController extends Controller
                 }
             }
 
+            $spInfo = null;
+            try {
+                $provider = $this->connectionManager->getProvider($key);
+                if (method_exists($provider, 'inspectStoredProcedure')) {
+                    $connection = \App\Models\Connection::where('key', $key)->first();
+                    if ($connection) {
+                        $spInfo = $provider->inspectStoredProcedure($connection->credentials ?? [], $decodedObject);
+                    }
+                }
+            } catch (\Throwable $spErr) {
+                // Non-fatal if SP inspection fails
+            }
+
             return response()->json([
-                'success' => true,
-                'columns' => $columns
+                'success'     => true,
+                'object_type' => $node->type ?? 'table',
+                'columns'     => $columns,
+                'sp_info'     => $spInfo,
             ]);
         } catch (\Throwable $e) {
             return response()->json([

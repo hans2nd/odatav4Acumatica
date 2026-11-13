@@ -79,6 +79,18 @@ class MySqlProvider implements ConnectionProviderInterface
             $nodes[] = new MetadataNode(name: $row[0], type: $type);
         }
 
+        try {
+            $procStmt = $pdo->query("SHOW PROCEDURE STATUS WHERE Db = DATABASE()");
+            while ($row = $procStmt->fetch(PDO::FETCH_ASSOC)) {
+                $procName = $row['Name'] ?? '';
+                if ($procName !== '') {
+                    $nodes[] = new MetadataNode(name: $procName, type: 'procedure');
+                }
+            }
+        } catch (Throwable $e) {
+            // Ignore if user lacks permission to list stored procedures
+        }
+
         return new MetadataTree($nodes);
     }
 

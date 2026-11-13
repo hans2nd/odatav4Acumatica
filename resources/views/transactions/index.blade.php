@@ -13,7 +13,14 @@
                         <span class="material-symbols-outlined text-violet-600 text-[20px]">{{ $info['config']['icon'] ?? 'swap_horiz' }}</span>
                     </div>
                     <div>
-                        <h3 class="text-body-md font-semibold text-surface-800">{{ $info['config']['description'] }}</h3>
+                        <h3 class="text-body-md font-semibold text-surface-800 flex items-center gap-2 flex-wrap">
+                            <span>{{ $info['config']['description'] }}</span>
+                            @if(!empty($info['is_sp']))
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                    <span class="material-symbols-outlined text-[12px]">terminal</span> STORED PROC
+                                </span>
+                            @endif
+                        </h3>
                         <div class="flex flex-col gap-0.5 mt-1">
                             <p class="text-label-sm text-surface-400 font-mono">{{ $info['config']['odata_entity'] }}</p>
                             @php
@@ -22,6 +29,10 @@
                                 
                                 $destConnKey = $info['config']['destination_connection'] ?? 'database_default';
                                 $destConnName = $connections[$destConnKey]['name'] ?? $destConnKey;
+
+                                $cardFilters = is_string($info['custom_filters'] ?? [])
+                                    ? (json_decode($info['custom_filters'] ?? '[]', true) ?: [])
+                                    : ($info['custom_filters'] ?? []);
                             @endphp
                             <div class="flex items-center gap-1 mt-1 flex-wrap">
                                 <span class="material-symbols-outlined text-[14px] text-surface-400" title="Source">database</span>
@@ -41,6 +52,41 @@
                 </div>
             </div>
 
+            @if(!empty($info['is_sp']) || !empty($cardFilters))
+                <div class="mb-3 p-2.5 rounded-xl bg-surface-50/90 border border-surface-200/70">
+                    <div class="flex items-center justify-between gap-2 mb-1.5">
+                        <span class="text-[10px] font-bold uppercase tracking-wider text-surface-500 flex items-center gap-1">
+                            <span class="material-symbols-outlined text-[13px] text-indigo-500">tune</span>
+                            {{ !empty($info['is_sp']) ? 'Parameter Stored Procedure' : 'Filter Aktif' }}
+                        </span>
+                        @if(!empty($info['is_sp']) && ($info['config']['sp_execution_mode'] ?? 'two_phase_delta') === 'two_phase_delta')
+                            <span class="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 rounded">2-Phase Delta</span>
+                        @endif
+                    </div>
+                    <div id="card-filters-chips-{{ $key }}" class="flex flex-wrap gap-1.5">
+                        @foreach($cardFilters as $cf)
+                            @php
+                                $fName = $cf['field'] ?? '';
+                                $fVal = $cf['value'] ?? '';
+                                $isParam = str_starts_with($fName, '@');
+                            @endphp
+                            @if($fName !== '')
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono {{ $isParam ? 'bg-indigo-50/80 text-indigo-800 border border-indigo-200/80' : 'bg-white text-surface-700 border border-surface-200' }}">
+                                    <span class="font-semibold">{{ $fName }}:</span>
+                                    <span class="truncate max-w-[140px]">{{ $fVal !== '' ? $fVal : 'Auto' }}</span>
+                                </span>
+                            @endif
+                        @endforeach
+                        @if(!empty($info['is_sp']) && !collect($cardFilters)->contains(fn($c) => strtolower(ltrim($c['field'] ?? '', '@')) === 'customstartdate'))
+                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono bg-amber-50/80 text-amber-800 border border-amber-200/70">
+                                <span class="font-semibold">@CustomStartDate:</span>
+                                <span>Auto Watermark</span>
+                            </span>
+                        @endif
+                    </div>
+                </div>
+            @endif
+
             <div class="flex flex-wrap items-end justify-between mt-auto gap-4 pt-2">
                 <div>
                     <span class="text-[28px] font-extrabold text-surface-900 leading-none tracking-tight truncate block">{{ number_format($info['records']) }}</span>
@@ -48,6 +94,13 @@
                 </div>
 
                 <div class="flex flex-wrap items-center justify-end gap-1.5">
+                    @if(!empty($info['is_sp']))
+                        <a href="{{ route('etl-pipeline.index') }}"
+                           class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 text-label-md transition-all duration-200"
+                           title="Buka Dashboard ETL Syncron">
+                            <span class="material-symbols-outlined text-[14px]">conversion_path</span> ETL Syncron
+                        </a>
+                    @endif
                     @if($info['table_exists'])
                         <a href="{{ route('transactions.show', $key) }}"
                            class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-100 text-surface-600 hover:bg-surface-200 hover:text-surface-800 text-label-md transition-all duration-200">
@@ -157,8 +210,39 @@
                     </div>
                 </div>
 
+                {{-- Stored Procedure Quick Parameter Panel (Auto-shown for SP Entities) --}}
+                <div id="spSyncParamsContainer" class="hidden p-4 bg-indigo-50/50 border border-indigo-200/80 rounded-xl space-y-3 mb-4">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span class="material-symbols-outlined text-indigo-600 text-[18px]">terminal</span>
+                            <span class="text-xs font-bold uppercase tracking-wider text-indigo-950">Parameter Stored Procedure (Otomatis)</span>
+                        </div>
+                        <span class="text-[11px] text-indigo-700 bg-indigo-100/80 px-2 py-0.5 rounded-md font-mono">Two-Phase Delta / SP</span>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                            <label class="text-xs font-semibold text-surface-700 block mb-1">@SyncProcessName</label>
+                            <input type="text" id="spParamProcessName" oninput="syncSpQuickInputsToFilterRows()"
+                                placeholder="SO_TO_MYSQL_SYNC"
+                                class="w-full rounded-xl border-surface-200 bg-white text-surface-800 text-xs font-mono focus:border-indigo-500 focus:ring focus:ring-indigo-500/20 py-2 px-3">
+                        </div>
+                        <div>
+                            <label class="text-xs font-semibold text-surface-700 block mb-1">@CompanyID</label>
+                            <input type="number" id="spParamCompanyId" oninput="syncSpQuickInputsToFilterRows()"
+                                placeholder="2"
+                                class="w-full rounded-xl border-surface-200 bg-white text-surface-800 text-xs font-mono focus:border-indigo-500 focus:ring focus:ring-indigo-500/20 py-2 px-3">
+                        </div>
+                        <div>
+                            <label class="text-xs font-semibold text-surface-700 block mb-1">@CustomStartDate <span class="text-[10px] font-normal text-surface-400">(Opsional)</span></label>
+                            <input type="date" id="spParamCustomStartDate" onchange="syncSpQuickInputsToFilterRows()"
+                                class="w-full rounded-xl border-surface-200 bg-white text-surface-800 text-xs font-mono focus:border-indigo-500 focus:ring focus:ring-indigo-500/20 py-2 px-3">
+                            <span class="text-[10px] text-surface-500 mt-0.5 block">Kosongkan untuk otomatis mengikuti Watermark DB Staging</span>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="flex justify-between items-end mt-4">
-                    <label class="text-label-lg text-surface-700">Custom Filters (Optional)</label>
+                    <label class="text-label-lg text-surface-700">Custom Filters / Parameters (Optional)</label>
                     <div class="flex gap-2">
                         <button onclick="refreshEntityFields()" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-100 text-surface-700 text-label-sm hover:bg-surface-200 transition-all duration-200" title="Refresh available fields from source">
                             <span class="material-symbols-outlined text-[14px]">refresh</span> Refresh Fields
@@ -429,6 +513,8 @@
                 if (!refresh && window.entityMetadataCache && window.entityMetadataCache[entityKey]) {
                     // Gunakan local JS memory cache
                     const fields = window.entityMetadataCache[entityKey];
+                    const spConfig = window.entitySpConfigCache ? window.entitySpConfigCache[entityKey] : null;
+                    renderSpQuickParams(spConfig, currentFiltersToRestore);
                     populateDatalist(fields, currentFiltersToRestore);
                     loadingEl.classList.add('hidden');
                     return;
@@ -444,20 +530,88 @@
                     
                     // Simpan ke memory cache browser
                     if (!window.entityMetadataCache) window.entityMetadataCache = {};
+                    if (!window.entitySpConfigCache) window.entitySpConfigCache = {};
                     window.entityMetadataCache[entityKey] = availableFields;
+                    window.entitySpConfigCache[entityKey] = data.is_stored_procedure ? (data.sp_config || {}) : null;
 
+                    renderSpQuickParams(window.entitySpConfigCache[entityKey], currentFiltersToRestore);
                     populateDatalist(availableFields, currentFiltersToRestore);
                 } else {
                     availableFields = [];
+                    renderSpQuickParams(null, []);
                     showToast(data.message || 'Failed to load fields. You can still sync without filters.', 'warning');
                 }
             } catch (e) {
                 console.error(e);
                 availableFields = [];
+                renderSpQuickParams(null, []);
                 showToast('Error loading fields for filtering.', 'error');
             } finally {
                 loadingEl.classList.add('hidden');
             }
+        }
+
+        function renderSpQuickParams(spConfig, currentFilters = []) {
+            const spBox = document.getElementById('spSyncParamsContainer');
+            if (!spBox) return;
+
+            if (!spConfig) {
+                spBox.classList.add('hidden');
+                return;
+            }
+
+            spBox.classList.remove('hidden');
+
+            const filterMap = {};
+            if (Array.isArray(currentFilters)) {
+                currentFilters.forEach(f => {
+                    if (f && f.field) {
+                        filterMap[f.field.toLowerCase()] = f.value ?? '';
+                    }
+                });
+            }
+
+            const procInput = document.getElementById('spParamProcessName');
+            const compInput = document.getElementById('spParamCompanyId');
+            const dateInput = document.getElementById('spParamCustomStartDate');
+
+            if (procInput) {
+                procInput.value = filterMap['@syncprocessname'] ?? spConfig.sp_sync_process_name ?? '';
+            }
+            if (compInput) {
+                compInput.value = filterMap['@companyid'] ?? String(spConfig.sp_company_id ?? 2);
+            }
+            if (dateInput) {
+                dateInput.value = filterMap['@customstartdate'] ?? '';
+            }
+        }
+
+        function syncSpQuickInputsToFilterRows() {
+            const spBox = document.getElementById('spSyncParamsContainer');
+            if (!spBox || spBox.classList.contains('hidden')) return;
+
+            const procVal = (document.getElementById('spParamProcessName')?.value || '').trim();
+            const compVal = (document.getElementById('spParamCompanyId')?.value || '').trim();
+            const dateVal = (document.getElementById('spParamCustomStartDate')?.value || '').trim();
+
+            const upsertFilterRow = (paramName, value) => {
+                const rows = Array.from(document.querySelectorAll('.filter-row'));
+                const existing = rows.find(r => (r.querySelector('.filter-field')?.value || '').toLowerCase() === paramName.toLowerCase());
+                if (value !== '') {
+                    if (existing) {
+                        existing.querySelector('.filter-value').value = value;
+                    } else {
+                        addFilterRow(paramName, 'eq', value);
+                    }
+                } else if (existing) {
+                    existing.remove();
+                    checkEmptyFilters();
+                }
+            };
+
+            upsertFilterRow('@SyncProcessName', procVal);
+            upsertFilterRow('@CompanyID', compVal);
+            upsertFilterRow('@CustomStartDate', dateVal);
         }
 
         function populateDatalist(fields, currentFiltersToRestore) {
@@ -958,6 +1112,7 @@
                     if (triggerBtn) {
                         triggerBtn.dataset.filters = JSON.stringify(custom_filters);
                     }
+                    updateCardFilterChips(currentSyncEntity, custom_filters);
                 } else {
                     showToast(data.message || 'Failed to save filters', 'error');
                 }
@@ -968,6 +1123,21 @@
                 btnSave.disabled = false;
                 btnSave.innerHTML = originalText;
             }
+        }
+
+        function updateCardFilterChips(entityKey, filters) {
+            const container = document.getElementById(`card-filters-chips-${entityKey}`);
+            if (!container) return;
+
+            container.innerHTML = '';
+            (filters || []).slice(0, 4).forEach(flt => {
+                if (!flt || !flt.field) return;
+                const isSpParam = String(flt.field).startsWith('@');
+                const span = document.createElement('span');
+                span.className = `inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono border ${isSpParam ? 'bg-white text-indigo-700 border-indigo-200 shadow-2xs' : 'bg-white text-surface-700 border-surface-200'}`;
+                span.innerHTML = `<span class="font-semibold">${flt.field}</span><span class="text-surface-400">=</span><span class="truncate max-w-[120px]">${flt.value ?? ''}</span>`;
+                container.appendChild(span);
+            });
         }
 
     /* Schedule Modal Logic */

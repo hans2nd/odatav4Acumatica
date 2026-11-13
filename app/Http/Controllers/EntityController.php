@@ -48,6 +48,14 @@ class EntityController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
+        $isSpSource = $request->input('source_object_type') === 'stored_procedure'
+            || !empty($request->input('sp_execution_mode'))
+            || preg_match('/^(dbo\.)?(usp_|sp_)/i', (string) $request->input('odata_entity'));
+
+        $watermarkRule = $isSpSource
+            ? 'nullable|string|max:100'
+            : 'nullable|required_if:sync_mode,incremental|required_if:sync_mode,backdate|string|max:100';
+
         $validated = $request->validate([
             'key'                    => 'required|string|max:100|regex:/^[A-Za-z][A-Za-z0-9]*$/',
             'odata_entity'           => 'required|string|max:255',
@@ -58,10 +66,18 @@ class EntityController extends Controller
             'source_connection'      => 'nullable|string|max:100|exists:connections,key',
             'destination_connection' => 'nullable|string|max:100|exists:connections,key',
             'sync_mode'              => 'required|in:full,incremental,backdate',
-            'watermark_type'         => 'nullable|required_if:sync_mode,incremental|required_if:sync_mode,backdate|string|max:50',
-            'watermark_column'       => 'nullable|required_if:sync_mode,incremental|required_if:sync_mode,backdate|string|max:100',
+            'watermark_type'         => $watermarkRule,
+            'watermark_column'       => $watermarkRule,
             'batch_size'             => 'required|integer|min:1|max:100000',
             'is_active'              => 'boolean',
+            'source_object_type'     => 'nullable|in:table_or_view,stored_procedure',
+            'sp_execution_mode'      => 'nullable|in:two_phase_delta,single_result_set',
+            'sp_sync_process_name'   => 'nullable|string|max:100',
+            'sp_company_id'          => 'nullable|integer|min:1',
+            'sp_completion_proc'     => 'nullable|string|max:255',
+            'sp_schema_object'       => 'nullable|string|max:255',
+            'sp_delete_keys'         => 'nullable|string|max:255',
+            'sp_custom_start_date'   => 'nullable|string|max:50',
         ]);
 
         $key = $validated['key'];
@@ -73,6 +89,8 @@ class EntityController extends Controller
             ], 422);
         }
 
+        $this->autoEnrichStoredProcedureConfig($validated, true);
+
         $this->entityConfig->save($key, $validated);
         $this->clearEntityConnectionMetadataCache(
             $validated['source_connection'] ?? null,
@@ -80,7 +98,13 @@ class EntityController extends Controller
             $validated['table'] ?? null
         );
 
-        \App\Jobs\DiscoverEntityMetadataJob::dispatch($key);
+        try {
+            \App\Jobs\DiscoverEntityMetadataJob::dispatchSync($key);
+        } catch (\Throwable $e) {
+            \App\Jobs\DiscoverEntityMetadataJob::dispatch($key);
+        }
+
+        $this->autoInitializeEntitySchemaAndCardFilters($key, $validated, true);
 
         return response()->json([
             'success' => true,
@@ -101,6 +125,14 @@ class EntityController extends Controller
             ], 404);
         }
 
+        $isSpSource = $request->input('source_object_type') === 'stored_procedure'
+            || !empty($request->input('sp_execution_mode'))
+            || preg_match('/^(dbo\.)?(usp_|sp_)/i', (string) $request->input('odata_entity'));
+
+        $watermarkRule = $isSpSource
+            ? 'nullable|string|max:100'
+            : 'nullable|required_if:sync_mode,incremental|required_if:sync_mode,backdate|string|max:100';
+
         $validated = $request->validate([
             'key'                    => 'required|string|max:100|regex:/^[A-Za-z][A-Za-z0-9]*$/',
             'odata_entity'           => 'required|string|max:255',
@@ -112,10 +144,18 @@ class EntityController extends Controller
             'destination_connection' => 'nullable|string|max:100|exists:connections,key',
             'schedule_minutes'       => 'nullable|integer|min:1',
             'sync_mode'              => 'required|in:full,incremental,backdate',
-            'watermark_type'         => 'nullable|required_if:sync_mode,incremental|required_if:sync_mode,backdate|string|max:50',
-            'watermark_column'       => 'nullable|required_if:sync_mode,incremental|required_if:sync_mode,backdate|string|max:100',
+            'watermark_type'         => $watermarkRule,
+            'watermark_column'       => $watermarkRule,
             'batch_size'             => 'required|integer|min:1|max:100000',
             'is_active'              => 'boolean',
+            'source_object_type'     => 'nullable|in:table_or_view,stored_procedure',
+            'sp_execution_mode'      => 'nullable|in:two_phase_delta,single_result_set',
+            'sp_sync_process_name'   => 'nullable|string|max:100',
+            'sp_company_id'          => 'nullable|integer|min:1',
+            'sp_completion_proc'     => 'nullable|string|max:255',
+            'sp_schema_object'       => 'nullable|string|max:255',
+            'sp_delete_keys'         => 'nullable|string|max:255',
+            'sp_custom_start_date'   => 'nullable|string|max:50',
         ]);
 
         $newKey = $validated['key'];
@@ -129,6 +169,7 @@ class EntityController extends Controller
         }
 
         $oldEntity = $this->entityConfig->get($key);
+        $this->autoEnrichStoredProcedureConfig($validated, false);
         $this->entityConfig->update($key, $newKey, $validated);
         if ($oldEntity) {
             $this->clearEntityConnectionMetadataCache(
@@ -143,13 +184,174 @@ class EntityController extends Controller
             $validated['table'] ?? null
         );
 
-        \App\Jobs\DiscoverEntityMetadataJob::dispatch($newKey);
+        try {
+            \App\Jobs\DiscoverEntityMetadataJob::dispatchSync($newKey);
+        } catch (\Throwable $e) {
+            \App\Jobs\DiscoverEntityMetadataJob::dispatch($newKey);
+        }
+
+        $this->autoInitializeEntitySchemaAndCardFilters($newKey, $validated, false);
 
         return response()->json([
             'success' => true,
             'message' => "Entity '{$newKey}' updated successfully.",
             'entity'  => $this->entityConfig->get($newKey),
         ]);
+    }
+
+    /**
+     * Automatically inspect a Stored Procedure on SQL Server and populate its parameters & defaults
+     * so the user does not have to configure them manually.
+     */
+    protected function autoEnrichStoredProcedureConfig(array &$validated, bool $isCreate = false): void
+    {
+        $sourceConnKey = $validated['source_connection'] ?? null;
+        $odataEntity = trim((string) ($validated['odata_entity'] ?? ''));
+        if (!$sourceConnKey || $odataEntity === '') {
+            return;
+        }
+
+        try {
+            $connection = \App\Models\Connection::where('key', $sourceConnKey)->first();
+            if (!$connection) {
+                return;
+            }
+
+            $connManager = app(\App\Services\Connections\ConnectionManager::class);
+            $provider = $connManager->getProvider($sourceConnKey);
+            if (!method_exists($provider, 'inspectStoredProcedure')) {
+                return;
+            }
+
+            $spInfo = $provider->inspectStoredProcedure($connection->credentials ?? [], $odataEntity);
+            if (empty($spInfo['is_procedure'])) {
+                return;
+            }
+
+            $validated['source_object_type'] = 'stored_procedure';
+
+            if (empty($validated['sp_execution_mode'])) {
+                $validated['sp_execution_mode'] = $spInfo['execution_mode'] ?? 'single_result_set';
+            }
+            if (empty($validated['sp_schema_object']) && !empty($spInfo['schema_object'])) {
+                $validated['sp_schema_object'] = $spInfo['schema_object'];
+            }
+            if (empty($validated['sp_sync_process_name']) && !empty($spInfo['sync_process_name'])) {
+                $validated['sp_sync_process_name'] = $spInfo['sync_process_name'];
+            }
+            if (empty($validated['sp_company_id']) && !empty($spInfo['company_id'])) {
+                $validated['sp_company_id'] = (int) $spInfo['company_id'];
+            }
+            if (empty($validated['sp_completion_proc']) && !empty($spInfo['completion_proc'])) {
+                $validated['sp_completion_proc'] = $spInfo['completion_proc'];
+            }
+            if (empty($validated['sp_delete_keys']) && !empty($spInfo['delete_keys'])) {
+                $validated['sp_delete_keys'] = $spInfo['delete_keys'];
+            }
+            if (!empty($spInfo['parameters'])) {
+                $validated['sp_parameters'] = $spInfo['parameters'];
+            }
+
+            // Default Two-Phase Delta SP to incremental sync mode when created
+            if ($isCreate && ($validated['sp_execution_mode'] ?? '') === 'two_phase_delta' && ($validated['sync_mode'] ?? '') === 'full') {
+                $validated['sync_mode'] = 'incremental';
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning("autoEnrichStoredProcedureConfig skipped for {$odataEntity}: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Immediately generate destination table schema & indexes from discovered mappings
+     * and pre-populate default Stored Procedure parameter filters on the entity card.
+     */
+    protected function autoInitializeEntitySchemaAndCardFilters(string $key, array $validated, bool $isCreate = false): void
+    {
+        try {
+            $entity = $this->entityConfig->getModel($key);
+            if (!$entity) {
+                return;
+            }
+
+            $entity->load('fields');
+            $config = $entity->toConfigArray();
+            $destConnection = $config['destination_connection'] ?? 'database_default';
+            $tableName = $config['table'] ?? '';
+            $fieldMappings = $config['field_mappings'] ?? [];
+
+            if (!empty($fieldMappings) && $tableName !== '') {
+                $schemaManager = app(\App\Services\SchemaManager::class);
+                $schemaManager->ensureTableFromMappings($destConnection, $tableName, $fieldMappings);
+            }
+
+            // Auto-populate SyncSchedule default filters for Stored Procedure parameters so the Card in Transactions / Master Data is ready immediately
+            $isSp = ($config['source_object_type'] ?? '') === 'stored_procedure'
+                || !empty($config['sp_execution_mode'])
+                || preg_match('/^(dbo\.)?(usp_|sp_)/i', (string) ($config['odata_entity'] ?? ''));
+
+            if ($isSp) {
+                $schedule = \App\Models\SyncSchedule::firstOrNew(['entity_key' => $key]);
+                $existingFilters = $schedule->custom_filters;
+                while (is_string($existingFilters)) {
+                    $decoded = json_decode($existingFilters, true);
+                    if ($decoded === null && json_last_error() !== JSON_ERROR_NONE) {
+                        break;
+                    }
+                    $existingFilters = $decoded;
+                }
+
+                if (!is_array($existingFilters) || empty($existingFilters)) {
+                    $defaultFilters = [];
+                    $spMode = $config['sp_execution_mode'] ?? 'two_phase_delta';
+
+                    if ($spMode === 'two_phase_delta') {
+                        $defaultFilters[] = [
+                            'field'    => '@SyncProcessName',
+                            'operator' => 'eq',
+                            'value'    => (string) ($config['sp_sync_process_name'] ?? 'SO_TO_MYSQL_SYNC'),
+                        ];
+                        $defaultFilters[] = [
+                            'field'    => '@CompanyID',
+                            'operator' => 'eq',
+                            'value'    => (string) ($config['sp_company_id'] ?? 2),
+                        ];
+                        if (!empty($config['sp_custom_start_date'])) {
+                            $defaultFilters[] = [
+                                'field'    => '@CustomStartDate',
+                                'operator' => 'ge',
+                                'value'    => (string) $config['sp_custom_start_date'],
+                            ];
+                        }
+                    } elseif (!empty($config['sp_parameters']) && is_array($config['sp_parameters'])) {
+                        foreach ($config['sp_parameters'] as $param) {
+                            if (!empty($param['is_output'])) {
+                                continue;
+                            }
+                            $pName = $param['name'] ?? '';
+                            if (!$pName) {
+                                continue;
+                            }
+                            $defaultVal = '';
+                            if (strcasecmp($pName, '@CompanyID') === 0) {
+                                $defaultVal = (string) ($config['sp_company_id'] ?? 2);
+                            }
+                            if ($defaultVal !== '') {
+                                $defaultFilters[] = [
+                                    'field'    => $pName,
+                                    'operator' => 'eq',
+                                    'value'    => $defaultVal,
+                                ];
+                            }
+                        }
+                    }
+
+                    $schedule->custom_filters = $defaultFilters;
+                    $schedule->save();
+                }
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning("autoInitializeEntitySchemaAndCardFilters warning for {$key}: " . $e->getMessage());
+        }
     }
 
     /**
@@ -169,6 +371,15 @@ class EntityController extends Controller
                 'success' => false,
                 'message' => "Entity '{$key}' not found.",
             ], 404);
+        }
+
+        if ($entity->fields()->count() === 0) {
+            try {
+                \App\Jobs\DiscoverEntityMetadataJob::dispatchSync($key);
+                $entity->load('fields');
+            } catch (\Throwable $e) {
+                // Non-fatal fallback
+            }
         }
 
         return response()->json([
@@ -207,8 +418,12 @@ class EntityController extends Controller
             'fields.*.aliases.*' => 'string|max:100',
         ]);
 
-        // Validation: require at least one key field if incremental
-        if ($entity->sync_mode === 'incremental') {
+        $extraAttrs = is_array($entity->extra_attributes) ? $entity->extra_attributes : [];
+        $isTwoPhaseSp = ($extraAttrs['sp_execution_mode'] ?? '') === 'two_phase_delta'
+            && !empty($extraAttrs['sp_delete_keys']);
+
+        // Validation: require at least one key field if incremental (unless Two-Phase Delta SP with sp_delete_keys)
+        if ($entity->sync_mode === 'incremental' && !$isTwoPhaseSp) {
             $hasKey = collect($validated['fields'])
                 ->where('is_key', true)
                 ->where('is_enabled', true)

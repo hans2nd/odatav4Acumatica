@@ -9,16 +9,15 @@ class MySqlBatchStrategy implements BatchStrategyInterface
 {
     public function calculateChunkSize(int $columnCount): int
     {
-        $maxParams = 60000;
+        $maxParams = 25000;
         $calculated = intdiv($maxParams, max($columnCount, 1));
-        // Cap chunk size between 100 and 1000 rows to ensure low memory footprint and prevent packet overflow
-        return max(100, min(1000, $calculated));
+        $upperCap = $columnCount > 30 ? 500 : 1000;
+        // Cap chunk size to ensure low memory footprint and prevent MySQL max_allowed_packet overflow on wide tables
+        return max(100, min($upperCap, $calculated));
     }
 
     public function executeUpsert(string $connectionName, string $tableName, array $chunk, array|string $uniqueKey, array $columnsToUpdate): int
     {
-        \Illuminate\Support\Facades\Log::info("STEP 4: Upserting chunk of " . count($chunk) . " rows to {$tableName}");
-
         $connection = DB::connection($connectionName);
 
         try {
@@ -43,8 +42,6 @@ class MySqlBatchStrategy implements BatchStrategyInterface
 
     public function executeInsert(string $connectionName, string $tableName, array $chunk): int
     {
-        \Illuminate\Support\Facades\Log::info("STEP 4: Inserting chunk of " . count($chunk) . " rows to {$tableName}");
-
         $connection = DB::connection($connectionName);
 
         try {

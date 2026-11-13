@@ -87,18 +87,32 @@ class SyncEntity extends Model
                 ->toArray();
                 
             $config['field_mappings'] = $this->fields
-                ->where('is_enabled', true)
                 ->keyBy('source_field')
                 ->map(function ($field) {
                     return [
                         'destination_field' => $field->destination_field,
-                        'data_type' => $field->data_type,
+                        'data_type'         => $field->data_type,
+                        'semantic_type'     => $field->semantic_type,
+                        'is_key'            => (bool) $field->is_key,
+                        'is_enabled'        => (bool) ($field->is_enabled ?? true),
+                        'label'             => $field->label,
                     ];
                 })
                 ->toArray();
+
+            $keyFields = $this->fields
+                ->where('is_enabled', true)
+                ->where('is_key', true)
+                ->map(fn($f) => $f->destination_field ?: $f->source_field)
+                ->values()
+                ->toArray();
+
+            if (!empty($keyFields)) {
+                $config['primary_keys'] = $keyFields;
+            }
         }
 
-        // Merge any extra attributes to preserve unexpected JSON properties (e.g. primary_keys)
+        // Merge any extra attributes to preserve unexpected JSON properties (e.g. primary_keys, SP config)
         if (is_array($this->extra_attributes)) {
             $config = array_merge($this->extra_attributes, $config);
         }

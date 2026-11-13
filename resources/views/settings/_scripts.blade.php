@@ -92,6 +92,13 @@
         document.getElementById('form-mode').value = 'create';
         document.getElementById('form-original-key').value = '';
 
+        ['form-key', 'form-desc', 'form-table'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) delete el.dataset.userEdited;
+        });
+        const advDetails = document.getElementById('entity-advanced-details');
+        if (advDetails) advDetails.open = false;
+
         if (editKey && entityData[editKey]) {
             const e = entityData[editKey];
             document.getElementById('form-mode').value = 'edit';
@@ -126,6 +133,21 @@
             document.getElementById('form-watermark-column').value = e.watermark_column || '';
             document.getElementById('form-is-active').checked = e.is_active ?? true;
 
+            // Populate Stored Procedure fields
+            const isSp = e.source_object_type === 'stored_procedure'
+                || !!e.sp_execution_mode
+                || /^(dbo\.)?(usp_|sp_)/i.test(e.odata_entity || '');
+            setSourceObjectType(isSp ? 'stored_procedure' : 'table_or_view');
+            setSqlObjectCategoryFilter(isSp ? 'procedure' : 'all', false);
+            document.getElementById('form-sp-mode').value = e.sp_execution_mode || 'two_phase_delta';
+            document.getElementById('form-sp-schema-object').value = e.sp_schema_object || '';
+            document.getElementById('form-sp-process-name').value = e.sp_sync_process_name || 'SO_TO_MYSQL_SYNC';
+            document.getElementById('form-sp-company-id').value = e.sp_company_id || 2;
+            document.getElementById('form-sp-completion-proc').value = e.sp_completion_proc || 'dbo.usp_CompleteIncrementalSync';
+            document.getElementById('form-sp-delete-keys').value = e.sp_delete_keys || 'CompanyID,OrderType,OrderNbr';
+            document.getElementById('form-sp-custom-start-date').value = e.sp_custom_start_date || '';
+            toggleSpExecutionModeFields();
+
             document.getElementById('modal-title').innerHTML = '<span class="material-symbols-outlined text-brand-500 text-[20px]">edit</span> Edit Entity';
             document.getElementById('form-submit-text').textContent = 'Save Changes';
             if (e.source_connection && e.odata_entity) {
@@ -147,6 +169,19 @@
             document.getElementById('form-is-active').checked = true;
             document.getElementById('form-sheet').value = '';
 
+            // Reset Stored Procedure fields
+            setSourceObjectType('table_or_view');
+            setSqlObjectCategoryFilter('all', false);
+            updateSelectedObjectTypePill('');
+            document.getElementById('form-sp-mode').value = 'two_phase_delta';
+            document.getElementById('form-sp-schema-object').value = '';
+            document.getElementById('form-sp-process-name').value = 'SO_TO_MYSQL_SYNC';
+            document.getElementById('form-sp-company-id').value = 2;
+            document.getElementById('form-sp-completion-proc').value = 'dbo.usp_CompleteIncrementalSync';
+            document.getElementById('form-sp-delete-keys').value = 'CompanyID,OrderType,OrderNbr';
+            document.getElementById('form-sp-custom-start-date').value = '';
+            toggleSpExecutionModeFields();
+
             const typeEl = document.getElementById('form-type');
             if (typeEl) typeEl.dispatchEvent(new Event('change'));
 
@@ -154,14 +189,338 @@
             if (sourceConnEl) sourceConnEl.dispatchEvent(new Event('change'));
 
             const destConnEl = document.getElementById('form-dest-conn');
-            if (destConnEl) destConnEl.dispatchEvent(new Event('change'));
+            if (destConnEl) {
+                if (!destConnEl.value) {
+                    const firstDestOpt = Array.from(destConnEl.options).find(opt => !opt.disabled && opt.value);
+                    if (firstDestOpt) destConnEl.value = firstDestOpt.value;
+                }
+                destConnEl.dispatchEvent(new Event('change'));
+            }
 
             document.getElementById('modal-title').innerHTML = '<span class="material-symbols-outlined text-brand-500 text-[20px]">add_circle</span> Add Entity';
             document.getElementById('form-submit-text').textContent = 'Create Entity';
             fetchSourceObjects();
         }
+        updateSpConfigWrapperVisibility();
         toggleWatermarkFields();
         openModal('entity-modal');
+    }
+
+    let currentSqlObjectCategoryFilter = 'all';
+
+    function isSqlDatabaseConnection(connKey) {
+        if (!connKey || !connectionData[connKey]) return false;
+        const t = (connectionData[connKey].type || '').toLowerCase();
+        return ['sqlsrv', 'mysql', 'pgsql', 'sqlite'].includes(t);
+    }
+
+    function resolveObjectCategoryType(objName, typeMap = {}) {
+        if (!objName) return 'table';
+        const explicit = typeMap[objName];
+        if (explicit === 'procedure' || explicit === 'stored_procedure') return 'procedure';
+        if (explicit === 'view') return 'view';
+        if (/^(dbo\.)?(usp_|sp_)/i.test(objName)) return 'procedure';
+        if (/^(dbo\.)?(vw_|v_)/i.test(objName)) return 'view';
+        return explicit || 'table';
+    }
+
+    function updateSelectedObjectTypePill(objType) {
+        const pill = document.getElementById('selected-object-type-pill');
+        if (!pill) return;
+        if (!objType) {
+            pill.className = 'hidden px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider';
+            pill.textContent = '';
+            return;
+        }
+        if (objType === 'procedure' || objType === 'stored_procedure') {
+            pill.className = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-indigo-100 text-indigo-700 border border-indigo-200';
+            pill.innerHTML = '<span class="material-symbols-outlined text-[12px]">terminal</span> STORED PROC';
+        } else if (objType === 'view') {
+            pill.className = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200';
+            pill.innerHTML = '<span class="material-symbols-outlined text-[12px]">visibility</span> VIEW';
+        } else {
+            pill.className = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200';
+            pill.innerHTML = '<span class="material-symbols-outlined text-[12px]">table_chart</span> TABLE';
+        }
+    }
+
+    function setSqlObjectCategoryFilter(category, openDropdown = true) {
+        currentSqlObjectCategoryFilter = category || 'all';
+
+        const categories = [
+            { key: 'all', btnId: 'btn-obj-cat-all', badgeId: 'badge-obj-all', activeClass: 'bg-brand-600 text-white border-brand-600 shadow-sm', activeBadge: 'bg-white/20 text-white' },
+            { key: 'table', btnId: 'btn-obj-cat-table', badgeId: 'badge-obj-table', activeClass: 'bg-emerald-600 text-white border-emerald-600 shadow-sm', activeBadge: 'bg-white/20 text-white' },
+            { key: 'view', btnId: 'btn-obj-cat-view', badgeId: 'badge-obj-view', activeClass: 'bg-amber-600 text-white border-amber-600 shadow-sm', activeBadge: 'bg-white/20 text-white' },
+            { key: 'procedure', btnId: 'btn-obj-cat-procedure', badgeId: 'badge-obj-procedure', activeClass: 'bg-indigo-600 text-white border-indigo-600 shadow-sm', activeBadge: 'bg-white/20 text-white' }
+        ];
+
+        categories.forEach(cat => {
+            const btn = document.getElementById(cat.btnId);
+            const badge = document.getElementById(cat.badgeId);
+            if (!btn) return;
+            if (cat.key === currentSqlObjectCategoryFilter) {
+                btn.className = `inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all border ${cat.activeClass}`;
+                if (badge) badge.className = `px-1 rounded text-[10px] font-bold ${cat.activeBadge}`;
+            } else {
+                btn.className = 'inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all bg-surface-50 text-surface-700 border border-surface-200 hover:bg-surface-100';
+                if (badge) badge.className = 'px-1 rounded bg-surface-200/80 text-surface-600 text-[10px] font-bold';
+            }
+        });
+
+        const odataInput = document.getElementById('form-odata');
+        if (odataInput) {
+            if (currentSqlObjectCategoryFilter === 'procedure') {
+                odataInput.placeholder = 'Cari atau ketik nama Stored Procedure (contoh: dbo.usp_GetIncrementalSalesOrderSync)...';
+                setSourceObjectType('stored_procedure');
+            } else if (currentSqlObjectCategoryFilter === 'view') {
+                odataInput.placeholder = 'Cari atau pilih SQL View (contoh: vw_UsrSyncSalesOrderInvoice)...';
+                setSourceObjectType('table_or_view');
+            } else if (currentSqlObjectCategoryFilter === 'table') {
+                odataInput.placeholder = 'Cari atau pilih SQL Table...';
+                setSourceObjectType('table_or_view');
+            } else {
+                odataInput.placeholder = 'Cari Table, View, atau Stored Procedure...';
+            }
+        }
+
+        const connKey = document.getElementById('form-source-conn')?.value;
+        if (connKey && cachedSourceObjects[connKey]) {
+            renderSourceObjects(cachedSourceObjects[connKey]);
+        }
+
+        if (openDropdown) {
+            openSourceObjectDropdown();
+        }
+    }
+
+    function openSourceObjectDropdown() {
+        const dropdown = document.getElementById('form-odata-dropdown');
+        if (dropdown) {
+            dropdown.classList.remove('hidden');
+            filterSourceObjectList(document.getElementById('form-odata')?.value || '');
+        }
+    }
+
+    function toggleSourceObjectDropdown() {
+        const dropdown = document.getElementById('form-odata-dropdown');
+        if (!dropdown) return;
+        if (dropdown.classList.contains('hidden')) {
+            dropdown.classList.remove('hidden');
+            // Show full list for current category when toggled via arrow button
+            filterSourceObjectList('');
+            document.getElementById('form-odata')?.focus();
+        } else {
+            dropdown.classList.add('hidden');
+        }
+    }
+
+    function filterSourceObjectList(query) {
+        const filter = (query || '').toLowerCase().trim();
+        const list = document.getElementById('form-odata-list');
+        if (!list) return;
+
+        const items = list.querySelectorAll('li[data-obj-name]');
+        let visibleCount = 0;
+
+        items.forEach(li => {
+            const objName = (li.getAttribute('data-obj-name') || '').toLowerCase();
+            const objType = li.getAttribute('data-obj-type') || 'table';
+            const matchesCategory = currentSqlObjectCategoryFilter === 'all' || objType === currentSqlObjectCategoryFilter;
+            const matchesSearch = !filter || objName.includes(filter);
+
+            if (matchesCategory && matchesSearch) {
+                li.classList.remove('hidden');
+                li.style.display = '';
+                visibleCount++;
+            } else {
+                li.classList.add('hidden');
+                li.style.display = 'none';
+            }
+        });
+
+        let emptyRow = document.getElementById('form-odata-empty-filter');
+        if (visibleCount === 0 && items.length > 0) {
+            if (!emptyRow) {
+                emptyRow = document.createElement('li');
+                emptyRow.id = 'form-odata-empty-filter';
+                emptyRow.className = 'px-4 py-3 text-xs text-surface-500 italic text-center';
+                list.appendChild(emptyRow);
+            }
+            const catLabel = currentSqlObjectCategoryFilter === 'procedure' ? 'Stored Procedure' : (currentSqlObjectCategoryFilter === 'view' ? 'View' : (currentSqlObjectCategoryFilter === 'table' ? 'Table' : 'Objek'));
+            emptyRow.textContent = filter
+                ? `Tidak ada ${catLabel} yang cocok dengan "${query}". Tekan Enter jika ingin menggunakan nama manual.`
+                : `Tidak ada ${catLabel} ditemukan pada database ini.`;
+            emptyRow.classList.remove('hidden');
+        } else if (emptyRow) {
+            emptyRow.classList.add('hidden');
+        }
+
+        const countText = document.getElementById('form-odata-count-text');
+        if (countText) {
+            const catLabel = currentSqlObjectCategoryFilter === 'procedure' ? 'Stored Procedures' : (currentSqlObjectCategoryFilter === 'view' ? 'Views' : (currentSqlObjectCategoryFilter === 'table' ? 'Tables' : 'Database Objects'));
+            const connKey = document.getElementById('form-source-conn')?.value;
+            const dbName = connKey && connectionData[connKey]?.credentials?.database ? connectionData[connKey].credentials.database : '';
+            countText.textContent = dbName
+                ? `Menampilkan ${visibleCount} ${catLabel} (DB: ${dbName})`
+                : `Menampilkan ${visibleCount} ${catLabel}`;
+        }
+    }
+
+    function selectSourceObjectItem(objName, objType) {
+        const odataInput = document.getElementById('form-odata');
+        if (odataInput) odataInput.value = objName;
+
+        const dropdown = document.getElementById('form-odata-dropdown');
+        if (dropdown) dropdown.classList.add('hidden');
+
+        updateSelectedObjectTypePill(objType);
+
+        if (objType === 'procedure') {
+            setSourceObjectType('stored_procedure');
+        } else {
+            setSourceObjectType('table_or_view');
+        }
+
+        updateWatermarkOptions(objName, true);
+    }
+
+    function updateSpConfigWrapperVisibility() {
+        const connKey = document.getElementById('form-source-conn')?.value;
+        const connType = connKey && connectionData[connKey] ? connectionData[connKey].type : '';
+        const currentObjType = document.getElementById('form-source-object-type')?.value;
+        const isSql = isSqlDatabaseConnection(connKey);
+
+        const catBar = document.getElementById('sql-object-category-bar');
+        if (catBar) {
+            if (isSql) {
+                catBar.classList.remove('hidden');
+            } else {
+                catBar.classList.add('hidden');
+                currentSqlObjectCategoryFilter = 'all';
+            }
+        }
+
+        const wrapper = document.getElementById('sp-config-wrapper');
+        if (!wrapper) return;
+
+        if (connType === 'sqlsrv' || currentObjType === 'stored_procedure') {
+            wrapper.classList.remove('hidden');
+        } else {
+            wrapper.classList.add('hidden');
+        }
+    }
+
+    function setSourceObjectType(type) {
+        const input = document.getElementById('form-source-object-type');
+        const spFields = document.getElementById('sp-config-fields');
+        const wrapper = document.getElementById('sp-config-wrapper');
+
+        if (input) input.value = type;
+
+        if (type === 'stored_procedure') {
+            if (spFields) spFields.classList.remove('hidden');
+            if (wrapper) wrapper.classList.remove('hidden');
+            updateSelectedObjectTypePill('procedure');
+        } else {
+            if (spFields) spFields.classList.add('hidden');
+            const connKey = document.getElementById('form-source-conn')?.value;
+            const odataVal = document.getElementById('form-odata')?.value || '';
+            if (odataVal && connKey && isSqlDatabaseConnection(connKey)) {
+                const typeMap = cachedSourceObjectTypes[connKey] || {};
+                const resolved = resolveObjectCategoryType(odataVal, typeMap);
+                updateSelectedObjectTypePill(resolved);
+            } else if (!odataVal) {
+                updateSelectedObjectTypePill('');
+            }
+        }
+    }
+
+    function toggleSpExecutionModeFields() {
+        const mode = document.getElementById('form-sp-mode')?.value || 'two_phase_delta';
+        const twoPhaseFields = document.getElementById('sp-two-phase-fields');
+        if (!twoPhaseFields) return;
+        if (mode === 'two_phase_delta') {
+            twoPhaseFields.classList.remove('hidden');
+        } else {
+            twoPhaseFields.classList.add('hidden');
+        }
+    }
+
+    function applyAcumaticaStagingSpPreset() {
+        setSqlObjectCategoryFilter('procedure', false);
+        setSourceObjectType('stored_procedure');
+        const odataEl = document.getElementById('form-odata');
+        if (odataEl && !odataEl.value.trim()) {
+            odataEl.value = 'dbo.usp_GetIncrementalSalesOrderSync';
+        }
+        document.getElementById('form-sp-mode').value = 'two_phase_delta';
+        toggleSpExecutionModeFields();
+
+        const schemaEl = document.getElementById('form-sp-schema-object');
+        if (schemaEl && !schemaEl.value.trim()) {
+            schemaEl.value = '[DB_Acumatica_Prod].dbo.vw_UsrSyncSalesOrderInvoice';
+        }
+        const procNameEl = document.getElementById('form-sp-process-name');
+        if (procNameEl && !procNameEl.value.trim()) {
+            procNameEl.value = 'SO_TO_MYSQL_SYNC';
+        }
+        const compIdEl = document.getElementById('form-sp-company-id');
+        if (compIdEl && !compIdEl.value) {
+            compIdEl.value = 2;
+        }
+        const compProcEl = document.getElementById('form-sp-completion-proc');
+        if (compProcEl && !compProcEl.value.trim()) {
+            compProcEl.value = 'dbo.usp_CompleteIncrementalSync';
+        }
+        const delKeysEl = document.getElementById('form-sp-delete-keys');
+        if (delKeysEl && !delKeysEl.value.trim()) {
+            delKeysEl.value = 'CompanyID,OrderType,OrderNbr';
+        }
+
+        // Switch sync_mode to incremental automatically
+        const syncModeEl = document.getElementById('form-sync-mode');
+        if (syncModeEl && syncModeEl.value === 'full') {
+            syncModeEl.value = 'incremental';
+            syncModeEl.dispatchEvent(new Event('change'));
+        }
+        const typeEl = document.getElementById('form-type');
+        if (typeEl && typeEl.value !== 'transaction') {
+            typeEl.value = 'transaction';
+            typeEl.dispatchEvent(new Event('change'));
+        }
+
+        if (odataEl && odataEl.value) {
+            autoSuggestEntityFields(odataEl.value);
+            updateWatermarkOptions(odataEl.value, true);
+        }
+        showToast('Preset Staging SP (usp_GetIncrementalSalesOrderSync) berhasil diterapkan.', 'success');
+    }
+
+    async function testLoadSpSchemaColumns() {
+        const connKey = document.getElementById('form-source-conn')?.value;
+        const odataObj = document.getElementById('form-odata')?.value.trim() || 'dbo.usp_GetIncrementalSalesOrderSync';
+        const schemaObj = document.getElementById('form-sp-schema-object')?.value.trim();
+
+        if (!connKey) {
+            showToast('Pilih Source Connection terlebih dahulu.', 'error');
+            return;
+        }
+
+        try {
+            const url = `/api/connections/${connKey}/objects/${encodeURIComponent(odataObj)}/columns?force=true` +
+                (schemaObj ? `&schema_object=${encodeURIComponent(schemaObj)}` : '');
+            const res = await fetch(url);
+            const data = await res.json();
+            if (res.ok && data.success && data.columns && data.columns.length > 0) {
+                cachedWatermarkColumns = data.columns;
+                renderWatermarkOptions(true);
+                showToast(`Berhasil memuat ${data.columns.length} kolom dari ${schemaObj || odataObj}!`, 'success');
+            } else {
+                showToast(data.message || 'Kolom tidak ditemukan. Pastikan nama database/view sesuai.', 'error');
+            }
+        } catch (e) {
+            showToast('Gagal memuat kolom: ' + e.message, 'error');
+        }
     }
 
     function toggleWatermarkFields() {
@@ -188,10 +547,22 @@
     }
 
     let cachedSourceObjects = {};
+    let cachedSourceObjectTypes = {};
     try {
-        const stored = localStorage.getItem('cached_source_objects');
-        if (stored) cachedSourceObjects = JSON.parse(stored);
+        localStorage.removeItem('cached_source_objects_v2');
+        localStorage.removeItem('cached_source_object_types_v2');
     } catch (e) { }
+
+    function updateSqlObjectCategoryCounts(counts) {
+        const setBadge = (id, val) => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = val;
+        };
+        setBadge('badge-obj-all', counts.all || 0);
+        setBadge('badge-obj-table', counts.table || 0);
+        setBadge('badge-obj-view', counts.view || 0);
+        setBadge('badge-obj-procedure', counts.procedure || 0);
+    }
 
     function renderSourceObjects(objects) {
         requestAnimationFrame(() => {
@@ -202,12 +573,17 @@
 
             const connKey = document.getElementById('form-source-conn').value;
             const connectionType = connKey && connectionData[connKey] ? connectionData[connKey].type : '';
+            const isSql = isSqlDatabaseConnection(connKey);
+            const typeMap = (connKey && cachedSourceObjectTypes[connKey]) ? cachedSourceObjectTypes[connKey] : {};
+
+            updateSpConfigWrapperVisibility();
 
             if (connectionType === 'sharepoint') {
                 inputContainer.classList.add('hidden');
                 odataInput.required = false;
                 select.classList.remove('hidden');
                 select.required = true;
+                updateSelectedObjectTypePill('');
 
                 const isEmptyOrError = !objects || objects.length === 0 ||
                     (objects.length === 1 && (objects[0] === 'No files found' || objects[0].startsWith('Error:')));
@@ -258,14 +634,54 @@
                     (objects.length === 1 && (objects[0] === 'No files found' || objects[0].startsWith('Error:')));
 
                 if (isEmptyOrError) {
+                    updateSqlObjectCategoryCounts({ all: 0, table: 0, view: 0, procedure: 0 });
                     const msg = objects && objects.length === 1 ? objects[0] : 'No objects found';
-                    list.innerHTML = `<li class="px-3.5 py-2 text-sm text-surface-400 italic">${msg}</li>`;
+                    list.innerHTML = `<li class="px-4 py-3 text-sm text-surface-400 italic">${msg}</li>`;
+                    const countText = document.getElementById('form-odata-count-text');
+                    if (countText) countText.textContent = '0 objects available';
                 } else {
+                    const counts = { all: objects.length, table: 0, view: 0, procedure: 0 };
                     let html = '';
+
                     objects.forEach(obj => {
-                        html += `<li onclick="document.getElementById('form-odata').value = '${obj}'; document.getElementById('form-odata-dropdown').classList.add('hidden'); updateWatermarkOptions('${obj}', true)" class="px-3.5 py-2 hover:bg-surface-100 cursor-pointer text-sm font-mono text-surface-800 transition-colors">${obj}</li>`;
+                        const objType = isSql ? resolveObjectCategoryType(obj, typeMap) : 'table';
+                        if (counts[objType] !== undefined) counts[objType]++;
+
+                        let iconHtml = '';
+                        let badgeHtml = '';
+
+                        if (isSql) {
+                            if (objType === 'procedure') {
+                                iconHtml = `<span class="material-symbols-outlined text-[16px] text-indigo-600 shrink-0">terminal</span>`;
+                                badgeHtml = `<span class="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 uppercase tracking-wider">STORED PROC</span>`;
+                            } else if (objType === 'view') {
+                                iconHtml = `<span class="material-symbols-outlined text-[16px] text-amber-600 shrink-0">visibility</span>`;
+                                badgeHtml = `<span class="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 uppercase tracking-wider">VIEW</span>`;
+                            } else {
+                                iconHtml = `<span class="material-symbols-outlined text-[16px] text-emerald-600 shrink-0">table_chart</span>`;
+                                badgeHtml = `<span class="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-50/70 text-emerald-700 border border-emerald-200 uppercase tracking-wider">TABLE</span>`;
+                            }
+                        } else {
+                            iconHtml = `<span class="material-symbols-outlined text-[16px] text-brand-500 shrink-0">dataset</span>`;
+                        }
+
+                        const safeObj = obj.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+                        const safeAttrObj = obj.replace(/"/g, '&quot;');
+                        html += `<li data-obj-name="${safeAttrObj}" data-obj-type="${objType}" onclick="selectSourceObjectItem('${safeObj}', '${objType}')" class="px-3.5 py-2.5 hover:bg-brand-50/60 cursor-pointer text-sm font-mono text-surface-800 transition-colors flex items-center justify-between gap-3 group"><div class="flex items-center gap-2.5 min-w-0 flex-1">${iconHtml}<span class="truncate group-hover:text-brand-700 font-medium" title="${safeAttrObj}">${obj}</span></div>${badgeHtml}</li>`;
                     });
+
                     list.innerHTML = html;
+                    updateSqlObjectCategoryCounts(counts);
+
+                    if (odataInput.value && isSql) {
+                        const currentResolved = resolveObjectCategoryType(odataInput.value, typeMap);
+                        updateSelectedObjectTypePill(currentResolved);
+                    } else if (!isSql) {
+                        updateSelectedObjectTypePill('');
+                    }
+
+                    // Filter according to current category tab without hiding items matching the active selection
+                    filterSourceObjectList('');
                 }
             }
         });
@@ -275,6 +691,8 @@
         const connEl = document.getElementById('form-source-conn');
         const connKey = connEl.value;
         const sheetContainer = document.getElementById('form-sheet-container');
+
+        updateSpConfigWrapperVisibility();
 
         const btnDownload = document.getElementById('btn-download-source');
         if (btnDownload) btnDownload.classList.add('hidden');
@@ -293,7 +711,9 @@
             return;
         }
 
-        if (!force && cachedSourceObjects[connKey]) {
+        const isSql = isSqlDatabaseConnection(connKey);
+        const hasValidTypeCache = !isSql && cachedSourceObjects[connKey];
+        if (!force && hasValidTypeCache) {
             renderSourceObjects(cachedSourceObjects[connKey]);
             return;
         }
@@ -302,15 +722,21 @@
         loading.classList.remove('hidden');
 
         try {
-            const url = force ? `/api/connections/${connKey}/objects?force=true` : `/api/connections/${connKey}/objects`;
+            const shouldForceServer = force || isSql;
+            const url = shouldForceServer ? `/api/connections/${connKey}/objects?force=true` : `/api/connections/${connKey}/objects`;
             const res = await fetch(url);
             const data = await res.json();
             if (res.ok && data.success && data.objects) {
+                if (Array.isArray(data.object_details)) {
+                    const map = {};
+                    data.object_details.forEach(item => {
+                        if (item && item.name) map[item.name] = item.type || 'table';
+                    });
+                    cachedSourceObjectTypes[connKey] = map;
+                }
+
                 data.objects.sort((a, b) => a.localeCompare(b));
                 cachedSourceObjects[connKey] = data.objects;
-                try {
-                    localStorage.setItem('cached_source_objects', JSON.stringify(cachedSourceObjects));
-                } catch (e) { }
 
                 renderSourceObjects(data.objects);
 
@@ -377,11 +803,17 @@
 
         if (!keyEl || !tableEl || !descEl || !connEl) return;
 
-        // Extract base name: remove file extensions and directory paths
-        let baseName = objectName.replace(/\.[^/.]+$/, "").split('/').pop();
+        // Extract base name: remove file extensions, brackets, schema, and directory paths
+        let rawBase = objectName.replace(/\.[^/.]+$/, "").split('/').pop().replace(/^\[?dbo\]?\./i, '').replace(/[\[\]]/g, '');
+        let cleanBase = rawBase
+            .replace(/^(usp_GetIncremental|usp_|sp_|vw_UsrSync|vw_|v_)/i, '')
+            .replace(/(Sync)$/i, '')
+            .trim();
+        if (!cleanBase) cleanBase = rawBase;
 
         // 1. Entity Key: PascalCase, alphanumeric only
-        let pascalCase = baseName
+        let pascalCase = cleanBase
+            .replace(/([a-z])([A-Z])/g, '$1 $2')
             .replace(/[^a-zA-Z0-9]/g, ' ')
             .split(' ')
             .filter(word => word.length > 0)
@@ -389,7 +821,7 @@
             .join('');
 
         // 2. Display Description: Title Case, spaced
-        let titleCase = baseName
+        let titleCase = cleanBase
             .replace(/([a-z])([A-Z])/g, '$1 $2') // Add space between camelCase
             .replace(/[^a-zA-Z0-9]/g, ' ')
             .split(' ')
@@ -398,7 +830,7 @@
             .join(' ');
 
         // 3. Target SQL Table: snake_case
-        let snakeCase = baseName
+        let snakeCase = cleanBase
             .replace(/([a-z])([A-Z])/g, '$1_$2')
             .replace(/[^a-zA-Z0-9]/g, '_')
             .replace(/_+/g, '_')
@@ -410,16 +842,16 @@
         if (connEl.options && connEl.selectedIndex >= 0) {
             const connText = connEl.options[connEl.selectedIndex].text.replace(/\([^)]+\)/g, '').trim();
             if (connText.length >= 3) {
-                prefix = connText.substring(0, 3).toLowerCase() + '_';
+                prefix = connText.substring(0, 3).toLowerCase().replace(/[^a-z0-9]/g, '') + '_';
             }
         }
 
         let targetTable = prefix + snakeCase;
 
-        // Auto-fill only if fields are empty
-        if (!keyEl.value) keyEl.value = pascalCase;
-        if (!descEl.value) descEl.value = titleCase;
-        if (!tableEl.value) tableEl.value = targetTable;
+        // Auto-fill or update unless manually edited by the user
+        if (!keyEl.value || !keyEl.dataset.userEdited) keyEl.value = pascalCase;
+        if (!descEl.value || !descEl.dataset.userEdited) descEl.value = titleCase;
+        if (!tableEl.value || !tableEl.dataset.userEdited) tableEl.value = targetTable;
     }
 
     async function updateWatermarkOptions(objectName, autoSet = true) {
@@ -443,15 +875,61 @@
 
         fetchExcelSheets(objectName);
 
+        const typeMap = (connKey && cachedSourceObjectTypes[connKey]) ? cachedSourceObjectTypes[connKey] : {};
+        if (typeMap[objectName] === 'procedure' || /^(dbo\.)?(usp_|sp_)/i.test(objectName)) {
+            setSourceObjectType('stored_procedure');
+        }
+
         const loading = document.getElementById('watermark-loading');
         if (loading) loading.classList.remove('hidden');
 
         try {
-            const res = await fetch(`/api/connections/${connKey}/objects/${encodeURIComponent(objectName)}/columns`);
+            const schemaObj = document.getElementById('form-sp-schema-object')?.value.trim() || '';
+            const colUrl = `/api/connections/${connKey}/objects/${encodeURIComponent(objectName)}/columns` +
+                (schemaObj ? `?schema_object=${encodeURIComponent(schemaObj)}` : '');
+            const res = await fetch(colUrl);
             const data = await res.json();
-            if (res.ok && data.success && data.columns) {
-                cachedWatermarkColumns = data.columns;
-                renderWatermarkOptions(autoSet);
+            if (res.ok && data.success) {
+                if (data.object_type === 'procedure' || (data.sp_info && data.sp_info.is_procedure)) {
+                    setSourceObjectType('stored_procedure');
+                    const sp = data.sp_info || {};
+                    if (sp.execution_mode) {
+                        document.getElementById('form-sp-mode').value = sp.execution_mode;
+                        toggleSpExecutionModeFields();
+                        if (autoSet && sp.execution_mode === 'two_phase_delta') {
+                            const syncModeEl = document.getElementById('form-sync-mode');
+                            if (syncModeEl && syncModeEl.value === 'full') {
+                                syncModeEl.value = 'incremental';
+                                syncModeEl.dispatchEvent(new Event('change'));
+                            }
+                            const formMode = document.getElementById('form-mode')?.value;
+                            const typeEl = document.getElementById('form-type');
+                            if (formMode === 'create' && typeEl && /(order|invoice|tran|sales|ship|ar|ap|gl|incremental)/i.test(objectName)) {
+                                typeEl.value = 'transaction';
+                                typeEl.dispatchEvent(new Event('change'));
+                            }
+                        }
+                    }
+                    if (sp.schema_object && !document.getElementById('form-sp-schema-object').value.trim()) {
+                        document.getElementById('form-sp-schema-object').value = sp.schema_object;
+                    }
+                    if (sp.sync_process_name && (!document.getElementById('form-sp-process-name').value.trim() || autoSet)) {
+                        document.getElementById('form-sp-process-name').value = sp.sync_process_name;
+                    }
+                    if (sp.company_id && (!document.getElementById('form-sp-company-id').value || autoSet)) {
+                        document.getElementById('form-sp-company-id').value = sp.company_id;
+                    }
+                    if (sp.completion_proc && (!document.getElementById('form-sp-completion-proc').value.trim() || autoSet)) {
+                        document.getElementById('form-sp-completion-proc').value = sp.completion_proc;
+                    }
+                    if (sp.delete_keys && (!document.getElementById('form-sp-delete-keys').value.trim() || autoSet)) {
+                        document.getElementById('form-sp-delete-keys').value = sp.delete_keys;
+                    }
+                }
+                if (data.columns) {
+                    cachedWatermarkColumns = data.columns;
+                    renderWatermarkOptions(autoSet);
+                }
             }
         } catch (e) {
             console.error('Failed to fetch columns for watermark', e);
@@ -490,7 +968,7 @@
 
                 if (!bestMatch) {
                     const lower = colName.toLowerCase();
-                    if (lower.includes('lastmodified') || lower.includes('lastupdate') || lower.includes('timestamp') || lower === 'modifiedat' || lower === 'updatedat') {
+                    if (lower.includes('lastmodified') || lower.includes('lastsync') || lower.includes('lastupdate') || lower.includes('timestamp') || lower === 'modifiedat' || lower === 'updatedat') {
                         bestMatch = colName;
                     }
                 }
@@ -511,6 +989,16 @@
 
     async function submitEntityForm(event) {
         if (event) event.preventDefault();
+        const odataVal = document.getElementById('form-odata')?.value.trim();
+        if (odataVal && !document.getElementById('form-key')?.value.trim()) {
+            autoSuggestEntityFields(odataVal);
+        }
+        const keyInput = document.getElementById('form-key');
+        const batchInput = document.getElementById('form-batch-size');
+        if ((keyInput && !keyInput.checkValidity()) || (batchInput && !batchInput.checkValidity())) {
+            const adv = document.getElementById('entity-advanced-details');
+            if (adv) adv.open = true;
+        }
         if (!document.getElementById('entity-form').checkValidity()) {
             document.getElementById('entity-form').reportValidity();
             return;
@@ -519,6 +1007,8 @@
         const mode = document.getElementById('form-mode').value;
         const originalKey = document.getElementById('form-original-key').value;
         const btn = document.getElementById('form-submit-btn');
+        const sourceObjectType = document.getElementById('form-source-object-type')?.value || 'table_or_view';
+
         const payload = {
             key: document.getElementById('form-key').value.trim(),
             odata_entity: (() => {
@@ -538,7 +1028,20 @@
             watermark_type: document.getElementById('form-watermark-type').value,
             watermark_column: document.getElementById('form-watermark-column').value.trim(),
             is_active: document.getElementById('form-is-active').checked,
+            source_object_type: sourceObjectType,
         };
+
+        if (sourceObjectType === 'stored_procedure') {
+            payload.sp_execution_mode = document.getElementById('form-sp-mode').value || 'two_phase_delta';
+            payload.sp_schema_object = document.getElementById('form-sp-schema-object').value.trim() || null;
+            if (payload.sp_execution_mode === 'two_phase_delta') {
+                payload.sp_sync_process_name = document.getElementById('form-sp-process-name').value.trim() || 'SO_TO_MYSQL_SYNC';
+                payload.sp_company_id = parseInt(document.getElementById('form-sp-company-id').value || '2', 10);
+                payload.sp_completion_proc = document.getElementById('form-sp-completion-proc').value.trim() || 'dbo.usp_CompleteIncrementalSync';
+                payload.sp_delete_keys = document.getElementById('form-sp-delete-keys').value.trim() || 'CompanyID,OrderType,OrderNbr';
+                payload.sp_custom_start_date = document.getElementById('form-sp-custom-start-date').value.trim() || null;
+            }
+        }
         btn.disabled = true;
         try {
             const url = mode === 'edit' ? `/api/entities/${originalKey}` : '/api/entities';
@@ -556,6 +1059,7 @@
     let currentFieldsData = [];
     let fieldsFilterMode = 'all'; // 'all' | 'keys' | 'candidates' | 'enabled'
     let sortKeysFirst = false;
+    let showAdvancedFieldCols = false;
     let lastClickedKeyRowPos = null;
     let lastClickedEnableRowPos = null;
     let currentVisibleFieldIndices = [];
@@ -595,12 +1099,14 @@
         currentFieldsEntity = key;
         fieldsFilterMode = 'all';
         sortKeysFirst = false;
+        showAdvancedFieldCols = false;
         lastClickedKeyRowPos = null;
         lastClickedEnableRowPos = null;
         document.getElementById('fields-modal-entity-name').textContent = key;
         document.getElementById('fields-search').value = '';
         updateFieldsFilterPillsUI();
         updateSortKeysButtonUI();
+        syncAdvancedFieldColsUI();
         openModal('fields-modal');
         await loadFields(key);
     }
@@ -655,10 +1161,29 @@
         const btn = document.getElementById('btn-sort-keys-first');
         if (!btn) return;
         if (sortKeysFirst) {
-            btn.className = 'px-2.5 py-1.5 rounded-xl border border-amber-300 bg-amber-100 text-xs font-semibold text-amber-900 transition-colors inline-flex items-center gap-1';
+            btn.className = 'whitespace-nowrap px-2.5 py-1 rounded-lg border border-amber-300 bg-amber-100 text-xs font-semibold text-amber-900 transition-colors inline-flex items-center gap-1';
         } else {
-            btn.className = 'px-2.5 py-1.5 rounded-xl border border-surface-200 bg-white text-xs font-medium text-surface-700 hover:bg-surface-50 transition-colors inline-flex items-center gap-1';
+            btn.className = 'whitespace-nowrap px-2.5 py-1 rounded-lg bg-white border border-surface-200 text-xs font-medium text-surface-700 hover:bg-surface-50 transition-colors inline-flex items-center gap-1';
         }
+    }
+
+    function toggleAdvancedFieldCols() {
+        showAdvancedFieldCols = !showAdvancedFieldCols;
+        syncAdvancedFieldColsUI();
+    }
+
+    function syncAdvancedFieldColsUI() {
+        const btn = document.getElementById('btn-toggle-adv-cols');
+        if (btn) {
+            if (showAdvancedFieldCols) {
+                btn.className = 'whitespace-nowrap px-2.5 py-1.5 rounded-xl border border-brand-300 bg-brand-50 text-xs font-semibold text-brand-700 transition-colors inline-flex items-center gap-1';
+            } else {
+                btn.className = 'whitespace-nowrap px-2.5 py-1.5 rounded-xl border border-surface-200 bg-white text-xs font-medium text-surface-600 hover:bg-surface-100 transition-colors inline-flex items-center gap-1';
+            }
+        }
+        document.querySelectorAll('#fields-table .adv-field-col').forEach(el => {
+            el.classList.toggle('hidden', !showAdvancedFieldCols);
+        });
     }
 
     async function loadFields(key) {
@@ -788,6 +1313,9 @@
         let visibleKeyCount = 0;
         let visibleNullableCount = 0;
 
+        const advHiddenClass = showAdvancedFieldCols ? '' : 'hidden';
+        const escAttr = v => String(v ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
         indexedItems.forEach(({ field, index }, visiblePos) => {
             const isEnabled = field.is_enabled !== false;
             const isKey = !!field.is_key;
@@ -810,31 +1338,30 @@
 
             html += `
                 <tr class="${rowBgClass} transition-colors" data-index="${index}" data-visible-pos="${visiblePos}">
-                    <td class="py-2.5 px-3 text-center border-b border-surface-100">
+                    <td class="py-2 px-3 text-center border-b border-surface-100">
                         <input type="checkbox" class="field-enabled ui-checkbox cursor-pointer" ${isEnabled ? 'checked' : ''}
                             onclick="handleEnableClick(event, ${index}, ${visiblePos}, this.checked)">
                     </td>
-                    <td class="py-2.5 px-2 text-center border-b border-surface-100 border-x border-amber-100/50">
+                    <td class="py-2 px-2 text-center border-b border-surface-100 border-x border-amber-100/50">
                         <button type="button"
                             onclick="handleKeyClick(event, ${index}, ${visiblePos})"
                             class="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-semibold transition-all cursor-pointer select-none ${keyBtnClass}"
                             title="${isKey ? 'Unique Key aktif (Klik untuk hapus, Shift+Klik untuk pilih rentang)' : 'Jadikan Unique Key (Shift+Klik untuk pilih rentang)'}">
-                            <span class="material-symbols-outlined text-[15px]">${isKey ? 'vpn_key' : 'key'}</span>
+                            <span class="material-symbols-outlined text-[14px]">${isKey ? 'vpn_key' : 'key'}</span>
                             <span>${isKey ? 'KEY' : 'Set'}</span>
                         </button>
                     </td>
-                    <td class="py-2.5 px-4 border-b border-surface-100 font-mono text-surface-900 font-medium">
-                        <div class="flex items-center gap-1.5 flex-wrap">
-                            <span>${field.source_field}</span>
-                            ${isKey ? '<span class="px-1.5 py-0.5 text-[10px] font-sans font-bold uppercase tracking-wider rounded bg-amber-100 text-amber-800 border border-amber-200">Unique Key</span>' : ''}
-                            ${isCandidate ? `<button type="button" onclick="handleKeyClick(event, ${index}, ${visiblePos})" class="px-1.5 py-0.5 text-[10px] font-sans font-medium rounded bg-surface-100 text-surface-600 hover:bg-amber-100 hover:text-amber-800 transition-colors" title="Terdeteksi kandidat ID/Key — klik untuk jadikan Key">+ ID Candidate</button>` : ''}
+                    <td class="py-2 px-3 border-b border-surface-100 font-mono text-surface-900 font-medium text-xs">
+                        <div class="flex items-center gap-1.5 whitespace-nowrap">
+                            <span>${escAttr(field.source_field)}</span>
+                            ${isCandidate ? `<button type="button" onclick="handleKeyClick(event, ${index}, ${visiblePos})" class="px-1.5 py-0.5 text-[10px] font-sans font-medium rounded bg-surface-100 text-surface-600 hover:bg-amber-100 hover:text-amber-800 transition-colors" title="Kandidat Key — klik untuk jadikan Unique Key">+ Kandidat</button>` : ''}
                         </div>
-                        <input type="hidden" class="field-source" value="${field.source_field}">
+                        <input type="hidden" class="field-source" value="${escAttr(field.source_field)}">
                     </td>
-                    <td class="py-2.5 px-3 border-b border-surface-100">
-                        <input type="text" class="field-dest w-full bg-surface-50 border border-surface-200 px-3 py-2 text-sm rounded-xl focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all font-mono shadow-sm" value="${field.destination_field || ''}" onchange="updateFieldData(${index}, 'destination_field', this.value)">
+                    <td class="py-2 px-3 border-b border-surface-100">
+                        <input type="text" class="field-dest w-full bg-surface-50 border border-surface-200 px-3 py-1.5 text-xs rounded-lg focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all font-mono" value="${escAttr(field.destination_field || '')}" onchange="updateFieldData(${index}, 'destination_field', this.value)">
                     </td>
-                    <td class="py-2.5 px-3 border-b border-surface-100">
+                    <td class="py-2 px-3 border-b border-surface-100">
                         ${renderCustomSelect(
                             'data_type_' + index,
                             field.data_type || '',
@@ -851,7 +1378,13 @@
                             `updateFieldData(${index}, 'data_type', this.value)`
                         )}
                     </td>
-                    <td class="py-2.5 px-3 border-b border-surface-100">
+                    <td class="py-2 px-3 text-center border-b border-surface-100">
+                        <input type="checkbox" class="field-nullable ui-checkbox cursor-pointer" ${isNullable ? 'checked' : ''} onchange="updateFieldData(${index}, 'is_nullable', this.checked); syncHeaderCheckboxes();">
+                    </td>
+                    <td class="py-2 px-3 border-b border-surface-100">
+                        <input type="text" class="field-label w-full bg-surface-50 border border-surface-200 px-3 py-1.5 text-xs rounded-lg focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all" placeholder="Label" value="${escAttr(field.label || '')}" onchange="updateFieldData(${index}, 'label', this.value)">
+                    </td>
+                    <td class="py-2 px-3 border-b border-surface-100 adv-field-col ${advHiddenClass}">
                         ${renderCustomSelect(
                             'semantic_type_' + index,
                             field.semantic_type || '',
@@ -871,20 +1404,14 @@
                             `updateFieldData(${index}, 'semantic_type', this.value)`
                         )}
                     </td>
-                    <td class="py-2.5 px-3 text-center border-b border-surface-100">
-                        <input type="checkbox" class="field-nullable ui-checkbox cursor-pointer" ${isNullable ? 'checked' : ''} onchange="updateFieldData(${index}, 'is_nullable', this.checked); syncHeaderCheckboxes();">
+                    <td class="py-2 px-3 border-b border-surface-100 adv-field-col ${advHiddenClass}">
+                        <input type="text" class="field-description w-full bg-surface-50 border border-surface-200 px-3 py-1.5 text-xs rounded-lg focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all" placeholder="Description" value="${escAttr(field.description || '')}" onchange="updateFieldData(${index}, 'description', this.value)">
                     </td>
-                    <td class="py-2.5 px-3 border-b border-surface-100">
-                        <textarea class="field-label w-full bg-surface-50 border border-surface-200 px-3 py-2 text-sm rounded-xl focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all shadow-sm resize-y" rows="1" placeholder="Label" onchange="updateFieldData(${index}, 'label', this.value)">${field.label || ''}</textarea>
+                    <td class="py-2 px-3 border-b border-surface-100 adv-field-col ${advHiddenClass}">
+                        <input type="text" class="field-aliases w-full bg-surface-50 border border-surface-200 px-3 py-1.5 text-xs rounded-lg focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all" placeholder="tag1, tag2" value="${escAttr((field.aliases || []).join(', '))}" onchange="updateFieldAliases(${index}, this.value)">
                     </td>
-                    <td class="py-2.5 px-3 border-b border-surface-100">
-                        <textarea class="field-description w-full bg-surface-50 border border-surface-200 px-3 py-2 text-sm rounded-xl focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all shadow-sm resize-y" rows="1" placeholder="Description" onchange="updateFieldData(${index}, 'description', this.value)">${field.description || ''}</textarea>
-                    </td>
-                    <td class="py-2.5 px-3 border-b border-surface-100">
-                        <textarea class="field-aliases w-full bg-surface-50 border border-surface-200 px-3 py-2 text-sm rounded-xl focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all shadow-sm resize-y" rows="1" placeholder="tag1, tag2" onchange="updateFieldAliases(${index}, this.value)">${(field.aliases || []).join(', ')}</textarea>
-                    </td>
-                    <td class="py-2.5 px-3 border-b border-surface-100">
-                        <textarea class="field-transform w-full bg-surface-50 border border-surface-200 px-3 py-2 text-sm rounded-xl focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all shadow-sm resize-y" rows="1" placeholder="e.g. trim" onchange="updateFieldData(${index}, 'transform_rule', this.value)">${field.transform_rule || ''}</textarea>
+                    <td class="py-2 px-3 border-b border-surface-100 adv-field-col ${advHiddenClass}">
+                        <input type="text" class="field-transform w-full bg-surface-50 border border-surface-200 px-3 py-1.5 text-xs rounded-lg focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all" placeholder="e.g. trim" value="${escAttr(field.transform_rule || '')}" onchange="updateFieldData(${index}, 'transform_rule', this.value)">
                     </td>
                 </tr>
             `;
@@ -902,6 +1429,7 @@
         }
 
         tbody.innerHTML = html;
+        syncAdvancedFieldColsUI();
         document.getElementById('fields-count-summary').textContent = `${count} of ${currentFieldsData.length} fields visible`;
 
         const toggleAllEl = document.getElementById('fields-toggle-all');

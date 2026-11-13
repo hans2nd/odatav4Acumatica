@@ -81,36 +81,55 @@ class SchemaManager
         if (! Schema::connection($connectionName)->hasTable($tableName)) {
             Schema::connection($connectionName)->create($tableName, function (Blueprint $table) use ($columns, $enabledMappings) {
                 $table->bigIncrements('_sync_id');
+                $createdColsLower = ['_sync_id', '_synced_at', '_row_hash'];
 
                 foreach ($columns as $originalName) {
-                    $colName = $this->sanitizeColumnName($originalName);
+                    $destField = trim((string) ($enabledMappings[$originalName]['destination_field'] ?? ''));
+                    $colName = $this->sanitizeColumnName($destField !== '' ? $destField : $originalName);
+                    if (in_array(strtolower($colName), $createdColsLower, true)) {
+                        continue;
+                    }
+                    $createdColsLower[] = strtolower($colName);
                     $configuredType = $enabledMappings[$originalName]['data_type'] ?? null;
-                    // Pass null for value since we don't have sample data, forcing it to rely on configuredType or fallback to TEXT
-                    $this->addColumn($table, $colName, null, $configuredType);
+                    $isKey = (bool) ($enabledMappings[$originalName]['is_key'] ?? false);
+                    $this->addColumn($table, $colName, null, $configuredType, $isKey);
                 }
 
                 $table->dateTime('_synced_at')->nullable();
                 $table->string('_row_hash', 64)->nullable()->index();
             });
+            if ($isMysql) {
+                try {
+                    DB::connection($connectionName)->statement("ALTER TABLE `{$tableName}` ROW_FORMAT=DYNAMIC");
+                } catch (\Throwable $e) {}
+            }
             Log::info("SchemaManager: Created table [{$tableName}] explicitly from mappings on connection [{$connectionName}].");
             $this->invalidateConnectionMetadataCache($connKey, $tableName);
         } else {
-            // Table exists, add missing columns
+            // Table exists, add missing columns and safely align modified column types without dropping data
             $existing = array_map('strtolower', Schema::connection($connectionName)->getColumnListing($tableName));
             $added = 0;
 
             foreach ($columns as $originalName) {
-                $colName = $this->sanitizeColumnName($originalName);
+                $destField = trim((string) ($enabledMappings[$originalName]['destination_field'] ?? ''));
+                $colName = $this->sanitizeColumnName($destField !== '' ? $destField : $originalName);
                 if (in_array(strtolower($colName), $existing, true)) {
                     continue;
                 }
+                $existing[] = strtolower($colName);
 
                 Schema::connection($connectionName)->table($tableName, function (Blueprint $table) use ($colName, $originalName, $enabledMappings) {
                     $configuredType = $enabledMappings[$originalName]['data_type'] ?? null;
-                    $this->addColumn($table, $colName, null, $configuredType);
+                    $isKey = (bool) ($enabledMappings[$originalName]['is_key'] ?? false);
+                    $this->addColumn($table, $colName, null, $configuredType, $isKey);
                 });
                 $added++;
             }
+
+            if ($isMysql) {
+                $this->syncExistingMysqlColumnTypes($connectionName, $tableName, $enabledMappings);
+            }
+
             if ($added > 0) {
                 Log::info("SchemaManager: Added {$added} missing columns to [{$tableName}] explicitly from mappings.");
                 $this->invalidateConnectionMetadataCache($connKey, $tableName);
@@ -118,11 +137,133 @@ class SchemaManager
         }
 
         $this->ensureRowHashColumn($connectionName, $tableName);
+        if ($isMysql) {
+            $this->ensureMappedKeyColumnsIndex($connectionName, $tableName, $enabledMappings);
+        }
 
         if ($isMysql) {
             try {
                 DB::connection($connectionName)->statement('SET innodb_strict_mode = 1;');
             } catch (\Exception $e) {}
+        }
+    }
+
+    /**
+     * Safely evolve existing MySQL column types when modified in Manage Fields without dropping columns or breaking structure.
+     */
+    private function syncExistingMysqlColumnTypes(?string $connectionName, string $tableName, array $enabledMappings): void
+    {
+        try {
+            $colDefs = DB::connection($connectionName)->select("SHOW COLUMNS FROM `{$tableName}`");
+            $currentTypes = [];
+            $actualNames = [];
+            foreach ($colDefs as $c) {
+                $f = (string) ($c->Field ?? '');
+                $currentTypes[strtolower($f)] = strtolower((string) ($c->Type ?? ''));
+                $actualNames[strtolower($f)] = $f;
+            }
+
+            foreach ($enabledMappings as $originalName => $mapping) {
+                $destField = trim((string) ($mapping['destination_field'] ?? ''));
+                $colName = $this->sanitizeColumnName($destField !== '' ? $destField : $originalName);
+                $lower = strtolower($colName);
+
+                if (in_array($lower, ['_sync_id', '_synced_at', '_row_hash', 'tstamp'], true)) {
+                    continue;
+                }
+                if (!isset($currentTypes[$lower])) {
+                    continue;
+                }
+
+                $curType = $currentTypes[$lower];
+                $actualCol = $actualNames[$lower];
+                $configuredType = $mapping['data_type'] ?? null;
+                $isKey = (bool) ($mapping['is_key'] ?? false);
+
+                $targetSqlType = null;
+                if ($configuredType === 'boolean' && !str_contains($curType, 'tinyint')) {
+                    $targetSqlType = 'TINYINT(1) NULL';
+                } elseif ($configuredType === 'integer' && !str_contains($curType, 'int')) {
+                    $targetSqlType = 'BIGINT NULL';
+                } elseif ($configuredType === 'number' && !str_contains($curType, 'decimal')) {
+                    $targetSqlType = 'DECIMAL(28,8) NULL';
+                } elseif ($configuredType === 'datetime' && !str_contains($curType, 'datetime') && !str_contains($curType, 'timestamp')) {
+                    $targetSqlType = 'DATETIME NULL';
+                } elseif (($configuredType === 'string' || !$configuredType) && $isKey && str_contains($curType, 'text')) {
+                    $targetSqlType = 'VARCHAR(100) NULL';
+                } elseif ($configuredType === 'string' && !$isKey && !str_contains($curType, 'text') && !str_contains($curType, 'varchar')) {
+                    $targetSqlType = 'TEXT NULL';
+                }
+
+                if ($targetSqlType !== null) {
+                    try {
+                        DB::connection($connectionName)->statement("ALTER TABLE `{$tableName}` MODIFY COLUMN `{$actualCol}` {$targetSqlType}");
+                    } catch (\Throwable $alterErr) {
+                        // Keep existing column definition intact if existing data prevents type conversion
+                        Log::warning("SchemaManager: Skipped altering [{$tableName}.{$actualCol}] to {$targetSqlType}: " . $alterErr->getMessage());
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            // Non-fatal
+        }
+    }
+
+    /**
+     * Ensure a composite B-Tree index exists on mapped Key columns for fast upserts, deletes, and analytical queries.
+     */
+    public function ensureMappedKeyColumnsIndex(?string $connectionName, string $tableName, array $fieldMappings): void
+    {
+        try {
+            $keyCols = [];
+            foreach ($fieldMappings as $originalName => $mapping) {
+                if (($mapping['is_enabled'] ?? true) == false || empty($mapping['is_key'])) {
+                    continue;
+                }
+                $destField = trim((string) ($mapping['destination_field'] ?? ''));
+                $keyCols[] = $this->sanitizeColumnName($destField !== '' ? $destField : $originalName);
+            }
+
+            if (empty($keyCols)) {
+                return;
+            }
+
+            $indexName = 'idx_' . substr(md5($tableName . '_' . implode('_', $keyCols)), 0, 16) . '_sync_keys';
+            $existingIdx = DB::connection($connectionName)->select("SHOW INDEX FROM `{$tableName}` WHERE Key_name = ?", [$indexName]);
+            if (!empty($existingIdx)) {
+                return;
+            }
+
+            $colDefs = DB::connection($connectionName)->select("SHOW COLUMNS FROM `{$tableName}`");
+            $colTypesByLower = [];
+            $actualColNamesByLower = [];
+            foreach ($colDefs as $c) {
+                $f = (string) ($c->Field ?? '');
+                $colTypesByLower[strtolower($f)] = strtolower((string) ($c->Type ?? ''));
+                $actualColNamesByLower[strtolower($f)] = $f;
+            }
+
+            $indexParts = [];
+            foreach (array_slice($keyCols, 0, 6) as $col) {
+                $lower = strtolower($col);
+                if (!isset($actualColNamesByLower[$lower])) {
+                    continue;
+                }
+                $actualCol = $actualColNamesByLower[$lower];
+                $type = $colTypesByLower[$lower] ?? '';
+                if (str_contains($type, 'text') || str_contains($type, 'blob')) {
+                    $indexParts[] = "`{$actualCol}`(50)";
+                } else {
+                    $indexParts[] = "`{$actualCol}`";
+                }
+            }
+
+            if (!empty($indexParts)) {
+                $colsSql = implode(', ', $indexParts);
+                DB::connection($connectionName)->statement("CREATE INDEX `{$indexName}` ON `{$tableName}` ({$colsSql})");
+            }
+        } catch (\Throwable $e) {
+            // Non-fatal
         }
     }
 
@@ -146,12 +287,19 @@ class SchemaManager
     {
         Schema::connection($connectionName)->create($tableName, function (Blueprint $table) use ($sampleRow, $columns, $fieldMappings) {
             $table->bigIncrements('_sync_id');
+            $createdColsLower = ['_sync_id', '_synced_at', '_row_hash'];
 
             foreach ($columns as $originalName) {
-                $colName = $this->sanitizeColumnName($originalName);
+                $destField = trim((string) ($fieldMappings[$originalName]['destination_field'] ?? ''));
+                $colName = $this->sanitizeColumnName($destField !== '' ? $destField : $originalName);
+                if (in_array(strtolower($colName), $createdColsLower, true)) {
+                    continue;
+                }
+                $createdColsLower[] = strtolower($colName);
                 $value   = $sampleRow[$originalName] ?? null;
                 $configuredType = $fieldMappings[$originalName]['data_type'] ?? null;
-                $this->addColumn($table, $colName, $value, $configuredType);
+                $isKey = (bool) ($fieldMappings[$originalName]['is_key'] ?? false);
+                $this->addColumn($table, $colName, $value, $configuredType, $isKey);
             }
 
             $table->dateTime('_synced_at')->nullable();
@@ -168,16 +316,19 @@ class SchemaManager
         $added = 0;
 
         foreach ($columns as $originalName) {
-            $colName = $this->sanitizeColumnName($originalName);
+            $destField = trim((string) ($fieldMappings[$originalName]['destination_field'] ?? ''));
+            $colName = $this->sanitizeColumnName($destField !== '' ? $destField : $originalName);
 
             if (in_array(strtolower($colName), $existing, true)) {
                 continue;
             }
+            $existing[] = strtolower($colName);
 
             Schema::connection($connectionName)->table($tableName, function (Blueprint $table) use ($colName, $sampleRow, $originalName, $fieldMappings) {
                 $value = $sampleRow[$originalName] ?? null;
                 $configuredType = $fieldMappings[$originalName]['data_type'] ?? null;
-                $this->addColumn($table, $colName, $value, $configuredType);
+                $isKey = (bool) ($fieldMappings[$originalName]['is_key'] ?? false);
+                $this->addColumn($table, $colName, $value, $configuredType, $isKey);
             });
 
             $added++;
@@ -189,7 +340,7 @@ class SchemaManager
     /**
      * Add a single column to a Blueprint with an inferred SQL type.
      */
-    private function addColumn(Blueprint $table, string $name, mixed $value, ?string $configuredType = null): void
+    private function addColumn(Blueprint $table, string $name, mixed $value, ?string $configuredType = null, bool $isKey = false): void
     {
         // Avoid reserved internal columns
         if (in_array(strtolower($name), ['_sync_id', '_synced_at', '_row_hash'])) {
@@ -208,6 +359,11 @@ class SchemaManager
 
         if ($configuredType === 'boolean') {
             $table->boolean($name)->nullable();
+            return;
+        }
+
+        if ($configuredType === 'integer') {
+            $table->bigInteger($name)->nullable();
             return;
         }
 
@@ -236,8 +392,6 @@ class SchemaManager
             return;
         }
 
-        $lowerName = strtolower($name);
-
         // Detect Unique Keys for Upsert
         if ($lowerName === 'id') {
             $table->string($name, 64)->nullable()->unique();
@@ -252,6 +406,12 @@ class SchemaManager
         // Detect DateTime columns used for filtering/incremental sync
         if ($lowerName === 'lastmodifieddatetime' || $lowerName === 'createddatetime') {
             $table->string($name, 64)->nullable()->index();
+            return;
+        }
+
+        // Key columns or short code/identifier columns use VARCHAR(100) so MySQL can index & filter them natively in B-Tree
+        if ($isKey || preg_match('/^(companyid|branchid|ordertype|ordernbr|shipmentnbr|artrantype|refnbr|acctcd|inventorycd|locationcd|uom\d*|status|whs|sales|salesdef|postalcode|tipe1)$/i', $lowerName)) {
+            $table->string($name, 100)->nullable();
             return;
         }
 
@@ -309,6 +469,7 @@ class SchemaManager
      */
     public function sanitizeColumnName(string $name): string
     {
+        $name = str_replace('%', '_pct_', $name);
         $name = str_replace(['.', ' ', '-', '/', '\\', '(', ')'], '_', $name);
         $name = preg_replace('/[^A-Za-z0-9_]/', '_', $name);
         $name = preg_replace('/_+/', '_', $name);
@@ -421,20 +582,31 @@ class SchemaManager
         }
 
         // Build a column-name mapping cache from the first record's keys.
-        // If fieldMappings are provided, ONLY include keys that are mapped and enabled.
+        // Respects explicit user mappings (destination_field & is_enabled=false) while allowing newly added source columns.
         $columnMap = [];
         $hasMappings = !empty($fieldMappings);
+        $mappingsByLower = [];
+        if ($hasMappings) {
+            foreach ($fieldMappings as $mKey => $mVal) {
+                $mappingsByLower[strtolower((string) $mKey)] = $mVal;
+            }
+        }
 
-        foreach (array_keys($records[0]) as $key) {
+        foreach (array_keys((array) $records[0]) as $key) {
             if (str_starts_with($key, '@') || str_starts_with($key, 'odata.') || $key === '__metadata') {
                 continue;
             }
+            $destField = '';
             if ($hasMappings) {
-                if (!isset($fieldMappings[$key]) || ($fieldMappings[$key]['is_enabled'] ?? true) == false) {
-                    continue; // Skip unmapped or disabled fields
+                $matchedMapping = $fieldMappings[$key] ?? ($mappingsByLower[strtolower((string) $key)] ?? null);
+                if ($matchedMapping !== null) {
+                    if (($matchedMapping['is_enabled'] ?? true) == false) {
+                        continue; // Explicitly disabled by user in Manage Fields
+                    }
+                    $destField = trim((string) ($matchedMapping['destination_field'] ?? ''));
                 }
             }
-            $columnMap[$key] = $this->sanitizeColumnName($key);
+            $columnMap[$key] = $this->sanitizeColumnName($destField !== '' ? $destField : $key);
         }
 
         // Now use the cached map for every record.

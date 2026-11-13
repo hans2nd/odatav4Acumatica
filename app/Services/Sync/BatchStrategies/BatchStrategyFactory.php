@@ -12,8 +12,17 @@ class BatchStrategyFactory
     public function make(string $connectionKey): BatchStrategyInterface
     {
         try {
-            $connection = \App\Models\Connection::where('key', $connectionKey)->first();
-            $type = $connection ? $connection->type : 'mysql'; // Default fallback
+            if (config("database.connections.{$connectionKey}")) {
+                $driver = \Illuminate\Support\Facades\DB::connection($connectionKey)->getDriverName();
+                return match ($driver) {
+                    'sqlsrv' => new SqlServerBatchStrategy(),
+                    default  => new MySqlBatchStrategy(),
+                };
+            }
+
+            $cleanKey = preg_replace('/^dyn_/', '', $connectionKey);
+            $connection = \App\Models\Connection::where('key', $cleanKey)->first();
+            $type = $connection ? $connection->type : 'mysql';
             
             return match ($type) {
                 'sqlsrv' => new SqlServerBatchStrategy(),

@@ -15,6 +15,38 @@ A powerful synchronization engine built on Laravel to bridge Acumatica ERP (ODat
 
 ## Changelog
 
+### v1.7.0 - November 2026 (Two-Phase Delta Stored Procedure Sync, ETL Syncron Pipeline & UI Modernization)
+- **ETL Syncron Dashboard (SQL Server → MySQL Pipeline)**:
+  - Added a dedicated, high-performance ETL dashboard at `/etl-pipeline` (navigable as **ETL Syncron** under the *Synchronization* menu).
+  - Built a simplified, zero-config control interface with intuitive sync modes:
+    - **Otomatis (Lanjutkan Terakhir)**: Incremental delta sync automatically continuing from the staging watermark.
+    - **Tarik Mulai Tanggal...**: Custom start date override (`@CustomStartDate`).
+    - **Rentang OrderDate**: Flexible historical data extraction (`@OrderDateFrom` & `@OrderDateTo`) with optional **Keep Current Watermark** (`@KeepCurrentWatermark = 1`) to preserve daily production watermarks.
+    - **Muat Ulang Penuh**: Full dataset reload.
+  - Real-time pipeline monitoring with animated stage indicator, speed tracker (rows/s), processed row counter, and 10-run execution history from SQL Server staging logs (`dbo.SyncExecutionLog`) and MySQL `sync_logs`.
+  - Display separation between actual execution completion time (**Selesai Terakhir**) and SQL Server staging watermark timestamp (**Watermark DB**).
+  - One-click **Reset Status** / **Force Unlock** (`/api/etl-pipeline/{entity}/unlock`) to safely abort stuck jobs, release distributed locks, and reset `IsRunning = 0` on both MySQL and SQL Server `dbo.SyncWatermarkControl`.
+- **Two-Phase Delta Stored Procedure Engine**:
+  - Implemented streaming support for multi-result set Stored Procedures (e.g. `dbo.usp_GetIncrementalSalesOrderSync`) in `SyncService`.
+  - Automatically creates optimized composite indexes on destination tables for fast deletion of changed records (Result Set 1), followed by high-throughput streaming inserts of child lines (Result Set 2), and output parameter extraction (Result Set 3).
+  - Added resilient **Completion Stored Procedure Fallback**: checks `OBJECT_ID` for completion SPs (`dbo.usp_CompleteIncrementalSync`); if absent, the engine safely updates `dbo.SyncExecutionLog` (`SUCCESS`/`FAILED`, `EndTime`, `ExtractedRowsCount`) and `dbo.SyncWatermarkControl` directly via SQL fallback without throwing fatal exceptions.
+- **Auto-Reconciliation & Orphaned Job Self-Healing**:
+  - Implemented automated job healing in `EtlPipelineController::state()` and `SyncEntityJob`: automatically reconciles orphaned `SyncJob`s (`pending`/`running`) when the queue is idle and sync logs have completed, completely preventing UI freezes at 5% ("Sedang Berjalan").
+  - Automatically purges stale/hanging jobs before dispatching new sync requests.
+- **Add Entity & Manage Fields UI/UX Overhaul**:
+  - Redesigned the **Add Entity** modal in `settings/index.blade.php`: added intuitive category filter tabs (**Semua**, **Tables**, **Views**, **Stored Proc**) with real-time badges and counts.
+  - Enhanced SQL Server live object discovery in `ConnectionManager` and `SqlServerProvider` to bypass stale caches, ensuring newly created SPs and tables in SQL Server appear instantly in the dropdown.
+  - Modernized the **Manage Fields** interface with streamlined Unique Key chips, AI auto-suggestions, and cleaner field mapping layouts.
+- **Dynamic Navigation & Shortcuts**:
+  - Added database migration `2026_11_12_174000_add_etl_pipeline_menu.php` registering the `ETL Syncron` menu item under `Synchronization`.
+  - Added direct **ETL Syncron** shortcut buttons on both **Transactions** and **Master Data** entity cards.
+
+### v1.6.3 - October 29, 2026 (Live Queue & Worker Monitoring in Sync History and Logs)
+- **Live Worker & Queue Monitoring Dashboard**: Added real-time operational cards on `/sync-history` and `/logs` displaying running workers, pending queue backlog, and active distributed locks.
+- **Queue Status API**: Added `GET /api/sync-jobs/queue-status` with live background polling every 4 seconds.
+- **Instant Entity Unlock**: Integrated direct "Buka Kunci" action inside Sync History to release hung distributed locks on `sync_states`.
+- **Bugfix: Undefined Relationship in SyncState**: Resolved `500 Internal Server Error` caused by calling undefined `schedule` relation; added `schedule()` alias and updated controller to use canonical `syncSchedule` and `entity_name`.
+
 ### v1.6.1 - October 27, 2026 (Sync Engine Timeout Hardening, Stuck Job Recovery & Hosting Compatibility)
 - **Stuck Job & Lock Recovery Engine**:
   - Implemented `POST /sync/{entity}/reset-stuck` (`SyncController::resetStuckJob`) to safely abort hanging `SyncJob`s (`pending`/`running`), signal cancellation to active `SyncLog`s, release distributed locks on `sync_states`, and purge Laravel `laravel_unique_job` cache locks.
@@ -167,12 +199,6 @@ A powerful synchronization engine built on Laravel to bridge Acumatica ERP (ODat
 - **UI/UX: System Utilities**: Added a new "System Utilities" tab for quick deployment commands (`migrate`, `optimize`, `storage:link`), including clear copy-paste instructions for VPS Cronjob setup.
 - **UI/UX: Dynamic Connection Validation**: The application now strictly validates connections before initiating syncs and warns users via `SweetAlert` if a connection is broken, rather than silently falling back to a default configuration.
 - **UI/UX: Fixed Toggle Displays**: Added Eloquent Accessors to seamlessly translate Cron expressions back into human-readable Dropdowns for frequency and interval settings on the UI.
-
-### v1.6.3 (Live Queue & Worker Monitoring in Sync History and Logs)
-- **Live Worker & Queue Monitoring Dashboard**: Added real-time operational cards on `/sync-history` and `/logs` displaying running workers, pending queue backlog, and active distributed locks.
-- **Queue Status API**: Added `GET /api/sync-jobs/queue-status` with live background polling every 4 seconds.
-- **Instant Entity Unlock**: Integrated direct "Buka Kunci" action inside Sync History to release hung distributed locks on `sync_states`.
-- **Bugfix: Undefined Relationship in SyncState**: Resolved `500 Internal Server Error` caused by calling undefined `schedule` relation; added `schedule()` alias and updated controller to use canonical `syncSchedule` and `entity_name`.
 
 ---
 

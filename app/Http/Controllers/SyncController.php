@@ -204,6 +204,7 @@ class SyncController extends Controller
                     ['entity_key' => $entity],
                     ['custom_filters' => $customFilters]
                 );
+                $this->syncStoredProcedureParamsFromFilters($entity, $customFilters);
             }
 
             // Validate Connection before dispatching
@@ -420,6 +421,38 @@ class SyncController extends Controller
             \Illuminate\Support\Facades\Cache::forget('laravel_unique_job:App\Jobs\SyncEntityJob:' . $entity);
             \Illuminate\Support\Facades\Cache::forget('laravel_unique_job:App\Jobs\SyncEntityJob' . $entity);
 
+            // 5. If this is a SQL Server Stored Procedure entity, also release IsRunning = 0 in dbo.SyncWatermarkControl
+            try {
+                $config = $this->entityConfigService->get($entity);
+                if ($config && (($config['source_object_type'] ?? '') === 'stored_procedure' || !empty($config['sp_execution_mode']))) {
+                    $sourceConnKey = !empty($config['source_connection']) ? $config['source_connection'] : null;
+                    if ($sourceConnKey) {
+                        $resolvedSourceConn = app(\App\Services\ConnectionService::class)->resolveConnectionName($sourceConnKey);
+                        if ($resolvedSourceConn) {
+                            $syncProcessName = !empty($config['sp_sync_process_name']) ? $config['sp_sync_process_name'] : 'SO_TO_MYSQL_SYNC';
+                            $companyId = !empty($config['sp_company_id']) ? (int) $config['sp_company_id'] : 2;
+                            $pdo = \Illuminate\Support\Facades\DB::connection($resolvedSourceConn)->getPdo();
+                            $pdo->prepare("
+                                UPDATE dbo.SyncWatermarkControl
+                                SET IsRunning = 0, LastRunStatus = 'IDLE', UpdatedDateTime = SYSDATETIME()
+                                WHERE SyncProcessName = :proc_name AND CompanyID = :comp_id;
+
+                                UPDATE dbo.SyncExecutionLog
+                                SET EndTime = SYSDATETIME(), Status = 'FAILED', ErrorMessage = 'Reset manually via UI'
+                                WHERE SyncProcessName = :proc_name2 AND Status = 'RUNNING';
+                            ")->execute([
+                                ':proc_name'  => $syncProcessName,
+                                ':comp_id'    => $companyId,
+                                ':proc_name2' => $syncProcessName,
+                            ]);
+                            $lockReleased = true;
+                        }
+                    }
+                }
+            } catch (\Throwable $spResetErr) {
+                // Ignore if source connection does not have SyncWatermarkControl
+            }
+
             return response()->json([
                 'success' => true,
                 'message' => "Kunci dan antrean sinkronisasi untuk {$entity} telah berhasil di-reset. Anda dapat memulai sinkronisasi kembali.",
@@ -503,11 +536,61 @@ class SyncController extends Controller
             ['entity_key' => $entity],
             ['custom_filters' => $customFilters]
         );
+        $this->syncStoredProcedureParamsFromFilters($entity, $customFilters);
 
         return response()->json([
             'success' => true,
             'message' => 'Filters saved successfully.',
         ]);
+    }
+
+    /**
+     * Keep Stored Procedure extra_attributes in sync when @SyncProcessName, @CompanyID, or @CustomStartDate
+     * filters are saved from the card's Sync modal.
+     */
+    protected function syncStoredProcedureParamsFromFilters(string $entityKey, array $customFilters): void
+    {
+        try {
+            $model = $this->entityConfigService->getModel($entityKey);
+            if (!$model) {
+                return;
+            }
+            $extra = is_array($model->extra_attributes) ? $model->extra_attributes : [];
+            $isSp = ($extra['source_object_type'] ?? '') === 'stored_procedure'
+                || !empty($extra['sp_execution_mode'])
+                || preg_match('/^(dbo\.)?(usp_|sp_)/i', (string) $model->source_object);
+            if (!$isSp) {
+                return;
+            }
+
+            $dirty = false;
+            $seenCustomStartDate = false;
+            foreach ($customFilters as $cf) {
+                $field = strtolower(ltrim(trim((string) ($cf['field'] ?? '')), '@'));
+                $val = trim((string) ($cf['value'] ?? ''));
+                if ($field === 'syncprocessname' && $val !== '') {
+                    $extra['sp_sync_process_name'] = $val;
+                    $dirty = true;
+                } elseif ($field === 'companyid' && is_numeric($val)) {
+                    $extra['sp_company_id'] = (int) $val;
+                    $dirty = true;
+                } elseif ($field === 'customstartdate') {
+                    $extra['sp_custom_start_date'] = $val !== '' ? $val : null;
+                    $seenCustomStartDate = true;
+                    $dirty = true;
+                }
+            }
+            if (!$seenCustomStartDate && isset($extra['sp_custom_start_date'])) {
+                $extra['sp_custom_start_date'] = null;
+                $dirty = true;
+            }
+            if ($dirty) {
+                $model->extra_attributes = $extra;
+                $model->save();
+            }
+        } catch (\Throwable $e) {
+            // Non-fatal
+        }
     }
 
     /**
@@ -521,24 +604,65 @@ class SyncController extends Controller
         }
 
         $isRefresh = $request->boolean('refresh');
+        $isSp = ($config['source_object_type'] ?? '') === 'stored_procedure'
+            || !empty($config['sp_execution_mode'])
+            || preg_match('/^(dbo\.)?(usp_|sp_)/i', (string) ($config['odata_entity'] ?? ''));
 
-        $result = $metadataService->getMetadata($entity, $isRefresh);
-
-        if (!$result->isSuccess) {
-            return response()->json([
-                'success' => false,
-                'message' => $result->errorMessage
-            ], 500);
+        $fields = [];
+        try {
+            $result = $metadataService->getMetadata($entity, $isRefresh);
+            if ($result->isSuccess && !empty($result->fields)) {
+                $fields = array_column($result->fields, 'name');
+            }
+        } catch (\Throwable $e) {
+            // Fallback to configured available_fields below
         }
 
-        $fields = array_column($result->fields, 'name');
+        if (empty($fields) && !empty($config['available_fields']) && is_array($config['available_fields'])) {
+            $fields = $config['available_fields'];
+        }
+
+        if ($isSp) {
+            $spMode = $config['sp_execution_mode'] ?? 'two_phase_delta';
+            $spParamNames = [];
+            if ($spMode === 'two_phase_delta') {
+                $spParamNames = ['@SyncProcessName', '@CompanyID', '@CustomStartDate'];
+            }
+            if (!empty($config['sp_parameters']) && is_array($config['sp_parameters'])) {
+                foreach ($config['sp_parameters'] as $p) {
+                    if (empty($p['is_output']) && !empty($p['name'])) {
+                        $spParamNames[] = $p['name'];
+                    }
+                }
+            }
+            $spParamNames = array_values(array_unique($spParamNames));
+            foreach (array_reverse($spParamNames) as $pName) {
+                if (!in_array($pName, $fields, true)) {
+                    array_unshift($fields, $pName);
+                }
+            }
+        }
 
         // Always include CompanyID if missing as it's a standard Acumatica filter
         if (!in_array('CompanyID', $fields) && !in_array('companyid', array_map('strtolower', $fields))) {
             $fields[] = 'CompanyID';
         }
 
-        return response()->json(['success' => true, 'fields' => $fields]);
+        return response()->json([
+            'success'             => true,
+            'fields'              => $fields,
+            'is_stored_procedure' => $isSp,
+            'sp_config'           => $isSp ? [
+                'execution_mode'    => $config['sp_execution_mode'] ?? 'two_phase_delta',
+                'sync_process_name' => $config['sp_sync_process_name'] ?? 'SO_TO_MYSQL_SYNC',
+                'company_id'        => $config['sp_company_id'] ?? 2,
+                'custom_start_date' => $config['sp_custom_start_date'] ?? '',
+                'completion_proc'   => $config['sp_completion_proc'] ?? 'dbo.usp_CompleteIncrementalSync',
+                'schema_object'     => $config['sp_schema_object'] ?? '',
+                'delete_keys'       => $config['sp_delete_keys'] ?? 'CompanyID,OrderType,OrderNbr',
+                'parameters'        => $config['sp_parameters'] ?? [],
+            ] : null,
+        ]);
     }
 
 
